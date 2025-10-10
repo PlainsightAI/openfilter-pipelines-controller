@@ -39,10 +39,64 @@ spec:
           spec:
             description: spec defines the desired state of Pipeline
             properties:
-              foo:
-                description: foo is an example field of Pipeline. Edit pipeline_types.go
-                  to remove/update
-                type: string
+              input:
+                description: input defines the S3-compatible bucket containing input
+                  data for the pipeline
+                properties:
+                  bucket:
+                    description: bucket is the name of the S3-compatible bucket
+                    minLength: 1
+                    type: string
+                  credentialsSecret:
+                    description: |-
+                      credentialsSecret references a Secret containing access credentials
+                      Expected keys: "accessKeyId" and "secretAccessKey"
+                    properties:
+                      name:
+                        description: name is the name of the secret
+                        type: string
+                      namespace:
+                        description: |-
+                          namespace is the namespace of the secret
+                          If empty, uses the same namespace as the Pipeline resource
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  endpoint:
+                    description: |-
+                      endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
+                      Examples:
+                        - MinIO: "http://minio.example.com:9000"
+                        - GCS: "https://storage.googleapis.com"
+                        - Custom S3: "https://s3.custom.example.com"
+                      Leave empty for AWS S3 (will use default AWS endpoints)
+                    type: string
+                  insecureSkipTLSVerify:
+                    default: false
+                    description: insecureSkipTLSVerify skips TLS certificate verification
+                      (useful for dev/test)
+                    type: boolean
+                  prefix:
+                    description: prefix is an optional path prefix within the bucket
+                      (e.g., "input-data/")
+                    type: string
+                  region:
+                    description: |-
+                      region is the bucket region (e.g., "us-east-1")
+                      Required for AWS S3, optional for other providers
+                    type: string
+                  usePathStyle:
+                    default: false
+                    description: |-
+                      usePathStyle forces path-style addressing (endpoint.com/bucket vs bucket.endpoint.com)
+                      Required for MinIO and some S3-compatible services
+                    type: boolean
+                required:
+                - bucket
+                type: object
+            required:
+            - input
             type: object
           status:
             description: status defines the observed state of Pipeline

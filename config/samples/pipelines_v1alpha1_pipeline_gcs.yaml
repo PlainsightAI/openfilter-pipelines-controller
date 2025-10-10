@@ -4,11 +4,11 @@ metadata:
   labels:
     app.kubernetes.io/name: openfilter-pipelines-runner
     app.kubernetes.io/managed-by: kustomize
-  name: pipeline-sample
+  name: pipeline-gcs-sample
 spec:
   input:
-    bucket: my-pipeline-data
-    prefix: input/
-    region: us-west-2
+    bucket: my-gcs-bucket
+    prefix: pipeline-inputs/
+    endpoint: https://storage.googleapis.com
     credentialsSecret:
-      name: s3-credentials
+      name: gcs-s3-credentials

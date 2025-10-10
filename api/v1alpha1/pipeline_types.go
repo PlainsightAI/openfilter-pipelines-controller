@@ -23,6 +23,60 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// SecretReference contains information to locate a Kubernetes Secret
+type SecretReference struct {
+	// name is the name of the secret
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// namespace is the namespace of the secret
+	// If empty, uses the same namespace as the Pipeline resource
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// ObjectStorageSource defines an S3-compatible object storage bucket
+type ObjectStorageSource struct {
+	// bucket is the name of the S3-compatible bucket
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Bucket string `json:"bucket"`
+
+	// prefix is an optional path prefix within the bucket (e.g., "input-data/")
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+
+	// endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
+	// Examples:
+	//   - MinIO: "http://minio.example.com:9000"
+	//   - GCS: "https://storage.googleapis.com"
+	//   - Custom S3: "https://s3.custom.example.com"
+	// Leave empty for AWS S3 (will use default AWS endpoints)
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// region is the bucket region (e.g., "us-east-1")
+	// Required for AWS S3, optional for other providers
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// credentialsSecret references a Secret containing access credentials
+	// Expected keys: "accessKeyId" and "secretAccessKey"
+	// +optional
+	CredentialsSecret *SecretReference `json:"credentialsSecret,omitempty"`
+
+	// insecureSkipTLSVerify skips TLS certificate verification (useful for dev/test)
+	// +optional
+	// +kubebuilder:default=false
+	InsecureSkipTLSVerify bool `json:"insecureSkipTLSVerify,omitempty"`
+
+	// usePathStyle forces path-style addressing (endpoint.com/bucket vs bucket.endpoint.com)
+	// Required for MinIO and some S3-compatible services
+	// +optional
+	// +kubebuilder:default=false
+	UsePathStyle bool `json:"usePathStyle,omitempty"`
+}
+
 // PipelineSpec defines the desired state of Pipeline
 type PipelineSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -30,9 +84,9 @@ type PipelineSpec struct {
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// foo is an example field of Pipeline. Edit pipeline_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// input defines the S3-compatible bucket containing input data for the pipeline
+	// +kubebuilder:validation:Required
+	Input ObjectStorageSource `json:"input"`
 }
 
 // PipelineStatus defines the observed state of Pipeline.

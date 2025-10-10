@@ -4,11 +4,12 @@ metadata:
   labels:
     app.kubernetes.io/name: openfilter-pipelines-runner
     app.kubernetes.io/managed-by: kustomize
-  name: pipeline-sample
+  name: pipeline-minio-sample
 spec:
   input:
-    bucket: my-pipeline-data
-    prefix: input/
-    region: us-west-2
+    bucket: pipeline-data
+    prefix: datasets/
+    endpoint: http://minio.default.svc.cluster.local:9000
+    usePathStyle: true
     credentialsSecret:
-      name: s3-credentials
+      name: minio-credentials

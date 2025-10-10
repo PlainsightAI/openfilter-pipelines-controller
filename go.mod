@@ -1,6 +1,6 @@
 module github.com/PlainsightAI/openfilter-pipelines-runner
 
-go 1.24.5
+go 1.25.1
 
 require (
 	github.com/onsi/ginkgo/v2 v2.22.0

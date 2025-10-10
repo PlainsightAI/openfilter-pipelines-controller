@@ -1,0 +1,13 @@
+{
+  "servers": [
+    {
+      "extensions": [
+        "go"
+      ],
+      "command": [
+        "gopls"
+      ],
+      "rootDir": "."
+    }
+  ]
+}

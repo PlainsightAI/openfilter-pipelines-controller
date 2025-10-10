@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -77,6 +78,42 @@ type ObjectStorageSource struct {
 	UsePathStyle bool `json:"usePathStyle,omitempty"`
 }
 
+// Filter defines a containerized processing step in the pipeline
+type Filter struct {
+	// name is a unique identifier for this filter within the pipeline
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// image is the container image to run (e.g., "myregistry/filter:v1.0")
+	// +kubebuilder:validation:Required
+	Image string `json:"image"`
+
+	// env is a list of environment variables to set in the container
+	// Uses the standard Kubernetes EnvVar type for full compatibility
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// args are the command arguments to pass to the container
+	// +optional
+	Args []string `json:"args,omitempty"`
+
+	// command overrides the default entrypoint of the container
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// resources defines compute resource requirements for this filter
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// imagePullPolicy determines when to pull the container image
+	// +optional
+	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
+	// +kubebuilder:default=IfNotPresent
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+}
+
 // PipelineSpec defines the desired state of Pipeline
 type PipelineSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -87,6 +124,12 @@ type PipelineSpec struct {
 	// input defines the S3-compatible bucket containing input data for the pipeline
 	// +kubebuilder:validation:Required
 	Input ObjectStorageSource `json:"input"`
+
+	// filters is an ordered list of processing steps to apply to the input data
+	// Filters are executed sequentially in the order they are defined
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	Filters []Filter `json:"filters,omitempty"`
 }
 
 // PipelineStatus defines the observed state of Pipeline.

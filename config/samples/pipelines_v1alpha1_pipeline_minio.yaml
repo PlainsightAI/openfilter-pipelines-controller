@@ -13,3 +13,33 @@ spec:
     usePathStyle: true
     credentialsSecret:
       name: minio-credentials
+
+  filters:
+    - name: data-validator
+      image: myregistry/validator:v1.0
+      env:
+        - name: SCHEMA_FILE
+          value: "/config/schema.json"
+        - name: STRICT_MODE
+          value: "true"
+
+    - name: data-transformer
+      image: myregistry/transformer:v2.5
+      env:
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-secrets
+              key: transform-api-key
+        - name: ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: pipeline-config
+              key: transform-endpoint
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "256Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"

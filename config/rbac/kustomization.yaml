@@ -22,6 +22,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the openfilter-pipelines-runner itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- pipelinerun_admin_role.yaml
+- pipelinerun_editor_role.yaml
+- pipelinerun_viewer_role.yaml
 - pipeline_admin_role.yaml
 - pipeline_editor_role.yaml
 - pipeline_viewer_role.yaml

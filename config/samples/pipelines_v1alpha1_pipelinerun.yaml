@@ -1,0 +1,9 @@
+apiVersion: pipelines.plainsight.ai/v1alpha1
+kind: PipelineRun
+metadata:
+  labels:
+    app.kubernetes.io/name: openfilter-pipelines-runner
+    app.kubernetes.io/managed-by: kustomize
+  name: pipelinerun-sample
+spec:
+  # TODO(user): Add fields here

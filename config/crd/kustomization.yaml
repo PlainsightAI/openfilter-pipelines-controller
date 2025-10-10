@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/pipelines.plainsight.ai_pipelines.yaml
+- bases/pipelines.plainsight.ai_pipelineruns.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

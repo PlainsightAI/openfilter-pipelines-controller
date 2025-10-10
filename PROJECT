@@ -18,4 +18,13 @@ resources:
   kind: Pipeline
   path: github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: plainsight.ai
+  group: pipelines
+  kind: PipelineRun
+  path: github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1
+  version: v1alpha1
 version: "3"

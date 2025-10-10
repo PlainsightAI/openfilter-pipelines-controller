@@ -8,4 +8,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: openfilter-pipelines-runner
 repo: github.com/PlainsightAI/openfilter-pipelines-runner
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: plainsight.ai
+  group: pipelines
+  kind: Pipeline
+  path: github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1
+  version: v1alpha1
 version: "3"

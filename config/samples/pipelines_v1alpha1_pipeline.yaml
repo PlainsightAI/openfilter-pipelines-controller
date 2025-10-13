@@ -16,6 +16,10 @@ spec:
   execution:
     parallelism: 10
     maxAttempts: 3
-    pendingTimeout: 15m  # Kubernetes duration format (e.g., "15m", "1h", "30s")
+    pendingTimeout: 15m # Kubernetes duration format (e.g., "15m", "1h", "30s")
 
   filters:
+    - name: list-file
+      image: alpine:latest
+      command: ["ls"]
+      args: ["-la", "/ws/input"]

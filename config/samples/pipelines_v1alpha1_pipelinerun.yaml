@@ -6,4 +6,12 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipelinerun-sample
 spec:
-  # TODO(user): Add fields here
+  pipelineRef:
+    name: pipeline-sample
+  queue:
+    stream: "pr:example-run:work"
+    group: "cg:example-run"
+  execution:
+    parallelism: 10
+    maxAttempts: 3
+    pendingTimeout: "15m"

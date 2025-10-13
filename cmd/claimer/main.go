@@ -196,12 +196,10 @@ func pingValkey(ctx context.Context, client valkey.Client) error {
 }
 
 func claimMessage(ctx context.Context, client valkey.Client, cfg *Config) (*Message, string, error) {
-	// Use XREADGROUP to claim a message
-	// XREADGROUP GROUP <group> <consumer> COUNT 1 BLOCK 0 STREAMS <stream> ">"
 	cmd := client.B().Xreadgroup().
 		Group(cfg.Group, cfg.ConsumerName).
 		Count(1).
-		Block(0). // Block indefinitely until a message is available
+		Block(0).
 		Streams().
 		Key(cfg.Stream).
 		Id(">").
@@ -212,68 +210,20 @@ func claimMessage(ctx context.Context, client valkey.Client, cfg *Config) (*Mess
 		return nil, "", fmt.Errorf("XREADGROUP failed: %w", result.Error())
 	}
 
-	// Parse the XREADGROUP response
-	// Format: [[stream, [[id, [field1, value1, field2, value2, ...]]]]]
-	arr, err := result.ToArray()
+	streams, err := result.AsXRead()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to parse XREADGROUP response: %w", err)
 	}
 
-	if len(arr) == 0 {
-		return nil, "", fmt.Errorf("no streams in response")
+	entries, ok := streams[cfg.Stream]
+	if !ok || len(entries) == 0 {
+		return nil, "", fmt.Errorf("no messages available in stream")
 	}
 
-	// Get the first stream result
-	streamResult, err := arr[0].ToArray()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse stream result: %w", err)
-	}
+	entry := entries[0]
+	messageID := entry.ID
+	values := entry.FieldValues
 
-	if len(streamResult) < 2 {
-		return nil, "", fmt.Errorf("invalid stream result format")
-	}
-
-	// Get messages array
-	messagesArr, err := streamResult[1].ToArray()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse messages array: %w", err)
-	}
-
-	if len(messagesArr) == 0 {
-		return nil, "", fmt.Errorf("no messages available")
-	}
-
-	// Parse the first message
-	msgArr, err := messagesArr[0].ToArray()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse message: %w", err)
-	}
-
-	if len(msgArr) < 2 {
-		return nil, "", fmt.Errorf("invalid message format")
-	}
-
-	// Get message ID
-	messageID, err := msgArr[0].ToString()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse message ID: %w", err)
-	}
-
-	// Parse fields array
-	fieldsArr, err := msgArr[1].ToArray()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse fields array: %w", err)
-	}
-
-	// Convert fields to map
-	values := make(map[string]string)
-	for i := 0; i < len(fieldsArr)-1; i += 2 {
-		key, _ := fieldsArr[i].ToString()
-		val, _ := fieldsArr[i+1].ToString()
-		values[key] = val
-	}
-
-	// Build Message struct
 	msg := &Message{
 		Run:  values["run"],
 		File: values["file"],

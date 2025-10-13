@@ -109,6 +109,28 @@ func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
+	// Initialize counts if needed
+	if pipelineRun.Status.Counts == nil {
+		pipelineRun.Status.Counts = &pipelinesv1alpha1.FileCounts{}
+	}
+
+	// Initialize TotalFiles from stream length if not set
+	if pipelineRun.Status.Counts.TotalFiles == 0 {
+		totalFiles, err := r.ValkeyClient.GetStreamLength(ctx, pipelineRun.Spec.Queue.Stream)
+		if err != nil {
+			log.Error(err, "Failed to get initial stream length")
+		} else {
+			pipelineRun.Status.Counts.TotalFiles = totalFiles
+			log.Info("Initialized TotalFiles from stream", "totalFiles", totalFiles)
+			if err := r.Status().Update(ctx, pipelineRun); err != nil {
+				log.Error(err, "Failed to update status")
+				return ctrl.Result{}, err
+			}
+			// Requeue immediately to continue with job creation
+			return ctrl.Result{Requeue: true}, nil
+		}
+	}
+
 	// Step 1: Ensure Job exists
 	if err := r.ensureJob(ctx, pipelineRun, pipeline); err != nil {
 		log.Error(err, "Failed to ensure Job")
@@ -253,6 +275,14 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 		parallelism = *pipelineRun.Spec.Execution.Parallelism
 	}
 
+	// Get total files count, default to 0 if not set
+	totalFiles := int64(0)
+	if pipelineRun.Status.Counts != nil {
+		totalFiles = pipelineRun.Status.Counts.TotalFiles
+	}
+
+	log.V(1).Info("Building job", "totalFiles", totalFiles, "parallelism", parallelism)
+
 	// Get S3 credentials from Pipeline
 	var s3SecretName, s3SecretNamespace string
 	if pipeline.Spec.Input.CredentialsSecret != nil {
@@ -344,7 +374,7 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 		},
 		Spec: batchv1.JobSpec{
 			CompletionMode:          ptr.To(batchv1.NonIndexedCompletion),
-			Completions:             ptr.To(int32(pipelineRun.Status.Counts.TotalFiles)),
+			Completions:             ptr.To(int32(totalFiles)),
 			Parallelism:             ptr.To(parallelism),
 			BackoffLimit:            ptr.To(int32(2)),
 			TTLSecondsAfterFinished: ptr.To(int32(86400)), // 24 hours
@@ -382,7 +412,7 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 		},
 	}
 
-	log.Info("Built Job spec", "job", jobName, "completions", pipelineRun.Status.Counts.TotalFiles, "parallelism", parallelism)
+	log.Info("Built Job spec", "job", jobName, "completions", totalFiles, "parallelism", parallelism)
 	return job, nil
 }
 

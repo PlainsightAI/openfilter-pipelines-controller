@@ -51,7 +51,19 @@ var _ = Describe("Pipeline Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: pipelinesv1alpha1.PipelineSpec{
+						Input: pipelinesv1alpha1.ObjectStorageSource{
+							Bucket:   "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
+						Filters: []pipelinesv1alpha1.Filter{
+							{
+								Name:  "test-filter",
+								Image: "test-image:latest",
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

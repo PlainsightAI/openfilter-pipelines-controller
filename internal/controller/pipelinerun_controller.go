@@ -55,11 +55,22 @@ const (
 	ReclaimerInterval    = 5 * time.Minute
 )
 
+// ValkeyClientInterface defines the interface for Valkey operations
+type ValkeyClientInterface interface {
+	GetStreamLength(ctx context.Context, streamKey string) (int64, error)
+	GetConsumerGroupLag(ctx context.Context, streamKey, groupName string) (int64, error)
+	GetPendingCount(ctx context.Context, streamKey, groupName string) (int64, error)
+	AckMessage(ctx context.Context, streamKey, groupName, messageID string) error
+	EnqueueFileWithAttempts(ctx context.Context, streamKey, runID, filepath string, attempts int) (string, error)
+	AddToDLQ(ctx context.Context, dlqKey, runID, filepath string, attempts int, reason string) error
+	AutoClaim(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, count int64) ([]queue.XMessage, error)
+}
+
 // PipelineRunReconciler reconciles a PipelineRun object
 type PipelineRunReconciler struct {
 	client.Client
 	Scheme         *runtime.Scheme
-	ValkeyClient   *queue.ValkeyClient
+	ValkeyClient   ValkeyClientInterface
 	ValkeyAddr     string
 	ValkeyPassword string
 	ClaimerImage   string // Image for the claimer init container
@@ -419,13 +430,17 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 // extractRunID extracts the run ID from a stream key (format: pr:<runId>:work)
 func extractRunID(streamKey string) string {
 	// Simple extraction assuming format pr:<runId>:work
-	if len(streamKey) < 7 { // "pr::work" minimum
+	if len(streamKey) < 8 { // "pr:x:work" minimum
 		return ""
 	}
-	// Remove "pr:" prefix and ":work" suffix
+	// Remove "pr:" prefix
+	if streamKey[:3] != "pr:" {
+		return ""
+	}
 	runID := streamKey[3:]
-	if idx := len(runID) - 5; idx > 0 && runID[idx:] == ":work" {
-		runID = runID[:idx]
+	// Remove ":work" suffix
+	if len(runID) >= 5 && runID[len(runID)-5:] == ":work" {
+		runID = runID[:len(runID)-5]
 	}
 	return runID
 }
@@ -451,6 +466,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 	for _, pod := range podList.Items {
 		// Only process completed pods
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			log.V(1).Info("Skipping pod that is not complete", "pod", pod.Name, "phase", pod.Status.Phase)
 			continue
 		}
 

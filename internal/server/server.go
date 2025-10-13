@@ -24,27 +24,35 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1"
+	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/queue"
 )
 
 // Server handles HTTP requests for pipeline runs
 type Server struct {
-	client client.Client
-	port   int
+	client         client.Client
+	port           int
+	valkeyAddr     string
+	valkeyPassword string
 }
 
 // NewServer creates a new HTTP server instance
-func NewServer(client client.Client, port int) *Server {
+func NewServer(client client.Client, port int, valkeyAddr, valkeyPassword string) *Server {
 	return &Server{
-		client: client,
-		port:   port,
+		client:         client,
+		port:           port,
+		valkeyAddr:     valkeyAddr,
+		valkeyPassword: valkeyPassword,
 	}
 }
 
@@ -55,10 +63,13 @@ type PipelineRunRequest struct {
 
 // PipelineRunResponse represents the response body for a pipeline run
 type PipelineRunResponse struct {
-	Namespace    string   `json:"namespace"`
-	PipelineName string   `json:"pipelineName"`
-	Files        []string `json:"files"`
-	Count        int      `json:"count"`
+	RunID           string `json:"runId"`
+	PipelineRunName string `json:"pipelineRunName"`
+	Namespace       string `json:"namespace"`
+	PipelineName    string `json:"pipelineName"`
+	TotalFiles      int64  `json:"totalFiles"`
+	StreamKey       string `json:"streamKey"`
+	GroupName       string `json:"groupName"`
 }
 
 // ErrorResponse represents an error response
@@ -105,6 +116,7 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // handlePipelineRun handles POST /pipelines/{namespace}/{name}/runs
+// It lists S3 files, creates Valkey stream + group, enqueues files, and creates PipelineRun CR
 func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := log.FromContext(ctx)
@@ -132,14 +144,14 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get credentials from secret if specified
+	// Get S3 credentials from secret if specified
 	var accessKey, secretKey string
 	if pipeline.Spec.Input.CredentialsSecret != nil {
 		var err error
 		accessKey, secretKey, err = s.getCredentials(ctx, pipeline)
 		if err != nil {
-			logger.Error(err, "Failed to get credentials")
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get credentials: %v", err))
+			logger.Error(err, "Failed to get S3 credentials")
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get S3 credentials: %v", err))
 			return
 		}
 	}
@@ -152,22 +164,116 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(files) == 0 {
+		writeError(w, http.StatusBadRequest, "no files found in bucket")
+		return
+	}
+
+	// Generate unique run ID
+	runID := uuid.New().String()[:8] // Use short UUID for readability
+
+	// Create stream and group names following the design: pr:<runId>:work and cg:<runId>
+	streamKey := fmt.Sprintf("pr:%s:work", runID)
+	groupName := fmt.Sprintf("cg:%s", runID)
+
+	// Create Valkey client using server configuration
+	valkeyClient, err := queue.NewValkeyClient(s.valkeyAddr, s.valkeyPassword)
+	if err != nil {
+		logger.Error(err, "Failed to create Valkey client")
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create Valkey client: %v", err))
+		return
+	}
+	defer valkeyClient.Close()
+
+	// Create stream and consumer group
+	if err := valkeyClient.CreateStreamAndGroup(ctx, streamKey, groupName); err != nil {
+		logger.Error(err, "Failed to create stream and group")
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create stream and group: %v", err))
+		return
+	}
+
+	// Enqueue all files to the stream
+	enqueuedCount := int64(0)
+	for _, file := range files {
+		_, err := valkeyClient.EnqueueFile(ctx, streamKey, runID, file)
+		if err != nil {
+			logger.Error(err, "Failed to enqueue file", "file", file)
+			// Continue with other files even if one fails
+			continue
+		}
+		enqueuedCount++
+	}
+
+	logger.Info("Enqueued files to stream", "count", enqueuedCount, "stream", streamKey)
+
+	// Use Pipeline's execution config or defaults
+	executionConfig := pipeline.Spec.Execution
+	if executionConfig == nil {
+		// Provide defaults if not specified in Pipeline
+		executionConfig = &pipelinesv1alpha1.ExecutionConfig{
+			Parallelism:    ptr.To(int32(10)),
+			MaxAttempts:    ptr.To(int32(3)),
+			PendingTimeout: &metav1.Duration{Duration: 15 * time.Minute},
+		}
+	}
+
+	// Create PipelineRun CR
+	pipelineRunName := fmt.Sprintf("%s-%s", name, runID)
+	pipelineRun := &pipelinesv1alpha1.PipelineRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pipelineRunName,
+			Namespace: namespace,
+		},
+		Spec: pipelinesv1alpha1.PipelineRunSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{
+				Name:      name,
+				Namespace: &namespace,
+			},
+			Execution: executionConfig,
+			Queue: pipelinesv1alpha1.QueueConfig{
+				Stream: streamKey,
+				Group:  groupName,
+			},
+		},
+		Status: pipelinesv1alpha1.PipelineRunStatus{
+			Counts: &pipelinesv1alpha1.FileCounts{
+				TotalFiles: enqueuedCount,
+				Queued:     enqueuedCount,
+				Running:    0,
+				Succeeded:  0,
+				Failed:     0,
+			},
+			StartTime: &metav1.Time{Time: time.Now()},
+		},
+	}
+
+	if err := s.client.Create(ctx, pipelineRun); err != nil {
+		logger.Error(err, "Failed to create PipelineRun")
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create PipelineRun: %v", err))
+		return
+	}
+
+	logger.Info("Created PipelineRun", "name", pipelineRunName, "totalFiles", enqueuedCount)
+
 	// Return response
 	response := PipelineRunResponse{
-		Namespace:    namespace,
-		PipelineName: name,
-		Files:        files,
-		Count:        len(files),
+		RunID:           runID,
+		PipelineRunName: pipelineRunName,
+		Namespace:       namespace,
+		PipelineName:    name,
+		TotalFiles:      enqueuedCount,
+		StreamKey:       streamKey,
+		GroupName:       groupName,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logger.Error(err, "Failed to encode response")
 	}
 }
 
-// getCredentials retrieves credentials from the specified secret
+// getCredentials retrieves S3 credentials from the specified secret
 func (s *Server) getCredentials(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline) (string, string, error) {
 	secretRef := pipeline.Spec.Input.CredentialsSecret
 	namespace := secretRef.Namespace

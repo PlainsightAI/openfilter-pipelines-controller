@@ -63,10 +63,14 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var httpServerPort int
+	var valkeyAddr string
+	var valkeyPassword string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.IntVar(&httpServerPort, "http-server-port", 8080, "The port for the HTTP API server.")
+	flag.StringVar(&valkeyAddr, "valkey-addr", os.Getenv("VALKEY_ADDR"), "The Valkey server address (e.g., localhost:6379). Can also be set via VALKEY_ADDR env var.")
+	flag.StringVar(&valkeyPassword, "valkey-password", os.Getenv("VALKEY_PASSWORD"), "The Valkey server password. Can also be set via VALKEY_PASSWORD env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -206,8 +210,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate Valkey configuration
+	if valkeyAddr == "" {
+		setupLog.Error(nil, "Valkey address is required. Set via --valkey-addr flag or VALKEY_ADDR environment variable")
+		os.Exit(1)
+	}
+
 	// Start HTTP server for pipeline runs
-	httpServer := server.NewServer(mgr.GetClient(), httpServerPort)
+	httpServer := server.NewServer(mgr.GetClient(), httpServerPort, valkeyAddr, valkeyPassword)
 	if err := mgr.Add(httpServer); err != nil {
 		setupLog.Error(err, "unable to add HTTP server to manager")
 		os.Exit(1)

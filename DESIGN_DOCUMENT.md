@@ -43,31 +43,31 @@ spec:
   input:
     # bucket is the name of the S3-compatible bucket (required)
     bucket: my-input-bucket
-    
+
     # prefix is an optional path prefix within the bucket (e.g., "input-data/")
     prefix: "images/"
-    
+
     # endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
     # Leave empty for AWS S3 (will use default AWS endpoints)
     endpoint: "http://minio.example.com:9000"
-    
+
     # region is the bucket region (e.g., "us-east-1")
     # Required for AWS S3, optional for other providers
     region: "us-east-1"
-    
+
     # credentialsSecret references a Secret containing access credentials
     # Expected keys: "accessKeyId" and "secretAccessKey"
     credentialsSecret:
       name: s3-credentials
       namespace: default  # optional, defaults to Pipeline namespace
-    
+
     # insecureSkipTLSVerify skips TLS certificate verification (useful for dev/test)
     insecureSkipTLSVerify: false
-    
+
     # usePathStyle forces path-style addressing (endpoint.com/bucket vs bucket.endpoint.com)
     # Required for MinIO and some S3-compatible services
     usePathStyle: true
-  
+
   # filters is an ordered list of processing steps (executed sequentially)
   # At least one filter is required
   filters:
@@ -88,7 +88,7 @@ spec:
           memory: "1Gi"
           cpu: "1000m"
       imagePullPolicy: IfNotPresent  # Always, Never, or IfNotPresent
-    
+
     - name: denoise
       image: ghcr.io/acme/denoise:2.0.0
       args: ["--strength=0.2"]
@@ -113,7 +113,7 @@ spec:
   execution:
     parallelism: 200            # max concurrent pods
     maxAttempts: 3              # per-file
-    visibilityMs: 900000        # Redis re-claim time (15m)
+    pendingTimeout: 900000        # Redis re-claim time (15m)
   queue:
     stream: pr:<runId>:work
     group: cg:<runId>
@@ -137,7 +137,7 @@ status:
 
 1. Loads Pipeline
 2. Lists S3 (ListObjectsV2 with prefix/suffix), streams files
-3. Ensures `XGROUP CREATE` for `pr:<runId>:work/cg:<runId>`
+3. Ensures `XGROUP CREATE` for `pr:<runId>`
 4. `XADD` one message per file: `{run, file, attempts=0}`
 5. Creates PipelineRun with totalFiles, stream, group, and execution settings
 
@@ -186,7 +186,7 @@ spec:
             - { name: STREAM, value: "{{ .spec.queue.stream }}" }
             - { name: GROUP,  value: "{{ .spec.queue.group }}" }
             - { name: REDIS_URL, valueFrom: { secretKeyRef: { name: {{ .spec.queue.redisSecretRef }}, key: url } } }
-            - { name: VISIBILITY_MS, value: "{{ .spec.execution.visibilityMs }}" }
+            - { name: VISIBILITY_MS, value: "{{ .spec.execution.pendingTimeout }}" }
           volumeMounts:
             - { name: ws,   mountPath: /ws }
             - { name: ctrl, mountPath: /ctrl }
@@ -229,7 +229,7 @@ spec:
 
 ### 6.1 API handler
 
-**Input:** `POST /pipelines/{name}/runs` with optional body overrides `{prefix,suffix,parallelism,maxAttempts,visibilityMs}` and `Idempotency-Key` header.
+**Input:** `POST /pipelines/{name}/runs` with optional body overrides `{prefix,suffix,parallelism,maxAttempts,pendingTimeout}` and `Idempotency-Key` header.
 
 **Steps:**
 
@@ -246,7 +246,7 @@ spec:
 2. **Pod watch:** on pod completion, read annotations and perform:
    - **Succeeded:** `XACK(stream, group, mid)`; optionally `XADD` results
    - **Failed:** if `attempts+1 < maxAttempts` → `XADD` back with incremented attempts; else `XADD` to DLQ; in both cases `XACK` original
-3. **Reclaimer:** run `XAUTOCLAIM(stream, group, "controller", visibilityMs, COUNT=100)` to recover messages claimed by pods that died pre-completion
+3. **Reclaimer:** run `XAUTOCLAIM(stream, group, "controller", pendingTimeout, COUNT=100)` to recover messages claimed by pods that died pre-completion
 4. **Status:** periodically compute:
    - `queued := XINFO STREAM stream len`
    - `running := XPENDING stream group count`
@@ -294,7 +294,7 @@ spec:
 ##### A. Init container (claimer/stager)
 
 - **Before claim** → no message involved; pod fails; Job spawns a new pod
-- **After claim, before annotations/download completes** → message is pending in Redis (PEL) under that pod's consumer; the controller's reclaimer (XAUTOCLAIM after visibilityMs) takes it back and re-queues (or DLQs), then a new pod will claim it
+- **After claim, before annotations/download completes** → message is pending in Redis (PEL) under that pod's consumer; the controller's reclaimer (XAUTOCLAIM after pendingTimeout) takes it back and re-queues (or DLQs), then a new pod will claim it
 - **After claim, after annotations patch, download fails** → pod Failed; controller sees mid/file/attempts on the pod annotations → re-enqueue (attempts+1) or DLQ, then ACK the original mid
 
 ##### B. Filter containers (concurrent steps)
@@ -309,7 +309,7 @@ spec:
 
 - Pod dies unexpectedly → init may or may not have claimed a message:
   - **If it didn't:** nothing to do; Job retries
-  - **If it did:** message is pending in Redis → reclaimer recovers it after visibilityMs → re-enqueue or DLQ, then ACK reclaimed entry
+  - **If it did:** message is pending in Redis → reclaimer recovers it after pendingTimeout → re-enqueue or DLQ, then ACK reclaimed entry
 
 #### 2. What the Job controller does vs what our controller does
 
@@ -325,7 +325,7 @@ This separation means the Job keeps the right number of workers running, while o
 
 - **Filter crash (transient):** Pod Failed → controller re-enqueues with attempts+1 → Job spawns a new pod → init claims a new message for that file → try again
 - **Bad input (permanent):** Filters consistently error with e.g. "invalid format" → attempts reaches maxAttempts → controller pushes to dlq with reason → ACKs original → Job continues with other files
-- **Init claimed, node died:** Message stuck pending → controller reclaimer XAUTOCLAIM after visibilityMs → re-enqueue and ACK reclaimed → new pod processes it
+- **Init claimed, node died:** Message stuck pending → controller reclaimer XAUTOCLAIM after pendingTimeout → re-enqueue and ACK reclaimed → new pod processes it
 - **Image pull error:** Pod never starts filters → Pod Failed → controller re-enqueues and ACKs; Job retries depending on backoffLimit. (Operationally you should alert on this class of failure.)
 - **OOMKilled:** Treat as filter failure; same retry/DLQ path. Also add resource limits/requests per filter image to avoid flapping.
 

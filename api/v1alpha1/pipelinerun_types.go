@@ -37,6 +37,10 @@ type PipelineRunSpec struct {
 	// execution defines how the pipeline should be executed
 	// +optional
 	Execution *ExecutionConfig `json:"execution,omitempty"`
+
+	// queue defines the Valkey stream configuration for this run
+	// +required
+	Queue QueueConfig `json:"queue"`
 }
 
 // PipelineReference defines a reference to a Pipeline resource
@@ -51,17 +55,15 @@ type PipelineReference struct {
 	Namespace *string `json:"namespace,omitempty"`
 }
 
-// ExecutionConfig defines execution parameters for the pipeline
-type ExecutionConfig struct {
-	// parallelism defines the maximum number of parallel executions
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	Parallelism *int32 `json:"parallelism,omitempty"`
+// QueueConfig defines the Valkey stream configuration for a pipeline run
+type QueueConfig struct {
+	// stream is the Valkey stream key for work messages (format: pr:<runId>:work)
+	// +required
+	Stream string `json:"stream"`
 
-	// maxAttempts defines the maximum number of retry attempts
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxAttempts *int32 `json:"maxAttempts,omitempty"`
+	// group is the consumer group name (format: cg:<runId>)
+	// +required
+	Group string `json:"group"`
 }
 
 // PipelineRunStatus defines the observed state of PipelineRun.
@@ -71,6 +73,22 @@ type PipelineRunStatus struct {
 
 	// For Kubernetes API conventions, see:
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+
+	// counts tracks the number of files in each state
+	// +optional
+	Counts *FileCounts `json:"counts,omitempty"`
+
+	// jobName is the name of the Kubernetes Job created for this run
+	// +optional
+	JobName string `json:"jobName,omitempty"`
+
+	// startTime is when the pipeline run was started
+	// +optional
+	StartTime *metav1.Time `json:"startTime,omitempty"`
+
+	// completionTime is when the pipeline run completed
+	// +optional
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 
 	// conditions represent the current state of the PipelineRun resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
@@ -85,6 +103,29 @@ type PipelineRunStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// FileCounts tracks the number of files in each processing state
+type FileCounts struct {
+	// totalFiles is the total number of files to process
+	// +optional
+	TotalFiles int64 `json:"totalFiles,omitempty"`
+
+	// queued is the number of files waiting to be processed
+	// +optional
+	Queued int64 `json:"queued,omitempty"`
+
+	// running is the number of files currently being processed
+	// +optional
+	Running int64 `json:"running,omitempty"`
+
+	// succeeded is the number of files successfully processed
+	// +optional
+	Succeeded int64 `json:"succeeded,omitempty"`
+
+	// failed is the number of files that failed processing
+	// +optional
+	Failed int64 `json:"failed,omitempty"`
 }
 
 // +kubebuilder:object:root=true

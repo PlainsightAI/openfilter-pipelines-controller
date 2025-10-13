@@ -43,16 +43,25 @@ spec:
                 description: execution defines how the pipeline should be executed
                 properties:
                   maxAttempts:
+                    default: 3
                     description: maxAttempts defines the maximum number of retry attempts
+                      per file
                     format: int32
                     minimum: 1
                     type: integer
                   parallelism:
+                    default: 10
                     description: parallelism defines the maximum number of parallel
-                      executions
+                      executions (max concurrent pods)
                     format: int32
                     minimum: 1
                     type: integer
+                  pendingTimeout:
+                    default: 15m
+                    description: |-
+                      pendingTimeout defines the time after which pending messages are reclaimed
+                      Supports Kubernetes duration format (e.g., "15m", "1h", "30s")
+                    type: string
                 type: object
               pipelineRef:
                 description: pipelineRef references the Pipeline resource to execute
@@ -68,12 +77,32 @@ spec:
                 required:
                 - name
                 type: object
+              queue:
+                description: queue defines the Valkey stream configuration for this
+                  run
+                properties:
+                  group:
+                    description: 'group is the consumer group name (format: cg:<runId>)'
+                    type: string
+                  stream:
+                    description: 'stream is the Valkey stream key for work messages
+                      (format: pr:<runId>:work)'
+                    type: string
+                required:
+                - group
+                - stream
+                type: object
             required:
             - pipelineRef
+            - queue
             type: object
           status:
             description: status defines the observed state of PipelineRun
             properties:
+              completionTime:
+                description: completionTime is when the pipeline run completed
+                format: date-time
+                type: string
               conditions:
                 description: |-
                   conditions represent the current state of the PipelineRun resource.
@@ -143,6 +172,38 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              counts:
+                description: counts tracks the number of files in each state
+                properties:
+                  failed:
+                    description: failed is the number of files that failed processing
+                    format: int64
+                    type: integer
+                  queued:
+                    description: queued is the number of files waiting to be processed
+                    format: int64
+                    type: integer
+                  running:
+                    description: running is the number of files currently being processed
+                    format: int64
+                    type: integer
+                  succeeded:
+                    description: succeeded is the number of files successfully processed
+                    format: int64
+                    type: integer
+                  totalFiles:
+                    description: totalFiles is the total number of files to process
+                    format: int64
+                    type: integer
+                type: object
+              jobName:
+                description: jobName is the name of the Kubernetes Job created for
+                  this run
+                type: string
+              startTime:
+                description: startTime is when the pipeline run was started
+                format: date-time
+                type: string
             type: object
         required:
         - spec

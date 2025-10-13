@@ -39,6 +39,32 @@ spec:
           spec:
             description: spec defines the desired state of Pipeline
             properties:
+              execution:
+                description: |-
+                  execution defines default execution parameters for pipeline runs
+                  These values can be overridden by individual PipelineRuns
+                properties:
+                  maxAttempts:
+                    default: 3
+                    description: maxAttempts defines the maximum number of retry attempts
+                      per file
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  parallelism:
+                    default: 10
+                    description: parallelism defines the maximum number of parallel
+                      executions (max concurrent pods)
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  pendingTimeout:
+                    default: 15m
+                    description: |-
+                      pendingTimeout defines the time after which pending messages are reclaimed
+                      Supports Kubernetes duration format (e.g., "15m", "1h", "30s")
+                    type: string
+                type: object
               filters:
                 description: |-
                   filters is an ordered list of processing steps to apply to the input data

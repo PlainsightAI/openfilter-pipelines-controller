@@ -1,5 +1,6 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
+CLAIMER_IMG ?= claimer:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -108,6 +109,10 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
+.PHONY: build-claimer
+build-claimer: fmt vet ## Build claimer binary.
+	go build -o bin/claimer cmd/claimer/main.go
+
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	VALKEY_ADDR=$${VALKEY_ADDR:-localhost:6379} VALKEY_PASSWORD=$${VALKEY_PASSWORD:-} go run ./cmd/main.go
@@ -122,6 +127,14 @@ docker-build: ## Build docker image with the manager.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-build-claimer
+docker-build-claimer: ## Build docker image for claimer.
+	$(CONTAINER_TOOL) build -t ${CLAIMER_IMG} -f cmd/claimer/Dockerfile .
+
+.PHONY: docker-push-claimer
+docker-push-claimer: ## Push docker image for claimer.
+	$(CONTAINER_TOOL) push ${CLAIMER_IMG}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -139,6 +152,15 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm openfilter-pipelines-runner-builder
 	rm Dockerfile.cross
+
+.PHONY: docker-buildx-claimer
+docker-buildx-claimer: ## Build and push docker image for claimer for cross-platform support
+	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' cmd/claimer/Dockerfile > cmd/claimer/Dockerfile.cross
+	- $(CONTAINER_TOOL) buildx create --name openfilter-pipelines-runner-claimer-builder
+	$(CONTAINER_TOOL) buildx use openfilter-pipelines-runner-claimer-builder
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${CLAIMER_IMG} -f cmd/claimer/Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx rm openfilter-pipelines-runner-claimer-builder
+	rm cmd/claimer/Dockerfile.cross
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.

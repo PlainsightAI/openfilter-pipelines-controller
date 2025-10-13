@@ -1,0 +1,90 @@
+# Example Job manifest showing how to use the claimer init container
+# with the pipeline-exec ServiceAccount for RBAC
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: example-pipeline-run
+  namespace: default
+spec:
+  completionMode: NonIndexed
+  completions: 10
+  parallelism: 3
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        pipelines.plainsight.ai/run: "example-run-abc123"
+    spec:
+      # Use the pipeline-exec ServiceAccount for RBAC permissions
+      serviceAccountName: pipeline-exec
+      restartPolicy: Never
+
+      volumes:
+        - name: workspace
+          emptyDir: {}
+
+      initContainers:
+        # Claimer init container claims work from Valkey stream
+        - name: claimer
+          image: ghcr.io/plainsightai/openfilter-claimer:latest
+          env:
+            # Valkey connection
+            - name: VALKEY_URL
+              value: "valkey:6379"
+
+            # Stream and consumer group from PipelineRun
+            - name: STREAM
+              value: "pr:example-run-abc123:work"
+            - name: GROUP
+              value: "cg:example-run-abc123"
+
+            # Pod identity (auto-injected by Kubernetes)
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+            # S3/MinIO configuration
+            - name: S3_BUCKET
+              value: "input-bucket"
+            - name: S3_ENDPOINT
+              value: "http://minio:9000"
+            - name: S3_REGION
+              value: "us-east-1"
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: accessKeyId
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: secretAccessKey
+            - name: S3_USE_PATH_STYLE
+              value: "true"
+            - name: S3_INSECURE_SKIP_TLS_VERIFY
+              value: "true"
+
+          volumeMounts:
+            - name: workspace
+              mountPath: /ws
+
+      containers:
+        # Example filter container
+        - name: example-filter
+          image: busybox:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Processing file from /ws/input"
+              ls -la /ws/input
+              echo "Filter complete"
+          volumeMounts:
+            - name: workspace
+              mountPath: /ws

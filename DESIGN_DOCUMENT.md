@@ -2,12 +2,12 @@
 
 ## 1. Summary
 
-We're building a Kubernetes-native batch executor that processes large file sets through a configurable pipeline of containerized filters. Execution is triggered via an HTTP API (served by the controller binary). The API lists files in an S3-compatible bucket, enqueues one Redis Stream message per file, and creates a PipelineRun CR. The controller reconciles PipelineRun by creating exactly one Kubernetes Job whose pods each process one message: an init container claims a message + downloads the file, filter containers run (in parallel or chained), the pod terminates, and the controller ACKs the message and decides requeue/DLQ policies.
+We're building a Kubernetes-native batch executor that processes large file sets through a configurable pipeline of containerized filters. Execution is triggered via an HTTP API (served by the controller binary). The API lists files in an S3-compatible bucket, enqueues one Valkey Stream message per file, and creates a PipelineRun CR. The controller reconciles PipelineRun by creating exactly one Kubernetes Job whose pods each process one message: an init container claims a message + downloads the file, filter containers run (in parallel or chained), the pod terminates, and the controller ACKs the message and decides requeue/DLQ policies.
 
 ### Key Attributes
 
 - **Kubernetes-native orchestration** via a single Job per run (simple lifecycle, easy ops)
-- **At-least-once delivery** using Redis Streams consumer groups
+- **At-least-once delivery** using Valkey Streams consumer groups
 - **Compact CRD status**; detailed outcomes via logs/streams/optional manifest
 - **Works at 10k–100k+ files** with bounded API server load
 
@@ -18,7 +18,7 @@ We're building a Kubernetes-native batch executor that processes large file sets
 - Trigger pipelines via an HTTP API deployed with the controller
 - Pipeline defined as a CRD (Pipeline) with list of filters (images/args/env) and input bucket
 - Each PipelineRun creates one Job with `completions = totalFiles`, `parallelism = user-tunable`
-- Init container per pod: claim one message from Redis Stream and stage input from S3, then exit
+- Init container per pod: claim one message from Valkey Stream and stage input from S3, then exit
 - Filters as normal containers run concurrently (or sequentially) against staged input
 - Controller (not pods) ACKs messages and handles retries/DLQ
 - Scalable to thousands of files without per-file Job objects
@@ -28,7 +28,7 @@ We're building a Kubernetes-native batch executor that processes large file sets
 
 - Complex DAG orchestration (Argo/Tekton territory)
 - Exactly-once semantics (we use at-least-once + idempotent outputs)
-- In-pod Redis ACKs (controller is the authority)
+- In-pod Valkey ACKs (controller is the authority)
 
 ## 3. CRDs
 
@@ -113,11 +113,11 @@ spec:
   execution:
     parallelism: 200            # max concurrent pods
     maxAttempts: 3              # per-file
-    pendingTimeout: 900000        # Redis re-claim time (15m)
+    pendingTimeout: 900000        # Valkey re-claim time (15m)
   queue:
     stream: pr:<runId>:work
     group: cg:<runId>
-    redisSecretRef: redis-creds
+    valkeySecretRef: valkey-creds
 status:
   counts:
     totalFiles: 0
@@ -144,8 +144,8 @@ status:
 ### Reconciler (PipelineRun)
 
 1. Creates one Job (owner-referenced) with `completions=totalFiles`, `parallelism=...`
-2. Watches Pods; on Succeeded/Failed, performs ACK/retry/DLQ via Redis
-3. Periodically updates `status.counts` using Redis metrics (XINFO, XPENDING, XLEN)
+2. Watches Pods; on Succeeded/Failed, performs ACK/retry/DLQ via Valkey
+3. Periodically updates `status.counts` using Valkey metrics (XINFO, XPENDING, XLEN)
 4. Runs a reclaimer (XAUTOCLAIM) for stale pending entries
 5. Marks run Succeeded when `(queued==0 && pending==0)` and Job is Complete
 
@@ -185,7 +185,7 @@ spec:
           env:
             - { name: STREAM, value: "{{ .spec.queue.stream }}" }
             - { name: GROUP,  value: "{{ .spec.queue.group }}" }
-            - { name: REDIS_URL, valueFrom: { secretKeyRef: { name: {{ .spec.queue.redisSecretRef }}, key: url } } }
+            - { name: VALKEY_URL, valueFrom: { secretKeyRef: { name: {{ .spec.queue.valkeySecretRef }}, key: url } } }
             - { name: VISIBILITY_MS, value: "{{ .spec.execution.pendingTimeout }}" }
           volumeMounts:
             - { name: ws,   mountPath: /ws }
@@ -211,9 +211,9 @@ spec:
 ### 5.2 Init "claimer" behavior
 
 1. `XREADGROUP GROUP cg:<runId> <pod> COUNT 1 BLOCK 0 STREAMS pr:<runId>:work ">"` → `{mid, file, attempts}` (no ACK)
-2. Download file → `/ws/in/input` (S3 client with IRSA/Workload Identity creds)
+2. Download file → `/ws/input` use the same credentials as the pipeline
 3. Patch own Pod annotations with:
-   - `queue.redis.mid`
+   - `queue.valkey.mid`
    - `queue.file`
    - `queue.attempts`
 4. Exit → filter containers start
@@ -235,7 +235,7 @@ spec:
 
 1. Get Pipeline
 2. List S3 with filters; stream keys
-3. Create Redis stream + group if absent
+3. Create Valkey stream + group if absent
 4. `XADD` one message per file: `{run, file, attempts=0}`
 5. Create PipelineRun with execution + queue info; set `status.counts.totalFiles`
 6. Return `201 {runId, pipelineRun, totalFiles}`
@@ -256,7 +256,7 @@ spec:
 
 ## 7. Data Model & Naming
 
-### Redis keys per run
+### Valkey keys per run
 
 - **Work stream:** `pr:<runId>:work`
 - **Consumer group:** `cg:<runId>`
@@ -269,7 +269,7 @@ spec:
 
 ### Pod annotations
 
-- `queue.redis.mid`
+- `queue.valkey.mid`
 - `queue.file`
 - `queue.attempts`
 
@@ -284,8 +284,8 @@ spec:
 - **Init claimed then pod/node died:** message stays pending; reclaimer XAUTOCLAIM rehomes; controller re-enqueues (attempts++) or DLQs; XACK reclaimed
 - **Filter crashes:** Pod Failed; controller retries per maxAttempts then DLQs; Job controller creates replacement pod until completions
 - **S3 transient errors:** init download fails → pod Failed → retry path
-- **Redis outage:** init blocks on XREADGROUP; reconciler pauses; Job pods back off
-- **Oversized buckets:** API streams XADD without buffering; Redis memory sizing required
+- **Valkey outage:** init blocks on XREADGROUP; reconciler pauses; Job pods back off
+- **Oversized buckets:** API streams XADD without buffering; Valkey memory sizing required
 
 ### How failures are handled (end-to-end)
 
@@ -294,7 +294,7 @@ spec:
 ##### A. Init container (claimer/stager)
 
 - **Before claim** → no message involved; pod fails; Job spawns a new pod
-- **After claim, before annotations/download completes** → message is pending in Redis (PEL) under that pod's consumer; the controller's reclaimer (XAUTOCLAIM after pendingTimeout) takes it back and re-queues (or DLQs), then a new pod will claim it
+- **After claim, before annotations/download completes** → message is pending in Valkey (PEL) under that pod's consumer; the controller's reclaimer (XAUTOCLAIM after pendingTimeout) takes it back and re-queues (or DLQs), then a new pod will claim it
 - **After claim, after annotations patch, download fails** → pod Failed; controller sees mid/file/attempts on the pod annotations → re-enqueue (attempts+1) or DLQ, then ACK the original mid
 
 ##### B. Filter containers (concurrent steps)
@@ -309,11 +309,11 @@ spec:
 
 - Pod dies unexpectedly → init may or may not have claimed a message:
   - **If it didn't:** nothing to do; Job retries
-  - **If it did:** message is pending in Redis → reclaimer recovers it after pendingTimeout → re-enqueue or DLQ, then ACK reclaimed entry
+  - **If it did:** message is pending in Valkey → reclaimer recovers it after pendingTimeout → re-enqueue or DLQ, then ACK reclaimed entry
 
 #### 2. What the Job controller does vs what our controller does
 
-- **Kubernetes Job controller:** replaces failed pods until the Job reaches completions successes or hits backoffLimit. It doesn't know about Redis.
+- **Kubernetes Job controller:** replaces failed pods until the Job reaches completions successes or hits backoffLimit. It doesn't know about Valkey.
 - **Our controller:** is the source of truth for the queue. It watches pod completion events and performs:
   - Succeeded → `XACK(mid)`
   - Failed → re-enqueue/DLQ (based on attempts), then `XACK(mid)`
@@ -331,7 +331,7 @@ This separation means the Job keeps the right number of workers running, while o
 
 ### What shows up in status
 
-`PipelineRun.status.counts` is kept compact and derives from Redis:
+`PipelineRun.status.counts` is kept compact and derives from Valkey:
 
 - `queued = XINFO STREAM <work>.length`
 - `running = XPENDING <work> <group>.count`
@@ -352,14 +352,14 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 - **Worker SA:** `get`, `patch` on Pods in namespace (to annotate mid/file/attempts)
 - **Controller:** CRUD on PipelineRun, Jobs, Pods (read), status updates
 
-### Redis ACLs
+### Valkey ACLs
 
 - **Worker init:** XREADGROUP only (no XACK)
 - **Controller:** XGROUP, XADD, XACK, XPENDING, XINFO, XAUTOCLAIM
 
 ### NetworkPolicy
 
-- Allow controller + workers → Redis; restrict others
+- Allow controller + workers → Valkey; restrict others
 
 ## 10. Observability
 
@@ -385,9 +385,9 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 ## 11. Scaling & Performance
 
 - **Concurrency:** tune parallelism per run; Job controller throttles pod creation; cluster autoscaler provisions nodes
-- **Throughput:** bounded by filter CPU/IO and S3/Redis limits; consider s5cmd/minio mc for faster downloads
+- **Throughput:** bounded by filter CPU/IO and S3/Valkey limits; consider s5cmd/minio mc for faster downloads
 - **Retry policy:** exponential backoff per re-enqueue (store attempts, optionally next_at)
-- **Large runs:** memory-size Redis to hold N messages; trim results stream; GC after completion
+- **Large runs:** memory-size Valkey to hold N messages; trim results stream; GC after completion
 
 ## 12. Testing Strategy
 
@@ -398,7 +398,7 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 - Reconciler (ACK/retry)
 - Reclaimer
 
-### Integration (kind/minio/redis)
+### Integration (kind/minio/valkey)
 
 - **Small run:** 100 files, parallelism=20, inject 5% failures → verify retries/DLQ
 - **Crash resilience:** kill nodes mid-run → ensure XAUTOCLAIM recovery
@@ -410,10 +410,10 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 
 ## 13. Rollout Plan
 
-1. Deploy Redis (HA) and MinIO (if not using cloud S3); create redis-creds secret
+1. Deploy Valkey (HA) and MinIO (if not using cloud S3); create valkey-creds secret
 2. Deploy controller + CRDs
 3. Dry-run with test pipeline (tiny filters) and small bucket
-4. Gradually raise parallelism while watching cluster utilization and Redis metrics
+4. Gradually raise parallelism while watching cluster utilization and Valkey metrics
 5. Enable autoscaling (nodes) and adjust resource limits per filter
 6. Add alerts on DLQ growth, high retries, long pending entries
 

@@ -192,10 +192,10 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enqueue all files to the stream
+	// Enqueue all files to the stream with attempts=0
 	enqueuedCount := int64(0)
 	for _, file := range files {
-		_, err := valkeyClient.EnqueueFile(ctx, streamKey, runID, file)
+		_, err := valkeyClient.EnqueueFileWithAttempts(ctx, streamKey, runID, file, 0)
 		if err != nil {
 			logger.Error(err, "Failed to enqueue file", "file", file)
 			// Continue with other files even if one fails

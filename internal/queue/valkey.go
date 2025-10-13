@@ -54,12 +54,6 @@ func (v *ValkeyClient) Close() {
 	v.client.Close()
 }
 
-// Ping verifies the connection to Valkey
-func (v *ValkeyClient) Ping(ctx context.Context) error {
-	cmd := v.client.B().Ping().Build()
-	return v.client.Do(ctx, cmd).Error()
-}
-
 // CreateStreamAndGroup creates a Valkey stream and consumer group for a pipeline run
 // If the stream doesn't exist, it creates it with MKSTREAM
 // Then creates the consumer group starting from the beginning of the stream
@@ -85,16 +79,16 @@ func (v *ValkeyClient) CreateStreamAndGroup(ctx context.Context, streamKey, grou
 	return nil
 }
 
-// EnqueueFile adds a file to the work stream for processing
-// Message format: {run: runId, file: filepath, attempts: 0}
-func (v *ValkeyClient) EnqueueFile(ctx context.Context, streamKey, runID, filepath string) (string, error) {
+// EnqueueFileWithAttempts adds a file to the work stream with a specific attempts count
+// Message format: {run: runId, file: filepath, attempts: attemptsCount}
+func (v *ValkeyClient) EnqueueFileWithAttempts(ctx context.Context, streamKey, runID, filepath string, attempts int) (string, error) {
 	cmd := v.client.B().Xadd().
 		Key(streamKey).
 		Id("*").
 		FieldValue().
 		FieldValue("run", runID).
 		FieldValue("file", filepath).
-		FieldValue("attempts", "0").
+		FieldValue("attempts", strconv.Itoa(attempts)).
 		Build()
 
 	result := v.client.Do(ctx, cmd)
@@ -155,40 +149,6 @@ func (v *ValkeyClient) GetPendingCount(ctx context.Context, streamKey, groupName
 	}
 
 	return count, nil
-}
-
-// StreamInfo contains information about a stream
-type StreamInfo struct {
-	Length         int64
-	ConsumerGroups int64
-}
-
-// GetStreamInfo returns information about a stream
-func (v *ValkeyClient) GetStreamInfo(ctx context.Context, streamKey string) (*StreamInfo, error) {
-	cmd := v.client.B().XinfoStream().Key(streamKey).Build()
-	result := v.client.Do(ctx, cmd)
-
-	if result.Error() != nil {
-		return nil, fmt.Errorf("failed to get stream info: %w", result.Error())
-	}
-
-	// Parse the response map
-	infoMap, err := result.AsMap()
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse stream info: %w", err)
-	}
-
-	info := &StreamInfo{}
-
-	if lengthVal, ok := infoMap["length"]; ok {
-		info.Length, _ = lengthVal.AsInt64()
-	}
-
-	if groupsVal, ok := infoMap["groups"]; ok {
-		info.ConsumerGroups, _ = groupsVal.AsInt64()
-	}
-
-	return info, nil
 }
 
 // AckMessage acknowledges a message in the stream
@@ -295,15 +255,5 @@ func (v *ValkeyClient) AddToDLQ(ctx context.Context, dlqKey, runID, filepath str
 		return fmt.Errorf("failed to add to DLQ: %w", err)
 	}
 
-	return nil
-}
-
-// DeleteStream deletes a stream (useful for cleanup)
-func (v *ValkeyClient) DeleteStream(ctx context.Context, streamKey string) error {
-	cmd := v.client.B().Del().Key(streamKey).Build()
-	err := v.client.Do(ctx, cmd).Error()
-	if err != nil {
-		return fmt.Errorf("failed to delete stream %s: %w", streamKey, err)
-	}
 	return nil
 }

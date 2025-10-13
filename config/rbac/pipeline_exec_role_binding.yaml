@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pipeline-exec-rolebinding
+  namespace: system
+  labels:
+    app.kubernetes.io/name: openfilter-pipelines-runner
+    app.kubernetes.io/component: pipeline-executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pipeline-exec-role
+subjects:
+  - kind: ServiceAccount
+    name: pipeline-exec
+    namespace: system

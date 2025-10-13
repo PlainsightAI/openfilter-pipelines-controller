@@ -597,14 +597,14 @@ func (r *PipelineRunReconciler) updateStatus(ctx context.Context, pipelineRun *p
 		pipelineRun.Status.Counts = &pipelinesv1alpha1.FileCounts{}
 	}
 
-	// Get queued count (stream length)
-	queued, err := r.ValkeyClient.GetStreamLength(ctx, pipelineRun.Spec.Queue.Stream)
+	// Get queued count (consumer group lag - messages not yet read)
+	queued, err := r.ValkeyClient.GetConsumerGroupLag(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group)
 	if err != nil {
-		log.Error(err, "Failed to get stream length")
+		log.Error(err, "Failed to get consumer group lag")
 		queued = 0
 	}
 
-	// Get running count (pending messages)
+	// Get running count (pending messages - read but not acknowledged)
 	running, err := r.ValkeyClient.GetPendingCount(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group)
 	if err != nil {
 		log.Error(err, "Failed to get pending count")
@@ -616,7 +616,6 @@ func (r *PipelineRunReconciler) updateStatus(ctx context.Context, pipelineRun *p
 	dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
 	failed, err := r.ValkeyClient.GetStreamLength(ctx, dlqKey)
 	if err != nil {
-		// DLQ might not exist yet, which is fine
 		failed = 0
 	}
 
@@ -643,26 +642,23 @@ func (r *PipelineRunReconciler) checkCompletion(ctx context.Context, pipelineRun
 		return false, nil
 	}
 
-	// Check if Job is complete
-	if pipelineRun.Status.JobName != "" {
-		job := &batchv1.Job{}
-		err := r.Get(ctx, types.NamespacedName{
-			Name:      pipelineRun.Status.JobName,
-			Namespace: pipelineRun.Namespace,
-		}, job)
+	queued := pipelineRun.Status.Counts.Queued
+	running := pipelineRun.Status.Counts.Running
 
-		if err != nil {
-			return false, fmt.Errorf("failed to get job: %w", err)
-		}
+	if queued == 0 && running == 0 {
+		if pipelineRun.Status.JobName != "" {
+			job := &batchv1.Job{}
+			err := r.Get(ctx, types.NamespacedName{
+				Name:      pipelineRun.Status.JobName,
+				Namespace: pipelineRun.Namespace,
+			}, job)
 
-		// Check if Job has completed successfully
-		for _, condition := range job.Status.Conditions {
-			if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
-				// Job is complete, check queue status
-				queued := pipelineRun.Status.Counts.Queued
-				running := pipelineRun.Status.Counts.Running
+			if err != nil {
+				return false, fmt.Errorf("failed to get job: %w", err)
+			}
 
-				if queued == 0 && running == 0 {
+			for _, condition := range job.Status.Conditions {
+				if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
 					return true, nil
 				}
 			}

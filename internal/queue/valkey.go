@@ -257,3 +257,49 @@ func (v *ValkeyClient) AddToDLQ(ctx context.Context, dlqKey, runID, filepath str
 
 	return nil
 }
+
+// GetConsumerGroupLag returns the lag (unread messages) for a consumer group
+func (v *ValkeyClient) GetConsumerGroupLag(ctx context.Context, streamKey, groupName string) (int64, error) {
+	cmd := v.client.B().XinfoGroups().Key(streamKey).Build()
+	result := v.client.Do(ctx, cmd)
+
+	if result.Error() != nil {
+		return 0, fmt.Errorf("failed to get consumer group info: %w", result.Error())
+	}
+
+	groups, err := result.ToArray()
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse group info: %w", err)
+	}
+
+	for _, groupVal := range groups {
+		groupInfo, err := groupVal.ToMap()
+		if err != nil {
+			continue
+		}
+
+		nameVal, ok := groupInfo["name"]
+		if !ok {
+			continue
+		}
+
+		name, err := nameVal.ToString()
+		if err != nil || name != groupName {
+			continue
+		}
+
+		lagVal, ok := groupInfo["lag"]
+		if !ok {
+			return 0, nil
+		}
+
+		lag, err := lagVal.AsInt64()
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse lag: %w", err)
+		}
+
+		return lag, nil
+	}
+
+	return 0, fmt.Errorf("consumer group %s not found", groupName)
+}

@@ -7,32 +7,10 @@ metadata:
   name: pipeline-sample
 spec:
   input:
-    bucket: my-pipeline-data
-    prefix: input/
-    region: us-west-2
+    bucket: cow-demo-development
+    prefix: videos
+    endpoint: storage.googleapis.com
     credentialsSecret:
-      name: s3-credentials
+      name: gcs-credentials
 
   filters:
-    - name: format-converter
-      image: myregistry/format-converter:v1.0
-      env:
-        - name: INPUT_FORMAT
-          value: "raw"
-        - name: OUTPUT_FORMAT
-          value: "png"
-      resources:
-        requests:
-          cpu: "100m"
-          memory: "128Mi"
-        limits:
-          cpu: "500m"
-          memory: "512Mi"
-
-    - name: image-resizer
-      image: myregistry/image-resizer:v2.0
-      env:
-        - name: MAX_DIMENSION
-          value: "2048"
-        - name: QUALITY
-          value: "85"

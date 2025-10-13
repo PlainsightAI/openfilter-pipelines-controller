@@ -37,6 +37,7 @@ import (
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1"
 	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/controller"
+	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/server"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -61,9 +62,11 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var httpServerPort int
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
+	flag.IntVar(&httpServerPort, "http-server-port", 8080, "The port for the HTTP API server.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -200,6 +203,13 @@ func main() {
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
+
+	// Start HTTP server for pipeline runs
+	httpServer := server.NewServer(mgr.GetClient(), httpServerPort)
+	if err := mgr.Add(httpServer); err != nil {
+		setupLog.Error(err, "unable to add HTTP server to manager")
 		os.Exit(1)
 	}
 

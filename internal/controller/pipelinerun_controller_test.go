@@ -846,6 +846,115 @@ var _ = Describe("PipelineRun Controller", func() {
 			Expect(pipelineRun.Status.CompletionTime).NotTo(BeNil())
 		})
 
+		It("should mark PipelineRun as Degraded when the backing Job fails", func() {
+			mockValkey.ConsumerGroupLag = 0
+			mockValkey.PendingCount = 0
+
+			runID := fmt.Sprintf("run%d", testCounter)
+			pipelineRun = &pipelinesv1alpha1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineRunName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineRunSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					Queue: pipelinesv1alpha1.QueueConfig{
+						Stream: fmt.Sprintf("pr:%s:work", runID),
+						Group:  fmt.Sprintf("cg:%s", runID),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			// First reconcile initializes TotalFiles
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Ensure TotalFiles populated before job creation
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.Status.Counts != nil && pipelineRun.Status.Counts.TotalFiles == mockValkey.StreamLength
+			}, timeout, interval).Should(BeTrue())
+
+			// Second reconcile should create the Job
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			job := &batchv1.Job{}
+			Eventually(func() error {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun); err != nil {
+					return err
+				}
+				if pipelineRun.Status.JobName == "" {
+					return fmt.Errorf("job name not set yet")
+				}
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      pipelineRun.Status.JobName,
+					Namespace: namespace,
+				}, job)
+			}, timeout, interval).Should(Succeed())
+
+			// Simulate job failure
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Conditions = []batchv1.JobCondition{
+				{
+					Type:               batchv1.JobFailureTarget,
+					Status:             corev1.ConditionTrue,
+					Reason:             "BackoffLimitExceeded",
+					Message:            "Job has reached the specified backoff limit",
+					LastTransitionTime: now,
+				},
+				{
+					Type:               batchv1.JobFailed,
+					Status:             corev1.ConditionTrue,
+					Reason:             "BackoffLimitExceeded",
+					Message:            "Job has reached the specified backoff limit",
+					LastTransitionTime: now,
+				},
+			}
+			job.Status.Failed = 1
+			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+
+			// Reconcile to process the failed job state
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Validate degraded status conditions
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				if err != nil {
+					return false
+				}
+
+				degradedCond := meta.FindStatusCondition(pipelineRun.Status.Conditions, ConditionTypeDegraded)
+				progressingCond := meta.FindStatusCondition(pipelineRun.Status.Conditions, ConditionTypeProgressing)
+				succeededCond := meta.FindStatusCondition(pipelineRun.Status.Conditions, ConditionTypeSucceeded)
+
+				if degradedCond == nil || degradedCond.Status != metav1.ConditionTrue {
+					return false
+				}
+
+				if progressingCond == nil || progressingCond.Status != metav1.ConditionFalse {
+					return false
+				}
+
+				if succeededCond == nil || succeededCond.Status != metav1.ConditionFalse {
+					return false
+				}
+
+				return pipelineRun.Status.CompletionTime != nil && degradedCond.Reason == "BackoffLimitExceeded"
+			}, timeout, interval).Should(BeTrue())
+		})
+
 		It("should handle Pipeline not found error", func() {
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{

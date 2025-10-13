@@ -115,7 +115,7 @@ build-claimer: fmt vet ## Build claimer binary.
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	VALKEY_ADDR=$${VALKEY_ADDR:-localhost:6379} VALKEY_PASSWORD=$${VALKEY_PASSWORD:-} go run ./cmd/main.go
+	VALKEY_ADDR=$${VALKEY_ADDR:-valkey.default.svc.cluster.local:6379} VALKEY_PASSWORD=$${VALKEY_PASSWORD:-} go run ./cmd/main.go
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

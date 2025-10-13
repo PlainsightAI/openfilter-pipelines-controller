@@ -170,6 +170,41 @@ func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// Don't fail reconciliation, just log and continue
 	}
 
+	// Detect job failure and mark the run as degraded
+	if failedCond, err := r.checkFailure(ctx, pipelineRun); err != nil {
+		log.Error(err, "Failed to check job failure state")
+	} else if failedCond != nil {
+		failureReason := failedCond.Reason
+		if failureReason == "" {
+			failureReason = "JobFailed"
+		}
+
+		failureMessage := failedCond.Message
+		if failureMessage == "" {
+			failureMessage = fmt.Sprintf("Job %s failed", pipelineRun.Status.JobName)
+		} else {
+			failureMessage = fmt.Sprintf("Job %s failed: %s", pipelineRun.Status.JobName, failureMessage)
+		}
+
+		log.Info("PipelineRun marked as Degraded due to job failure", "job", pipelineRun.Status.JobName, "reason", failureReason)
+		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, failureReason, failureMessage)
+		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, failureReason, failureMessage)
+		r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionFalse, failureReason, failureMessage)
+
+		if pipelineRun.Status.CompletionTime == nil {
+			now := metav1.Now()
+			pipelineRun.Status.CompletionTime = &now
+		}
+
+		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+			log.Error(err, "Failed to update status after marking run degraded")
+			return ctrl.Result{}, err
+		}
+
+		// No further processing is required once the run has failed
+		return ctrl.Result{}, nil
+	}
+
 	// Step 5: Check for completion
 	isComplete, err := r.checkCompletion(ctx, pipelineRun)
 	if err != nil {
@@ -682,6 +717,35 @@ func (r *PipelineRunReconciler) checkCompletion(ctx context.Context, pipelineRun
 	}
 
 	return false, nil
+}
+
+// checkFailure inspects the backing Job for failure conditions.
+func (r *PipelineRunReconciler) checkFailure(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) (*batchv1.JobCondition, error) {
+	if pipelineRun.Status.JobName == "" {
+		return nil, nil
+	}
+
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      pipelineRun.Status.JobName,
+		Namespace: pipelineRun.Namespace,
+	}, job)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Job was deleted; treat as no failure condition yet.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get job: %w", err)
+	}
+
+	for i := range job.Status.Conditions {
+		cond := &job.Status.Conditions[i]
+		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
+			return cond, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // setCondition sets or updates a condition in the PipelineRun status

@@ -1,0 +1,30 @@
+apiVersion: pipelines.plainsight.ai/v1alpha1
+kind: Pipeline
+metadata:
+  labels:
+    app.kubernetes.io/name: openfilter-pipelines-runner
+    app.kubernetes.io/managed-by: kustomize
+  name: pipeline-failure-sample
+  namespace: default
+spec:
+  input:
+    bucket: cow-demo-development
+    prefix: videos
+    endpoint: storage.googleapis.com
+    credentialsSecret:
+      name: gcs-credentials
+
+  execution:
+    parallelism: 1
+    maxAttempts: 1
+    pendingTimeout: 1m
+
+  filters:
+    - name: intentional-failure
+      image: alpine:3.19
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "Intentional failure filter running" >&2
+          exit 42
+      imagePullPolicy: IfNotPresent

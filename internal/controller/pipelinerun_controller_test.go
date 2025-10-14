@@ -49,6 +49,7 @@ type MockValkeyClient struct {
 	DLQEntries         []mockDLQEntry
 	AutoClaimMessages  []mockMessage
 	AutoClaimCallCount int
+	DeletedMessageIDs  []string
 }
 
 type mockMessage struct {
@@ -119,6 +120,24 @@ func (m *MockValkeyClient) AutoClaim(ctx context.Context, streamKey, groupName, 
 		}
 	}
 	return messages, nil
+}
+
+func (m *MockValkeyClient) ReadRange(ctx context.Context, streamKey, start, end string, count int64) ([]queue.XMessage, error) {
+	result := make([]queue.XMessage, len(m.Messages))
+	for i, msg := range m.Messages {
+		result[i] = queue.XMessage{
+			ID:     msg.ID,
+			Values: msg.Values,
+		}
+	}
+	// Simulate messages being consumed once read.
+	m.Messages = nil
+	return result, nil
+}
+
+func (m *MockValkeyClient) DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error {
+	m.DeletedMessageIDs = append(m.DeletedMessageIDs, messageIDs...)
+	return nil
 }
 
 var _ = Describe("PipelineRun Controller", func() {
@@ -952,6 +971,244 @@ var _ = Describe("PipelineRun Controller", func() {
 				}
 
 				return pipelineRun.Status.CompletionTime != nil && degradedCond.Reason == "BackoffLimitExceeded"
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should re-enqueue when a pod is stuck in ImagePullBackOff", func() {
+			runID := fmt.Sprintf("run%d", testCounter)
+			pipelineRun = &pipelinesv1alpha1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineRunName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineRunSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					Queue: pipelinesv1alpha1.QueueConfig{
+						Stream: fmt.Sprintf("pr:%s:work", runID),
+						Group:  fmt.Sprintf("cg:%s", runID),
+					},
+					Execution: &pipelinesv1alpha1.ExecutionConfig{
+						MaxAttempts: ptr.To(int32(2)),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			for i := 0; i < 2; i++ {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace},
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.Status.JobName != ""
+			}, timeout, interval).Should(BeTrue())
+
+			imagePullPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("image-pull-pod-%d", testCounter),
+					Namespace: namespace,
+					Labels: map[string]string{
+						"pipelines.plainsight.ai/run": runID,
+					},
+					Annotations: map[string]string{
+						AnnotationMessageID: "msg-imagepull",
+						AnnotationFile:      "videos/file1.mp4",
+						AnnotationAttempts:  "0",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "test-filter",
+							Image: "ghcr.io/does/not-exist:latest",
+						},
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodPending,
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "test-filter",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason:  "ImagePullBackOff",
+									Message: "Back-off pulling image",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, imagePullPod)).To(Succeed())
+
+			Eventually(func() error {
+				existing := &corev1.Pod{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      imagePullPod.Name,
+					Namespace: namespace,
+				}, existing); err != nil {
+					return err
+				}
+				existing.Status = corev1.PodStatus{
+					Phase: corev1.PodPending,
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "test-filter",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason:  "ImagePullBackOff",
+									Message: "Back-off pulling image",
+								},
+							},
+						},
+					},
+				}
+				return k8sClient.Status().Update(ctx, existing)
+			}, timeout, interval).Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				for _, entry := range mockValkey.EnqueuedFiles {
+					if entry.RunID == runID && entry.Attempts == 1 && entry.Filepath == "videos/file1.mp4" {
+						return true
+					}
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(mockValkey.AckedMessages).To(ContainElement("msg-imagepull"))
+
+			Eventually(func() bool {
+				pod := &corev1.Pod{}
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      imagePullPod.Name,
+					Namespace: namespace,
+				}, pod)
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should re-enqueue when a pod is crash looping", func() {
+			runID := fmt.Sprintf("run%d", testCounter)
+			pipelineRun = &pipelinesv1alpha1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineRunName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineRunSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					Queue: pipelinesv1alpha1.QueueConfig{
+						Stream: fmt.Sprintf("pr:%s:work", runID),
+						Group:  fmt.Sprintf("cg:%s", runID),
+					},
+					Execution: &pipelinesv1alpha1.ExecutionConfig{
+						MaxAttempts: ptr.To(int32(2)),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			for i := 0; i < 2; i++ {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace},
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.Status.JobName != ""
+			}, timeout, interval).Should(BeTrue())
+
+			crashLoopPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("crashloop-pod-%d", testCounter),
+					Namespace: namespace,
+					Labels: map[string]string{
+						"pipelines.plainsight.ai/run": runID,
+					},
+					Annotations: map[string]string{
+						AnnotationMessageID: "msg-crashloop",
+						AnnotationFile:      "videos/file2.mp4",
+						AnnotationAttempts:  "1",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "test-filter",
+							Image: "example/crashloop:latest",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, crashLoopPod)).To(Succeed())
+
+			Eventually(func() error {
+				existing := &corev1.Pod{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      crashLoopPod.Name,
+					Namespace: namespace,
+				}, existing); err != nil {
+					return err
+				}
+				existing.Status = corev1.PodStatus{
+					Phase: corev1.PodPending,
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "test-filter",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason:  "CrashLoopBackOff",
+									Message: "back-off 5m0s restarting failed container",
+								},
+							},
+							LastTerminationState: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									ExitCode: 137,
+									Reason:   "OOMKilled",
+								},
+							},
+						},
+					},
+				}
+				return k8sClient.Status().Update(ctx, existing)
+			}, timeout, interval).Should(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				for _, entry := range mockValkey.DLQEntries {
+					if entry.RunID == runID && entry.Attempts == 2 && entry.Filepath == "videos/file2.mp4" {
+						return true
+					}
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(mockValkey.AckedMessages).To(ContainElement("msg-crashloop"))
+
+			Eventually(func() bool {
+				pod := &corev1.Pod{}
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      crashLoopPod.Name,
+					Namespace: namespace,
+				}, pod)
+				return errors.IsNotFound(err)
 			}, timeout, interval).Should(BeTrue())
 		})
 

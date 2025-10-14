@@ -238,6 +238,58 @@ func (v *ValkeyClient) AutoClaim(ctx context.Context, streamKey, groupName, cons
 	return messages, nil
 }
 
+// ReadRange reads a range of messages from a stream without consuming them.
+func (v *ValkeyClient) ReadRange(ctx context.Context, streamKey, start, end string, count int64) ([]XMessage, error) {
+	var result valkey.ValkeyResult
+	if count > 0 {
+		result = v.client.Do(ctx, v.client.B().Xrange().
+			Key(streamKey).
+			Start(start).
+			End(end).
+			Count(count).
+			Build())
+	} else {
+		result = v.client.Do(ctx, v.client.B().Xrange().
+			Key(streamKey).
+			Start(start).
+			End(end).
+			Build())
+	}
+	if result.Error() != nil {
+		return nil, fmt.Errorf("failed to XRANGE messages: %w", result.Error())
+	}
+
+	entries, err := result.AsXRange()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse XRANGE result: %w", err)
+	}
+
+	messages := make([]XMessage, 0, len(entries))
+	for _, entry := range entries {
+		messages = append(messages, XMessage{
+			ID:     entry.ID,
+			Values: entry.FieldValues,
+		})
+	}
+
+	return messages, nil
+}
+
+// DeleteMessages removes messages from a stream.
+func (v *ValkeyClient) DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+
+	if err := v.client.Do(ctx, v.client.B().Xdel().
+		Key(streamKey).
+		Id(messageIDs...).
+		Build()).Error(); err != nil {
+		return fmt.Errorf("failed to delete stream messages: %w", err)
+	}
+	return nil
+}
+
 // AddToDLQ adds a failed message to the dead letter queue
 func (v *ValkeyClient) AddToDLQ(ctx context.Context, dlqKey, runID, filepath string, attempts int, reason string) error {
 	cmd := v.client.B().Xadd().

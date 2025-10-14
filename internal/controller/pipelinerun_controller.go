@@ -64,6 +64,8 @@ type ValkeyClientInterface interface {
 	EnqueueFileWithAttempts(ctx context.Context, streamKey, runID, filepath string, attempts int) (string, error)
 	AddToDLQ(ctx context.Context, dlqKey, runID, filepath string, attempts int, reason string) error
 	AutoClaim(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, count int64) ([]queue.XMessage, error)
+	ReadRange(ctx context.Context, streamKey, start, end string, count int64) ([]queue.XMessage, error)
+	DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error
 }
 
 // PipelineRunReconciler reconciles a PipelineRun object
@@ -185,6 +187,8 @@ func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		} else {
 			failureMessage = fmt.Sprintf("Job %s failed: %s", pipelineRun.Status.JobName, failureMessage)
 		}
+
+		r.flushOutstandingWork(ctx, pipelineRun, failureReason, failureMessage)
 
 		log.Info("PipelineRun marked as Degraded due to job failure", "job", pipelineRun.Status.JobName, "reason", failureReason)
 		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, failureReason, failureMessage)
@@ -500,7 +504,8 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 
 	for _, pod := range podList.Items {
 		// Only process completed pods
-		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+		startFailureReason, hasStartFailure := detectPodStartFailure(&pod)
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed && !hasStartFailure {
 			log.V(1).Info("Skipping pod that is not complete", "pod", pod.Name, "phase", pod.Status.Phase)
 			continue
 		}
@@ -533,13 +538,16 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 			}
 			log.Info("ACKed successful message", "pod", pod.Name, "file", filepath)
 
-		} else if pod.Status.Phase == corev1.PodFailed {
+		} else if pod.Status.Phase == corev1.PodFailed || hasStartFailure {
 			// Determine reason for failure
-			reason := "Unknown"
-			for _, containerStatus := range pod.Status.ContainerStatuses {
-				if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.ExitCode != 0 {
-					reason = fmt.Sprintf("Container %s exited with code %d", containerStatus.Name, containerStatus.State.Terminated.ExitCode)
-					break
+			reason := startFailureReason
+			if reason == "" {
+				reason = "Unknown"
+				for _, containerStatus := range pod.Status.ContainerStatuses {
+					if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.ExitCode != 0 {
+						reason = fmt.Sprintf("Container %s exited with code %d", containerStatus.Name, containerStatus.State.Terminated.ExitCode)
+						break
+					}
 				}
 			}
 
@@ -565,6 +573,17 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 				log.Error(err, "Failed to ACK failed message", "messageID", messageID)
 				continue
 			}
+
+			if hasStartFailure {
+				// Delete the pod to allow the Job controller to create a replacement
+				if err := r.Delete(ctx, &pod); err != nil {
+					log.Error(err, "Failed to delete pod after start failure", "pod", pod.Name)
+				} else {
+					log.Info("Deleted pod after start failure", "pod", pod.Name)
+				}
+				// Skip marking processed because the pod is gone
+				continue
+			}
 		}
 
 		// Mark pod as processed by adding annotation
@@ -579,6 +598,53 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 	}
 
 	return nil
+}
+
+// detectPodStartFailure returns a descriptive reason when any container in the pod is unable to start.
+func detectPodStartFailure(pod *corev1.Pod) (string, bool) {
+	reason := detectContainerStartFailure(pod.Status.ContainerStatuses)
+	if reason != "" {
+		return reason, true
+	}
+	reason = detectContainerStartFailure(pod.Status.InitContainerStatuses)
+	if reason != "" {
+		return reason, true
+	}
+	return "", false
+}
+
+func detectContainerStartFailure(statuses []corev1.ContainerStatus) string {
+	for _, status := range statuses {
+		waiting := status.State.Waiting
+		if waiting == nil {
+			continue
+		}
+
+		switch waiting.Reason {
+		case "ImagePullBackOff", "ErrImagePull", "InvalidImageName", "RegistryUnavailable":
+			message := waiting.Message
+			if message == "" {
+				message = waiting.Reason
+			}
+			return fmt.Sprintf("Container %s image pull failed: %s", status.Name, message)
+		case "CreateContainerConfigError", "CreateContainerError":
+			message := waiting.Message
+			if message == "" {
+				message = waiting.Reason
+			}
+			return fmt.Sprintf("Container %s configuration error: %s", status.Name, message)
+		case "CrashLoopBackOff":
+			message := waiting.Message
+			if status.LastTerminationState.Terminated != nil {
+				terminated := status.LastTerminationState.Terminated
+				message = fmt.Sprintf("Container %s crashlooped with exit code %d: %s", status.Name, terminated.ExitCode, terminated.Reason)
+			} else if message == "" {
+				message = waiting.Reason
+			}
+			return message
+		}
+	}
+	return ""
 }
 
 // runReclaimer runs XAUTOCLAIM to recover stale pending messages
@@ -746,6 +812,140 @@ func (r *PipelineRunReconciler) checkFailure(ctx context.Context, pipelineRun *p
 	}
 
 	return nil, nil
+}
+
+// flushOutstandingWork moves any remaining stream entries to the DLQ when a run can no longer progress.
+func (r *PipelineRunReconciler) flushOutstandingWork(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, reason, message string) {
+	log := logf.FromContext(ctx)
+
+	streamKey := pipelineRun.Spec.Queue.Stream
+	groupName := pipelineRun.Spec.Queue.Group
+	runID := extractRunID(streamKey)
+	dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
+
+	maxAttempts := int32(3)
+	if pipelineRun.Spec.Execution != nil && pipelineRun.Spec.Execution.MaxAttempts != nil {
+		maxAttempts = *pipelineRun.Spec.Execution.MaxAttempts
+	}
+
+	fileAttempts := make(map[string]int)
+	existingAttempts := make(map[string]int)
+	existingIDs := make(map[string][]string)
+	if existing, err := r.ValkeyClient.ReadRange(ctx, dlqKey, "-", "+", 0); err != nil {
+		log.Error(err, "Failed to read existing DLQ entries during flush")
+	} else {
+		for _, msg := range existing {
+			file := msg.Values["file"]
+			attempts := parseAttempts(msg.Values["attempts"], int(maxAttempts))
+			if attempts > existingAttempts[file] {
+				existingAttempts[file] = attempts
+			}
+			existingIDs[file] = append(existingIDs[file], msg.ID)
+		}
+	}
+
+	// First, reclaim pending messages so we can safely ack and delete them.
+	for {
+		messages, err := r.ValkeyClient.AutoClaim(ctx, streamKey, groupName, "controller-flush", 0, 100)
+		if err != nil {
+			log.Error(err, "Failed to auto-claim pending messages during flush")
+			break
+		}
+		if len(messages) == 0 {
+			break
+		}
+
+		for _, msg := range messages {
+			file := msg.Values["file"]
+			attempts := parseAttempts(msg.Values["attempts"], int(maxAttempts))
+			if file == "" {
+				file = "<unknown>"
+			}
+			if attempts > fileAttempts[file] {
+				fileAttempts[file] = attempts
+			}
+
+			if err := r.ValkeyClient.AckMessage(ctx, streamKey, groupName, msg.ID); err != nil {
+				log.Error(err, "Failed to ack message during flush", "messageID", msg.ID)
+			}
+			if err := r.ValkeyClient.DeleteMessages(ctx, streamKey, msg.ID); err != nil {
+				log.Error(err, "Failed to delete message during flush", "messageID", msg.ID)
+			}
+		}
+	}
+
+	// Then handle any messages that were never delivered to a consumer.
+	for {
+		messages, err := r.ValkeyClient.ReadRange(ctx, streamKey, "-", "+", 100)
+		if err != nil {
+			log.Error(err, "Failed to read remaining stream entries during flush")
+			return
+		}
+		if len(messages) == 0 {
+			break
+		}
+
+		ids := make([]string, 0, len(messages))
+		for _, msg := range messages {
+			file := msg.Values["file"]
+			attempts := parseAttempts(msg.Values["attempts"], int(maxAttempts))
+			if file == "" {
+				file = "<unknown>"
+			}
+			if attempts > fileAttempts[file] {
+				fileAttempts[file] = attempts
+			}
+			ids = append(ids, msg.ID)
+		}
+
+		if err := r.ValkeyClient.DeleteMessages(ctx, streamKey, ids...); err != nil {
+			log.Error(err, "Failed to delete stream messages during flush", "ids", ids)
+			break
+		}
+	}
+
+	finalAttempts := make(map[string]int)
+	for file, attempts := range existingAttempts {
+		finalAttempts[file] = attempts
+	}
+	for file, attempts := range fileAttempts {
+		if attempts > finalAttempts[file] {
+			finalAttempts[file] = attempts
+		}
+	}
+
+	for file, attempts := range finalAttempts {
+		if attempts <= 0 || attempts < int(maxAttempts) {
+			attempts = int(maxAttempts)
+		}
+
+		if ids := existingIDs[file]; len(ids) > 0 {
+			if err := r.ValkeyClient.DeleteMessages(ctx, dlqKey, ids...); err != nil {
+				log.Error(err, "Failed to delete existing DLQ entries during flush", "file", file)
+				continue
+			}
+		}
+
+		if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, runID, file, attempts, message); err != nil {
+			log.Error(err, "Failed to add message to DLQ during flush", "file", file)
+			continue
+		}
+		log.Info("Moved message to DLQ during flush", "file", file, "attempts", attempts, "reason", reason)
+	}
+}
+
+func parseAttempts(value string, fallback int) int {
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	if parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 // setCondition sets or updates a condition in the PipelineRun status

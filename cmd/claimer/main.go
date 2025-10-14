@@ -4,13 +4,18 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -66,7 +71,8 @@ func main() {
 }
 
 func run() error {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Load configuration from environment
 	cfg, err := loadConfig()
@@ -74,15 +80,33 @@ func run() error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Create Valkey client
-	valkeyClient, err := createValkeyClient(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create Valkey client: %w", err)
+	// Create Valkey client (with retry for outages during startup)
+	var valkeyClient valkey.Client
+	clientBackoff := newExponentialBackoff(1*time.Second, 30*time.Second)
+	for {
+		valkeyClient, err = createValkeyClient(cfg)
+		if err == nil {
+			clientBackoff.Reset()
+			break
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !isRetryableValkeyError(err) {
+			return fmt.Errorf("failed to create Valkey client: %w", err)
+		}
+
+		delay := clientBackoff.Next()
+		log.Printf("Valkey client creation failed: %v; retrying in %s", err, delay)
+		if err := sleepWithContext(ctx, delay); err != nil {
+			return err
+		}
 	}
 	defer valkeyClient.Close()
 
-	// Ping Valkey to verify connection
-	if err := pingValkey(ctx, valkeyClient); err != nil {
+	// Wait until Valkey is reachable; transient outages should keep the init container alive.
+	if err := waitForValkey(ctx, valkeyClient); err != nil {
 		return fmt.Errorf("failed to connect to Valkey: %w", err)
 	}
 	log.Println("Connected to Valkey")
@@ -196,6 +220,32 @@ func pingValkey(ctx context.Context, client valkey.Client) error {
 }
 
 func claimMessage(ctx context.Context, client valkey.Client, cfg *Config) (*Message, string, error) {
+	backoff := newExponentialBackoff(1*time.Second, 30*time.Second)
+
+	for {
+		msg, messageID, err := claimMessageOnce(ctx, client, cfg)
+		if err == nil {
+			backoff.Reset()
+			return msg, messageID, nil
+		}
+
+		if ctx.Err() != nil {
+			return nil, "", ctx.Err()
+		}
+
+		if !isRetryableValkeyError(err) {
+			return nil, "", err
+		}
+
+		delay := backoff.Next()
+		log.Printf("Waiting for Valkey stream after error: %v; retrying in %s", err, delay)
+		if err := sleepWithContext(ctx, delay); err != nil {
+			return nil, "", err
+		}
+	}
+}
+
+func claimMessageOnce(ctx context.Context, client valkey.Client, cfg *Config) (*Message, string, error) {
 	cmd := client.B().Xreadgroup().
 		Group(cfg.Group, cfg.ConsumerName).
 		Count(1).
@@ -364,4 +414,119 @@ func patchPodAnnotations(ctx context.Context, cfg *Config, messageID string, msg
 	}
 
 	return nil
+}
+
+func waitForValkey(ctx context.Context, client valkey.Client) error {
+	backoff := newExponentialBackoff(1*time.Second, 30*time.Second)
+
+	for {
+		if err := pingValkey(ctx, client); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if !isRetryableValkeyError(err) {
+				return err
+			}
+
+			delay := backoff.Next()
+			log.Printf("Valkey unavailable: %v; retrying in %s", err, delay)
+			if err := sleepWithContext(ctx, delay); err != nil {
+				return err
+			}
+			continue
+		}
+
+		backoff.Reset()
+		return nil
+	}
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isRetryableValkeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+
+	errMsg := err.Error()
+	switch {
+	case strings.Contains(errMsg, "connection refused"),
+		strings.Contains(errMsg, "connection reset"),
+		strings.Contains(errMsg, "broken pipe"),
+		strings.Contains(errMsg, "network is unreachable"),
+		strings.Contains(errMsg, "no route to host"),
+		strings.Contains(errMsg, "host is down"),
+		strings.Contains(errMsg, "i/o timeout"),
+		strings.Contains(errMsg, "temporary failure in name resolution"):
+		return true
+	case strings.Contains(errMsg, "NOAUTH"),
+		strings.Contains(errMsg, "WRONGPASS"),
+		strings.Contains(errMsg, "NOGROUP"):
+		return false
+	}
+
+	return false
+}
+
+type exponentialBackoff struct {
+	min     time.Duration
+	max     time.Duration
+	current time.Duration
+}
+
+func newExponentialBackoff(min, max time.Duration) *exponentialBackoff {
+	if min <= 0 {
+		min = time.Second
+	}
+	if max < min {
+		max = min
+	}
+
+	return &exponentialBackoff{
+		min:     min,
+		max:     max,
+		current: min,
+	}
+}
+
+func (b *exponentialBackoff) Next() time.Duration {
+	delay := b.current
+	if b.current < b.max {
+		b.current *= 2
+		if b.current > b.max {
+			b.current = b.max
+		}
+	}
+	return delay
+}
+
+func (b *exponentialBackoff) Reset() {
+	b.current = b.min
 }

@@ -18,10 +18,14 @@ package controller
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -57,6 +61,7 @@ const (
 
 // ValkeyClientInterface defines the interface for Valkey operations
 type ValkeyClientInterface interface {
+	CreateStreamAndGroup(ctx context.Context, streamKey, groupName string) error
 	GetStreamLength(ctx context.Context, streamKey string) (int64, error)
 	GetConsumerGroupLag(ctx context.Context, streamKey, groupName string) (int64, error)
 	GetPendingCount(ctx context.Context, streamKey, groupName string) (int64, error)
@@ -122,26 +127,20 @@ func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	// Initialize counts if needed
+	// Ensure counts object exists before initialization
 	if pipelineRun.Status.Counts == nil {
 		pipelineRun.Status.Counts = &pipelinesv1alpha1.FileCounts{}
 	}
 
-	// Initialize TotalFiles from stream length if not set
-	if pipelineRun.Status.Counts.TotalFiles == 0 {
-		totalFiles, err := r.ValkeyClient.GetStreamLength(ctx, pipelineRun.Spec.Queue.Stream)
-		if err != nil {
-			log.Error(err, "Failed to get initial stream length")
-		} else {
-			pipelineRun.Status.Counts.TotalFiles = totalFiles
-			log.Info("Initialized TotalFiles from stream", "totalFiles", totalFiles)
-			if err := r.Status().Update(ctx, pipelineRun); err != nil {
-				log.Error(err, "Failed to update status")
-				return ctrl.Result{}, err
-			}
-			// Requeue immediately to continue with job creation
-			return ctrl.Result{Requeue: true}, nil
-		}
+	initialized, err := r.initializePipelineRun(ctx, pipelineRun, pipeline)
+	if err != nil {
+		log.Error(err, "Failed to initialize PipelineRun")
+		return ctrl.Result{}, err
+	}
+	if !initialized {
+		// Initialization failed or determined no work is required (e.g., empty input).
+		// In these cases, reconciliation is complete.
+		return ctrl.Result{}, nil
 	}
 
 	// Step 1: Ensure Job exists
@@ -243,6 +242,241 @@ func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Requeue for periodic status updates
 	return ctrl.Result{RequeueAfter: StatusUpdateInterval}, nil
+}
+
+// initializePipelineRun performs one-time setup for new PipelineRun resources.
+// It creates the Valkey stream and consumer group, enumerates source files, enqueues
+// work items, and seeds status counters. The logic is safe to call multiple times;
+// after successful initialization it becomes a no-op. On error it returns a
+// non-nil error so the reconciliation loop can retry.
+func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (bool, error) {
+	log := logf.FromContext(ctx)
+
+	// If StartTime is already set, initialization has completed previously.
+	if pipelineRun.Status.StartTime != nil {
+		if pipelineRun.Status.Counts != nil && pipelineRun.Status.Counts.TotalFiles == 0 {
+			// Nothing to process. Skip further work.
+			return false, nil
+		}
+		return true, nil
+	}
+
+	if r.ValkeyClient == nil {
+		err := fmt.Errorf("valkey client is not configured")
+		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueUnavailable", err.Error())
+		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueUnavailable", "PipelineRun cannot start without queue connectivity")
+		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			return false, statusErr
+		}
+		return false, err
+	}
+
+	if pipelineRun.Spec.Queue.Stream == "" || pipelineRun.Spec.Queue.Group == "" {
+		err := fmt.Errorf("queue configuration is required on PipelineRun spec")
+		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueMissing", err.Error())
+		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueMissing", "PipelineRun cannot start without queue configuration")
+		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			return false, statusErr
+		}
+		return false, err
+	}
+
+	// Ensure the stream and consumer group exist. This call is idempotent and safe on retries.
+	if err := r.ValkeyClient.CreateStreamAndGroup(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group); err != nil {
+		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInitializationFailed", err.Error())
+		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInitializationFailed", "PipelineRun cannot initialize its queue")
+		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			return false, statusErr
+		}
+		return false, fmt.Errorf("failed to create stream and group: %w", err)
+	}
+
+	currentLength, err := r.ValkeyClient.GetStreamLength(ctx, pipelineRun.Spec.Queue.Stream)
+	if err != nil {
+		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInspectionFailed", err.Error())
+		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInspectionFailed", "PipelineRun cannot inspect queue state")
+		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			return false, statusErr
+		}
+		return false, fmt.Errorf("failed to get stream length: %w", err)
+	}
+
+	runID := extractRunID(pipelineRun.Spec.Queue.Stream)
+
+	if currentLength == 0 {
+		accessKey, secretKey, credErr := r.getCredentials(ctx, pipeline)
+		if credErr != nil {
+			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "CredentialsError", credErr.Error())
+			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "CredentialsError", "PipelineRun cannot access object storage credentials")
+			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+				return false, statusErr
+			}
+			return false, fmt.Errorf("failed to get S3 credentials: %w", credErr)
+		}
+
+		files, listErr := r.listBucketFiles(ctx, pipeline, accessKey, secretKey)
+		if listErr != nil {
+			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "ListingFailed", listErr.Error())
+			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "ListingFailed", "PipelineRun cannot enumerate input files")
+			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+				return false, statusErr
+			}
+			return false, fmt.Errorf("failed to list bucket files: %w", listErr)
+		}
+
+		if len(files) == 0 {
+			now := metav1.Now()
+			pipelineRun.Status.StartTime = &now
+			pipelineRun.Status.CompletionTime = &now
+			pipelineRun.Status.Counts.TotalFiles = 0
+			pipelineRun.Status.Counts.Queued = 0
+			pipelineRun.Status.Counts.Running = 0
+			pipelineRun.Status.Counts.Succeeded = 0
+			pipelineRun.Status.Counts.Failed = 0
+
+			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "NoFilesFound", "No files found in input bucket")
+			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "NoFilesFound", "PipelineRun cannot start without input files")
+			r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionFalse, "NoFilesFound", "PipelineRun did not process any files")
+
+			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+				return false, statusErr
+			}
+
+			log.Info("PipelineRun has no files to process; marking as degraded", "pipelineRun", pipelineRun.Name)
+			return false, nil
+		}
+
+		successful := int64(0)
+		for _, file := range files {
+			if _, enqueueErr := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.Spec.Queue.Stream, runID, file, 0); enqueueErr != nil {
+				log.Error(enqueueErr, "Failed to enqueue file", "file", file)
+				continue
+			}
+			successful++
+		}
+
+		// Refresh the stream length to reflect any enqueued work items.
+		currentLength, err = r.ValkeyClient.GetStreamLength(ctx, pipelineRun.Spec.Queue.Stream)
+		if err != nil {
+			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInspectionFailed", err.Error())
+			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInspectionFailed", "PipelineRun cannot inspect queue state")
+			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+				return false, statusErr
+			}
+			return false, fmt.Errorf("failed to get stream length after enqueue: %w", err)
+		}
+
+		if currentLength == 0 || successful == 0 {
+			err := fmt.Errorf("no files were successfully enqueued for processing")
+			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "EnqueueFailed", err.Error())
+			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "EnqueueFailed", "PipelineRun could not enqueue files for processing")
+			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+				return false, statusErr
+			}
+			return false, err
+		}
+	}
+
+	now := metav1.Now()
+	pipelineRun.Status.StartTime = &now
+	pipelineRun.Status.Counts.TotalFiles = currentLength
+	pipelineRun.Status.Counts.Queued = currentLength
+	pipelineRun.Status.Counts.Running = 0
+	pipelineRun.Status.Counts.Succeeded = 0
+	pipelineRun.Status.Counts.Failed = 0
+
+	r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionFalse, "Initialized", "PipelineRun initialized successfully")
+	r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionTrue, "Initialized", "PipelineRun initialized and files queued")
+	r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionFalse, "Initialized", "PipelineRun is processing input files")
+
+	if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+		return false, statusErr
+	}
+
+	log.Info("PipelineRun initialized", "pipelineRun", pipelineRun.Name, "totalFiles", pipelineRun.Status.Counts.TotalFiles)
+	return true, nil
+}
+
+// getCredentials retrieves S3 credentials for the pipeline input secret, if configured.
+func (r *PipelineRunReconciler) getCredentials(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline) (string, string, error) {
+	secretRef := pipeline.Spec.Input.CredentialsSecret
+	if secretRef == nil {
+		return "", "", nil
+	}
+
+	namespace := secretRef.Namespace
+	if namespace == "" {
+		namespace = pipeline.Namespace
+	}
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretRef.Name, Namespace: namespace}, secret); err != nil {
+		return "", "", fmt.Errorf("failed to get secret %s/%s: %w", namespace, secretRef.Name, err)
+	}
+
+	accessKey := string(secret.Data["accessKeyId"])
+	secretKey := string(secret.Data["secretAccessKey"])
+
+	if accessKey == "" || secretKey == "" {
+		return "", "", fmt.Errorf("secret %s/%s missing required keys 'accessKeyId' or 'secretAccessKey'", namespace, secretRef.Name)
+	}
+
+	return accessKey, secretKey, nil
+}
+
+// listBucketFiles lists objects available to process for the pipeline input configuration.
+func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline, accessKey, secretKey string) ([]string, error) {
+	input := pipeline.Spec.Input
+
+	endpoint := input.Endpoint
+	useSSL := true
+	if endpoint != "" {
+		if len(endpoint) > 7 && endpoint[:7] == "http://" {
+			useSSL = false
+			endpoint = endpoint[7:]
+		} else if len(endpoint) > 8 && endpoint[:8] == "https://" {
+			endpoint = endpoint[8:]
+		}
+	}
+
+	var creds *credentials.Credentials
+	if accessKey != "" && secretKey != "" {
+		creds = credentials.NewStaticV4(accessKey, secretKey, "")
+	} else {
+		creds = credentials.NewStaticV4("", "", "")
+	}
+
+	var customTransport http.RoundTripper
+	if input.InsecureSkipTLSVerify {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		customTransport = transport
+	}
+
+	minioClient, err := minio.New(endpoint, &minio.Options{
+		Creds:     creds,
+		Secure:    useSSL,
+		Region:    input.Region,
+		Transport: customTransport,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create minio client: %w", err)
+	}
+
+	var files []string
+	objectCh := minioClient.ListObjects(ctx, input.Bucket, minio.ListObjectsOptions{
+		Prefix:    input.Prefix,
+		Recursive: true,
+	})
+
+	for object := range objectCh {
+		if object.Err != nil {
+			return nil, fmt.Errorf("error listing objects: %w", object.Err)
+		}
+		files = append(files, object.Key)
+	}
+
+	return files, nil
 }
 
 // getPipeline retrieves the Pipeline resource referenced by the PipelineRun

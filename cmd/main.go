@@ -38,7 +38,6 @@ import (
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1"
 	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/controller"
 	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/queue"
-	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/server"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -71,14 +70,12 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var httpServerPort int
 	var valkeyAddr string
 	var valkeyPassword string
 	var claimerImage string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
-	flag.IntVar(&httpServerPort, "http-server-port", 8080, "The port for the HTTP API server.")
 	flag.StringVar(&valkeyAddr, "valkey-addr", os.Getenv("VALKEY_ADDR"), "The Valkey server address (e.g., localhost:6379). Can also be set via VALKEY_ADDR env var.")
 	flag.StringVar(&valkeyPassword, "valkey-password", os.Getenv("VALKEY_PASSWORD"), "The Valkey server password. Can also be set via VALKEY_PASSWORD env var.")
 	flag.StringVar(&claimerImage, "claimer-image", getEnvOrDefault("CLAIMER_IMAGE", "ghcr.io/plainsightai/openfilter-claimer:latest"), "The container image for the claimer init container. Can also be set via CLAIMER_IMAGE env var.")
@@ -235,13 +232,6 @@ func main() {
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
-		os.Exit(1)
-	}
-
-	// Start HTTP server for pipeline runs
-	httpServer := server.NewServer(mgr.GetClient(), httpServerPort, valkeyAddr, valkeyPassword)
-	if err := mgr.Add(httpServer); err != nil {
-		setupLog.Error(err, "unable to add HTTP server to manager")
 		os.Exit(1)
 	}
 

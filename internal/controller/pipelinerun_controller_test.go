@@ -72,6 +72,10 @@ type mockDLQEntry struct {
 	Reason   string
 }
 
+func (m *MockValkeyClient) CreateStreamAndGroup(ctx context.Context, streamKey, groupName string) error {
+	return nil
+}
+
 func (m *MockValkeyClient) GetStreamLength(ctx context.Context, streamKey string) (int64, error) {
 	return m.StreamLength, nil
 }
@@ -96,6 +100,7 @@ func (m *MockValkeyClient) EnqueueFileWithAttempts(ctx context.Context, streamKe
 		Filepath: filepath,
 		Attempts: attempts,
 	})
+	m.StreamLength++
 	return fmt.Sprintf("msg-%d", len(m.EnqueuedFiles)), nil
 }
 

@@ -23,6 +23,27 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// ExecutionConfig defines execution parameters for pipeline runs
+type ExecutionConfig struct {
+	// parallelism defines the maximum number of parallel executions (max concurrent pods)
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=10
+	Parallelism *int32 `json:"parallelism,omitempty"`
+
+	// maxAttempts defines the maximum number of retry attempts per file
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=3
+	MaxAttempts *int32 `json:"maxAttempts,omitempty"`
+
+	// pendingTimeout defines the time after which pending messages are reclaimed
+	// Supports Kubernetes duration format (e.g., "15m", "1h", "30s")
+	// +optional
+	// +kubebuilder:default="15m"
+	PendingTimeout *metav1.Duration `json:"pendingTimeout,omitempty"`
+}
+
 // PipelineRunSpec defines the desired state of PipelineRun
 type PipelineRunSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster

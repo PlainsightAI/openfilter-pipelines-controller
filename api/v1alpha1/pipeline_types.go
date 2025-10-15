@@ -114,27 +114,6 @@ type Filter struct {
 	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 }
 
-// ExecutionConfig defines execution parameters for pipeline runs
-type ExecutionConfig struct {
-	// parallelism defines the maximum number of parallel executions (max concurrent pods)
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=10
-	Parallelism *int32 `json:"parallelism,omitempty"`
-
-	// maxAttempts defines the maximum number of retry attempts per file
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=3
-	MaxAttempts *int32 `json:"maxAttempts,omitempty"`
-
-	// pendingTimeout defines the time after which pending messages are reclaimed
-	// Supports Kubernetes duration format (e.g., "15m", "1h", "30s")
-	// +optional
-	// +kubebuilder:default="15m"
-	PendingTimeout *metav1.Duration `json:"pendingTimeout,omitempty"`
-}
-
 // PipelineSpec defines the desired state of Pipeline
 type PipelineSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
@@ -151,11 +130,6 @@ type PipelineSpec struct {
 	// +optional
 	// +kubebuilder:validation:MinItems=1
 	Filters []Filter `json:"filters,omitempty"`
-
-	// execution defines default execution parameters for pipeline runs
-	// These values can be overridden by individual PipelineRuns
-	// +optional
-	Execution *ExecutionConfig `json:"execution,omitempty"`
 }
 
 // PipelineStatus defines the observed state of Pipeline.

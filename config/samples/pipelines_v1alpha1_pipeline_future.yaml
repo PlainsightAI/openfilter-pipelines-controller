@@ -1,0 +1,102 @@
+apiVersion: pipelines.plainsight.ai/v1alpha1
+kind: Pipeline
+metadata:
+  labels:
+    app.kubernetes.io/name: openfilter-pipelines-runner
+    app.kubernetes.io/managed-by: kustomize
+  name: pipeline-advanced-sample
+spec:
+  input:
+    bucket: video-processing-input
+    prefix: raw-videos/
+    region: us-east-1
+    credentialsSecret:
+      name: s3-credentials
+
+  filters:
+    # First filter: Extract metadata
+    - name: metadata-extractor
+      image: myregistry/metadata-extractor:v1.2
+      command: ["/bin/extractor"]
+      args: ["--verbose", "--format=json"]
+      env:
+        - name: OUTPUT_DIR
+          value: "/tmp/metadata"
+        - name: LOG_LEVEL
+          value: "info"
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+
+    # Second filter: Video transcoding with custom entrypoint
+    - name: video-transcoder
+      image: myregistry/ffmpeg-transcoder:v3.0
+      command: ["/usr/local/bin/transcode.sh"]
+      replicas: 4
+      depends_on: [metadata-extractor]
+      config:
+        - name: ocr_foo
+          value: "asdfsdf"
+
+      env:
+        - name: OUTPUT_CODEC
+          value: "h264"
+        - name: BITRATE
+          value: "2M"
+        - name: RESOLUTION
+          value: "1920x1080"
+        - name: PRESET
+          value: "fast"
+      resources:
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+        limits:
+          cpu: "4"
+          memory: "8Gi"
+      imagePullPolicy: Always
+
+    # Third filter: Thumbnail generation
+    - name: thumbnail-generator
+      image: myregistry/thumbnail-gen:v1.5
+      env:
+        - name: THUMBNAIL_COUNT
+          value: "5"
+        - name: WIDTH
+          value: "320"
+        - name: HEIGHT
+          value: "180"
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+
+    # Fourth filter: Upload results with secrets
+    - name: uploader
+      image: myregistry/uploader:v2.0
+      env:
+        - name: UPLOAD_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: pipeline-config
+              key: upload-url
+        - name: API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: upload-credentials
+              key: token
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: encryption-secrets
+              key: master-key
+        - name: RETRY_COUNT
+          value: "3"
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"

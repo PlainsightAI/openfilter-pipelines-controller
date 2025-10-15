@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Kubernetes operator built with Kubebuilder v4 that manages Pipeline custom resources. The operator runs in a Kubernetes cluster and reconciles `Pipeline` CRDs in the `pipelines.plainsight.ai` API group.
+This is a Kubernetes operator built with Kubebuilder v4 that manages Pipeline custom resources. The operator runs in a Kubernetes cluster and reconciles `Pipeline` CRDs in the `filter.plainsight.ai` API group.
 
 **Domain**: plainsight.ai
-**API Group**: pipelines.plainsight.ai
+**API Group**: filter.plainsight.ai
 **Current Version**: v1alpha1
 **Repository**: github.com/PlainsightAI/openfilter-pipelines-runner
 

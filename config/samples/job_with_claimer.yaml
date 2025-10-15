@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       labels:
-        pipelines.plainsight.ai/run: "example-run-abc123"
+        filter.plainsight.ai/run: "example-run-abc123"
     spec:
       # Use the pipeline-exec ServiceAccount for RBAC permissions
       serviceAccountName: pipeline-exec

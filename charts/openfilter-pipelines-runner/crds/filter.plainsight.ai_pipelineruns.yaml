@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: pipelineruns.pipelines.plainsight.ai
+  name: pipelineruns.filter.plainsight.ai
 spec:
-  group: pipelines.plainsight.ai
+  group: filter.plainsight.ai
   names:
     kind: PipelineRun
     listKind: PipelineRunList

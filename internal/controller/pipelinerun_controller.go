@@ -83,10 +83,10 @@ type PipelineRunReconciler struct {
 	ClaimerImage   string // Image for the claimer init container
 }
 
-// +kubebuilder:rbac:groups=pipelines.plainsight.ai,resources=pipelineruns,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=pipelines.plainsight.ai,resources=pipelineruns/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=pipelines.plainsight.ai,resources=pipelineruns/finalizers,verbs=update
-// +kubebuilder:rbac:groups=pipelines.plainsight.ai,resources=pipelines,verbs=get;list;watch
+// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineruns,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineruns/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineruns/finalizers,verbs=update
+// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelines,verbs=get;list;watch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
@@ -652,8 +652,8 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 			Name:      jobName,
 			Namespace: pipelineRun.Namespace,
 			Labels: map[string]string{
-				"pipelines.plainsight.ai/run":         runID,
-				"pipelines.plainsight.ai/pipelinerun": pipelineRun.Name,
+				"filter.plainsight.ai/run":         runID,
+				"filter.plainsight.ai/pipelinerun": pipelineRun.Name,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -665,8 +665,8 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"pipelines.plainsight.ai/run":         runID,
-						"pipelines.plainsight.ai/pipelinerun": pipelineRun.Name,
+						"filter.plainsight.ai/run":         runID,
+						"filter.plainsight.ai/pipelinerun": pipelineRun.Name,
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -726,7 +726,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 	podList := &corev1.PodList{}
 	runID := extractRunID(pipelineRun.Spec.Queue.Stream)
 	if err := r.List(ctx, podList, client.InNamespace(pipelineRun.Namespace), client.MatchingLabels{
-		"pipelines.plainsight.ai/run": runID,
+		"filter.plainsight.ai/run": runID,
 	}); err != nil {
 		return fmt.Errorf("failed to list pods: %w", err)
 	}
@@ -745,7 +745,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 		}
 
 		// Check if we've already processed this pod (by checking for a processed annotation)
-		if pod.Annotations["pipelines.plainsight.ai/processed"] == "true" {
+		if pod.Annotations["filter.plainsight.ai/processed"] == "true" {
 			continue
 		}
 
@@ -825,7 +825,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 		if podCopy.Annotations == nil {
 			podCopy.Annotations = make(map[string]string)
 		}
-		podCopy.Annotations["pipelines.plainsight.ai/processed"] = "true"
+		podCopy.Annotations["filter.plainsight.ai/processed"] = "true"
 		if err := r.Update(ctx, podCopy); err != nil {
 			log.Error(err, "Failed to mark pod as processed", "pod", pod.Name)
 		}

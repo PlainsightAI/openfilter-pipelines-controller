@@ -7,7 +7,7 @@ metadata:
     {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
 rules:
 - apiGroups:
-  - pipelines.plainsight.ai
+  - filter.plainsight.ai
   resources:
   - pipelines
   verbs:
@@ -19,13 +19,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - pipelines.plainsight.ai
+  - filter.plainsight.ai
   resources:
   - pipelines/finalizers
   verbs:
   - update
 - apiGroups:
-  - pipelines.plainsight.ai
+  - filter.plainsight.ai
   resources:
   - pipelines/status
   verbs:

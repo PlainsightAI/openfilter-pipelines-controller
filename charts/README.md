@@ -45,8 +45,8 @@ charts/
     ├── values-production.yaml      # Production values example
     ├── README.md                   # Chart documentation
     ├── crds/                       # Custom Resource Definitions
-    │   ├── pipelines.plainsight.ai_pipelines.yaml
-    │   └── pipelines.plainsight.ai_pipelineruns.yaml
+    │   ├── filter.plainsight.ai_pipelines.yaml
+    │   └── filter.plainsight.ai_pipelineruns.yaml
     ├── templates/                  # Kubernetes manifests
     │   ├── deployment.yaml         # Controller deployment
     │   ├── service.yaml            # Services

@@ -256,8 +256,8 @@ var _ = Describe("PipelineRun Controller", func() {
 			if err == nil {
 				for _, pod := range podList.Items {
 					// Delete pods matching this test's runID or test-specific pod names
-					if pod.Labels["pipelines.plainsight.ai/run"] == runID ||
-						pod.Labels["pipelines.plainsight.ai/run"] == "test123" {
+					if pod.Labels["filter.plainsight.ai/run"] == runID ||
+						pod.Labels["filter.plainsight.ai/run"] == "test123" {
 						k8sClient.Delete(ctx, &pod)
 					}
 				}
@@ -462,7 +462,7 @@ var _ = Describe("PipelineRun Controller", func() {
 					Name:      fmt.Sprintf("test-pod-success-%d", testCounter),
 					Namespace: namespace,
 					Labels: map[string]string{
-						"pipelines.plainsight.ai/run": runID,
+						"filter.plainsight.ai/run": runID,
 					},
 					Annotations: map[string]string{
 						AnnotationMessageID: "msg-123",
@@ -528,7 +528,7 @@ var _ = Describe("PipelineRun Controller", func() {
 				if err != nil {
 					return false
 				}
-				return pod.Annotations["pipelines.plainsight.ai/processed"] == "true"
+				return pod.Annotations["filter.plainsight.ai/processed"] == "true"
 			}, timeout, interval).Should(BeTrue())
 		})
 
@@ -560,7 +560,7 @@ var _ = Describe("PipelineRun Controller", func() {
 					Name:      fmt.Sprintf("test-pod-failed-%d", testCounter),
 					Namespace: namespace,
 					Labels: map[string]string{
-						"pipelines.plainsight.ai/run": runID,
+						"filter.plainsight.ai/run": runID,
 					},
 					Annotations: map[string]string{
 						AnnotationMessageID: "msg-456",
@@ -657,7 +657,7 @@ var _ = Describe("PipelineRun Controller", func() {
 					Name:      fmt.Sprintf("test-pod-max-attempts-%d", testCounter),
 					Namespace: namespace,
 					Labels: map[string]string{
-						"pipelines.plainsight.ai/run": runID,
+						"filter.plainsight.ai/run": runID,
 					},
 					Annotations: map[string]string{
 						AnnotationMessageID: "msg-789",
@@ -1018,7 +1018,7 @@ var _ = Describe("PipelineRun Controller", func() {
 					Name:      fmt.Sprintf("image-pull-pod-%d", testCounter),
 					Namespace: namespace,
 					Labels: map[string]string{
-						"pipelines.plainsight.ai/run": runID,
+						"filter.plainsight.ai/run": runID,
 					},
 					Annotations: map[string]string{
 						AnnotationMessageID: "msg-imagepull",
@@ -1141,7 +1141,7 @@ var _ = Describe("PipelineRun Controller", func() {
 					Name:      fmt.Sprintf("crashloop-pod-%d", testCounter),
 					Namespace: namespace,
 					Labels: map[string]string{
-						"pipelines.plainsight.ai/run": runID,
+						"filter.plainsight.ai/run": runID,
 					},
 					Annotations: map[string]string{
 						AnnotationMessageID: "msg-crashloop",

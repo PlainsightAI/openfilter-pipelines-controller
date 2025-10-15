@@ -1,4 +1,4 @@
-apiVersion: pipelines.plainsight.ai/v1alpha1
+apiVersion: filter.plainsight.ai/v1alpha1
 kind: Pipeline
 metadata:
   labels:

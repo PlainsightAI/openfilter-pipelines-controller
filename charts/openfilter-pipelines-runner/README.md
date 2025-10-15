@@ -1,6 +1,6 @@
 # OpenFilter Pipelines Runner Helm Chart
 
-A Kubernetes operator for managing Pipeline custom resources in the `pipelines.plainsight.ai` API group.
+A Kubernetes operator for managing Pipeline custom resources in the `filter.plainsight.ai` API group.
 
 ## Prerequisites
 
@@ -156,7 +156,7 @@ helm uninstall openfilter-pipelines-runner
 **Note:** By default, CRDs are kept on uninstall to prevent data loss. To remove CRDs manually:
 
 ```bash
-kubectl delete crd pipelines.plainsight.ai
+kubectl delete crd filter.plainsight.ai
 kubectl delete crd pipelineruns.plainsight.ai
 ```
 

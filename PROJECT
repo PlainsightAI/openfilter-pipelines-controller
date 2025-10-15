@@ -14,7 +14,7 @@ resources:
     namespaced: true
   controller: true
   domain: plainsight.ai
-  group: pipelines
+  group: filter
   kind: Pipeline
   path: github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1
   version: v1alpha1
@@ -23,7 +23,7 @@ resources:
     namespaced: true
   controller: true
   domain: plainsight.ai
-  group: pipelines
+  group: filter
   kind: PipelineRun
   path: github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1
   version: v1alpha1

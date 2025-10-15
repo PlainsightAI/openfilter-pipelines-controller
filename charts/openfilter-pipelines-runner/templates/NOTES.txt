@@ -41,12 +41,12 @@ Valkey (Redis alternative) has been installed:
 
 Custom Resources:
   The following CRDs have been installed:
-  - pipelines.plainsight.ai
+  - filter.plainsight.ai
   - pipelineruns.plainsight.ai
 
   Create a sample Pipeline:
   $ kubectl apply -f - <<EOF
-  apiVersion: pipelines.plainsight.ai/v1alpha1
+  apiVersion: filter.plainsight.ai/v1alpha1
   kind: Pipeline
   metadata:
     name: sample-pipeline

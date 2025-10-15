@@ -1,0 +1,184 @@
+# Default values for openfilter-pipelines-runner
+# This is a YAML-formatted file.
+
+# Number of controller replicas (should be 1 for leader election)
+replicaCount: 1
+
+# Controller image configuration
+image:
+  repository: ghcr.io/plainsightai/openfilter-pipelines-runner
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Service account configuration (for the controller)
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+# RBAC configuration (for the controller)
+rbac:
+  # Create ClusterRole and ClusterRoleBinding
+  create: true
+
+# Pipeline executor configuration (for pods created by the controller)
+# This service account is required for pipeline execution and is always created
+pipelineExecutor:
+  serviceAccount:
+    # Automount service account token
+    automount: true
+    # Annotations to add to the service account
+    annotations: {}
+    # Name of the service account (defaults to "pipeline-exec")
+    name: ""
+
+# CRD installation
+crds:
+  # Install CRDs as part of the chart
+  install: true
+  # Keep CRDs on chart uninstall
+  keep: true
+
+# Controller configuration
+controller:
+  # Leader election settings
+  leaderElection:
+    enabled: true
+    id: "443c3c67.plainsight.ai"
+
+  # Metrics server configuration
+  metrics:
+    enabled: true
+    port: 8443
+    secureServing: true
+
+  # Health probe configuration
+  health:
+    port: 8081
+    livenessPath: /healthz
+    readinessPath: /readyz
+
+  # Webhook server configuration
+  webhook:
+    enabled: false
+    port: 9443
+    certDir: /tmp/k8s-webhook-server/serving-certs
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod labels
+podLabels: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+
+# Service configuration (for metrics)
+service:
+  type: ClusterIP
+  metricsPort: 8443
+  healthPort: 8081
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# Liveness probe configuration
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+# Readiness probe configuration
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules
+affinity: {}
+
+# Additional volumes
+volumes: []
+
+# Additional volume mounts
+volumeMounts: []
+
+# Environment variables
+env: []
+
+# Additional arguments for the controller
+args: []
+
+# Valkey (Redis alternative) configuration
+# See https://artifacthub.io/packages/helm/bitnami/valkey for all options
+valkey:
+  # Enable Valkey installation
+  enabled: false
+
+  # Valkey architecture (standalone or replication)
+  architecture: standalone
+
+  # Authentication
+  auth:
+    enabled: true
+    # Password will be auto-generated if not specified
+    password: ""
+
+  # Primary configuration
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 250m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+  # Replica configuration (only used if architecture is "replication")
+  replica:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 250m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi

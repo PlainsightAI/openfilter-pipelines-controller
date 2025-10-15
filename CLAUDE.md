@@ -100,6 +100,29 @@ make docker-buildx IMG=<registry>/openfilter-pipelines-runner:tag
 make build-installer IMG=<registry>/openfilter-pipelines-runner:tag
 ```
 
+### Helm Chart
+```bash
+# Update CRDs in Helm chart (after modifying API types)
+make helm-update-crds
+
+# Install chart locally
+helm install openfilter-pipelines-runner charts/openfilter-pipelines-runner \
+  --namespace pipelines-system \
+  --create-namespace
+
+# Install with Valkey enabled
+helm install openfilter-pipelines-runner charts/openfilter-pipelines-runner \
+  --namespace pipelines-system \
+  --create-namespace \
+  --set valkey.enabled=true
+
+# Lint Helm chart
+cd charts/openfilter-pipelines-runner && helm lint .
+
+# Update Helm dependencies
+cd charts/openfilter-pipelines-runner && helm dependency update
+```
+
 ## Architecture
 
 ### Directory Structure
@@ -126,6 +149,15 @@ make build-installer IMG=<registry>/openfilter-pipelines-runner:tag
   - `config/samples/`: Example Pipeline CR manifests
   - `config/manager/`: Controller deployment manifest
 
+- **charts/**: Helm charts for deployment
+  - `charts/openfilter-pipelines-runner/`: Main Helm chart
+  - `charts/openfilter-pipelines-runner/crds/`: CRD manifests (synced from config/crd/bases)
+  - `charts/openfilter-pipelines-runner/templates/`: Kubernetes resource templates
+  - `charts/openfilter-pipelines-runner/values.yaml`: Default configuration values
+
+- **hack/**: Utility scripts
+  - `hack/update-helm-crds.sh`: Script to sync CRDs from config/crd/bases to Helm chart
+
 - **test/**: Test utilities and e2e tests
   - `test/e2e/`: End-to-end test suite using Ginkgo
   - `test/utils/`: Test utilities
@@ -151,7 +183,10 @@ When modifying CRD types or controller RBAC:
 2. Add/modify kubebuilder markers (comments starting with `+kubebuilder:`)
 3. Run `make manifests` to regenerate CRDs and RBAC
 4. Run `make generate` to regenerate DeepCopy methods
-5. Run `make` or `make build` to compile (auto-runs manifests, generate, fmt, vet)
+5. Run `make helm-update-crds` to sync CRDs to Helm chart
+6. Run `make` or `make build` to compile (auto-runs manifests, generate, fmt, vet)
+
+**Important:** Always run `make helm-update-crds` after modifying API types to keep the Helm chart CRDs in sync. The CI pipeline will verify this automatically.
 
 ## Key Configuration
 

@@ -1,0 +1,60 @@
+name: Helm CRD Sync Check
+
+on:
+  pull_request:
+    paths:
+      - 'api/**'
+      - 'config/crd/**'
+      - 'charts/openfilter-pipelines-runner/crds/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'api/**'
+      - 'config/crd/**'
+
+jobs:
+  check-helm-crds:
+    name: Check Helm CRDs are in sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Install controller-gen
+        run: |
+          make controller-gen
+
+      - name: Generate CRDs
+        run: |
+          make manifests
+
+      - name: Update Helm CRDs
+        run: |
+          ./hack/update-helm-crds.sh
+
+      - name: Check for uncommitted changes
+        run: |
+          git diff --exit-code charts/openfilter-pipelines-runner/crds/ || \
+          (echo "Error: Helm CRDs are out of sync with generated CRDs. Please run 'make helm-update-crds' and commit the changes." && exit 1)
+
+      - name: Verify Helm chart
+        if: always()
+        run: |
+          # Install Helm
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+          # Update Helm dependencies
+          cd charts/openfilter-pipelines-runner
+          helm dependency update
+
+          # Lint the chart
+          helm lint .
+
+          # Template the chart to verify it renders correctly
+          helm template test-release . --namespace pipelines-system > /dev/null

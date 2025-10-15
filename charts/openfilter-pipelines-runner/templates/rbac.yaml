@@ -1,0 +1,123 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-manager-role
+  labels:
+    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - pipelines.plainsight.ai
+  resources:
+  - pipelines
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - pipelines.plainsight.ai
+  resources:
+  - pipelines/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - pipelines.plainsight.ai
+  resources:
+  - pipelines/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/status
+  verbs:
+  - get
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-manager-rolebinding
+  labels:
+    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "openfilter-pipelines-runner.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-metrics-reader
+  labels:
+    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-proxy-role
+  labels:
+    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-proxy-rolebinding
+  labels:
+    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-proxy-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "openfilter-pipelines-runner.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

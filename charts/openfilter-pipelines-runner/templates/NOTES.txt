@@ -1,0 +1,60 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }}.
+
+The OpenFilter Pipelines Runner controller has been deployed to namespace {{ .Release.Namespace }}.
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }} -n {{ .Release.Namespace }}
+  $ helm get all {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+Controller Status:
+  $ kubectl get deployment {{ include "openfilter-pipelines-runner.fullname" . }} -n {{ .Release.Namespace }}
+
+View Controller Logs:
+  $ kubectl logs -f deployment/{{ include "openfilter-pipelines-runner.fullname" . }} -n {{ .Release.Namespace }}
+
+{{- if .Values.controller.metrics.enabled }}
+
+Metrics:
+  The controller exposes metrics on port {{ .Values.controller.metrics.port }}.
+  To access metrics locally:
+  $ kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "openfilter-pipelines-runner.fullname" . }}-metrics {{ .Values.controller.metrics.port }}:{{ .Values.controller.metrics.port }}
+  Then visit: https://localhost:{{ .Values.controller.metrics.port }}/metrics
+{{- end }}
+
+Health Probes:
+  Liveness:  http://localhost:{{ .Values.controller.health.port }}{{ .Values.controller.health.livenessPath }}
+  Readiness: http://localhost:{{ .Values.controller.health.port }}{{ .Values.controller.health.readinessPath }}
+
+{{- if .Values.valkey.enabled }}
+
+Valkey (Redis alternative) has been installed:
+  Connection string: {{ .Release.Name }}-valkey-primary:6379
+  {{- if .Values.valkey.auth.enabled }}
+
+  To get the Valkey password:
+  $ kubectl get secret {{ .Release.Name }}-valkey -n {{ .Release.Namespace }} -o jsonpath="{.data.valkey-password}" | base64 -d
+  {{- end }}
+{{- end }}
+
+Custom Resources:
+  The following CRDs have been installed:
+  - pipelines.plainsight.ai
+  - pipelineruns.plainsight.ai
+
+  Create a sample Pipeline:
+  $ kubectl apply -f - <<EOF
+  apiVersion: pipelines.plainsight.ai/v1alpha1
+  kind: Pipeline
+  metadata:
+    name: sample-pipeline
+  spec:
+    # Add your pipeline specification here
+  EOF
+
+  List Pipelines:
+  $ kubectl get pipelines -A
+
+For more information, visit: https://github.com/PlainsightAI/openfilter-pipelines-runner

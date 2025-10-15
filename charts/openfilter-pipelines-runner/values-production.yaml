@@ -1,0 +1,82 @@
+# Production values for openfilter-pipelines-runner
+# This is a sample configuration for production deployments
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/plainsightai/openfilter-pipelines-runner
+  pullPolicy: IfNotPresent
+  tag: ""
+
+# Production resource limits
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# Enhanced security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+    - ALL
+
+# Enable Valkey for production workloads
+valkey:
+  enabled: true
+  architecture: replication
+  auth:
+    enabled: true
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: ""  # Use default storage class
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+  replica:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: ""  # Use default storage class
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+# Production affinity rules for high availability
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - openfilter-pipelines-runner
+          topologyKey: kubernetes.io/hostname

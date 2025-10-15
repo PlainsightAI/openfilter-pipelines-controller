@@ -1,0 +1,23 @@
+apiVersion: v2
+name: openfilter-pipelines-runner
+description: A Kubernetes operator for managing Pipeline custom resources
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/PlainsightAI/openfilter-pipelines-runner
+sources:
+  - https://github.com/PlainsightAI/openfilter-pipelines-runner
+keywords:
+  - kubernetes
+  - operator
+  - pipeline
+  - plainsight
+maintainers:
+  - name: PlainsightAI
+    url: https://plainsight.ai
+
+dependencies:
+  - name: valkey
+    version: "4.0.10"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: valkey.enabled

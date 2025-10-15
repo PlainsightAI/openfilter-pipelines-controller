@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-metrics
+  labels:
+    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+    control-plane: controller-manager
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    {{- if .Values.controller.metrics.enabled }}
+    - port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+    {{- end }}
+    - port: {{ .Values.service.healthPort }}
+      targetPort: health
+      protocol: TCP
+      name: health
+  selector:
+    {{- include "openfilter-pipelines-runner.selectorLabels" . | nindent 4 }}
+    control-plane: controller-manager
+{{- if .Values.controller.webhook.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openfilter-pipelines-runner.fullname" . }}-webhook
+  labels:
+    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 443
+      targetPort: webhook
+      protocol: TCP
+      name: webhook
+  selector:
+    {{- include "openfilter-pipelines-runner.selectorLabels" . | nindent 4 }}
+    control-plane: controller-manager
+{{- end }}

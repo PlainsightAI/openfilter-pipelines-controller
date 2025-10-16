@@ -1,4 +1,4 @@
-# Default values for openfilter-pipelines-runner
+# Default values for openfilter-pipelines-controller
 # This is a YAML-formatted file.
 
 # Number of controller replicas (should be 1 for leader election)
@@ -6,7 +6,7 @@ replicaCount: 1
 
 # Controller image configuration
 image:
-  repository: ghcr.io/plainsightai/openfilter-pipelines-runner
+  repository: ghcr.io/plainsightai/openfilter-pipelines-controller
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion
   tag: ""

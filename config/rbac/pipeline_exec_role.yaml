@@ -4,7 +4,7 @@ metadata:
   name: pipeline-exec-role
   namespace: default
   labels:
-    app.kubernetes.io/name: openfilter-pipelines-runner
+    app.kubernetes.io/name: openfilter-pipelines-controller
     app.kubernetes.io/component: pipeline-executor
 rules:
   # Allows claimer init container to patch pod annotations with queue metadata

@@ -1,4 +1,4 @@
-# This rule is not used by the project openfilter-pipelines-runner itself.
+# This rule is not used by the project openfilter-pipelines-controller itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
 # Grants permissions to create, update, and delete resources within the filter.plainsight.ai.
@@ -9,7 +9,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
-    app.kubernetes.io/name: openfilter-pipelines-runner
+    app.kubernetes.io/name: openfilter-pipelines-controller
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-editor-role
 rules:

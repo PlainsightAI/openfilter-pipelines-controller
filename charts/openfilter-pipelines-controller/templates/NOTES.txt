@@ -10,17 +10,17 @@ To learn more about the release, try:
   $ helm get all {{ .Release.Name }} -n {{ .Release.Namespace }}
 
 Controller Status:
-  $ kubectl get deployment {{ include "openfilter-pipelines-runner.fullname" . }} -n {{ .Release.Namespace }}
+  $ kubectl get deployment {{ include "openfilter-pipelines-controller.fullname" . }} -n {{ .Release.Namespace }}
 
 View Controller Logs:
-  $ kubectl logs -f deployment/{{ include "openfilter-pipelines-runner.fullname" . }} -n {{ .Release.Namespace }}
+  $ kubectl logs -f deployment/{{ include "openfilter-pipelines-controller.fullname" . }} -n {{ .Release.Namespace }}
 
 {{- if .Values.controller.metrics.enabled }}
 
 Metrics:
   The controller exposes metrics on port {{ .Values.controller.metrics.port }}.
   To access metrics locally:
-  $ kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "openfilter-pipelines-runner.fullname" . }}-metrics {{ .Values.controller.metrics.port }}:{{ .Values.controller.metrics.port }}
+  $ kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "openfilter-pipelines-controller.fullname" . }}-metrics {{ .Values.controller.metrics.port }}:{{ .Values.controller.metrics.port }}
   Then visit: https://localhost:{{ .Values.controller.metrics.port }}/metrics
 {{- end }}
 
@@ -57,4 +57,4 @@ Custom Resources:
   List Pipelines:
   $ kubectl get pipelines -A
 
-For more information, visit: https://github.com/PlainsightAI/openfilter-pipelines-runner
+For more information, visit: https://github.com/PlainsightAI/openfilter-pipelines-controller

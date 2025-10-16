@@ -5,7 +5,7 @@ on:
     paths:
       - 'api/**'
       - 'config/crd/**'
-      - 'charts/openfilter-pipelines-runner/crds/**'
+      - 'charts/openfilter-pipelines-controller/crds/**'
   push:
     branches:
       - main
@@ -40,7 +40,7 @@ jobs:
 
       - name: Check for uncommitted changes
         run: |
-          git diff --exit-code charts/openfilter-pipelines-runner/crds/ || \
+          git diff --exit-code charts/openfilter-pipelines-controller/crds/ || \
           (echo "Error: Helm CRDs are out of sync with generated CRDs. Please run 'make helm-update-crds' and commit the changes." && exit 1)
 
       - name: Verify Helm chart
@@ -50,7 +50,7 @@ jobs:
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
           # Update Helm dependencies
-          cd charts/openfilter-pipelines-runner
+          cd charts/openfilter-pipelines-controller
           helm dependency update
 
           # Lint the chart

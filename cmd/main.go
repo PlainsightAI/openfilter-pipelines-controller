@@ -35,9 +35,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1"
-	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/controller"
-	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/queue"
+	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/controller"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/queue"
 	// +kubebuilder:scaffold:imports
 )
 

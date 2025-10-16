@@ -33,8 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1"
-	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/queue"
+	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/queue"
 )
 
 // MockValkeyClient provides a mock implementation for testing

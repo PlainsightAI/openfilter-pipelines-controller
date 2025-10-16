@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "openfilter-pipelines-runner.pipelineExecutorServiceAccountName" . }}
+  name: {{ include "openfilter-pipelines-controller.pipelineExecutorServiceAccountName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+    {{- include "openfilter-pipelines-controller.labels" . | nindent 4 }}
     app.kubernetes.io/component: pipeline-executor
   {{- with .Values.pipelineExecutor.serviceAccount.annotations }}
   annotations:
@@ -15,10 +15,10 @@ automountServiceAccountToken: {{ .Values.pipelineExecutor.serviceAccount.automou
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "openfilter-pipelines-runner.fullname" . }}-pipeline-exec-role
+  name: {{ include "openfilter-pipelines-controller.fullname" . }}-pipeline-exec-role
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+    {{- include "openfilter-pipelines-controller.labels" . | nindent 4 }}
     app.kubernetes.io/component: pipeline-executor
 rules:
   # Allows claimer init container to patch pod annotations with queue metadata
@@ -33,16 +33,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "openfilter-pipelines-runner.fullname" . }}-pipeline-exec-rolebinding
+  name: {{ include "openfilter-pipelines-controller.fullname" . }}-pipeline-exec-rolebinding
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+    {{- include "openfilter-pipelines-controller.labels" . | nindent 4 }}
     app.kubernetes.io/component: pipeline-executor
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "openfilter-pipelines-runner.fullname" . }}-pipeline-exec-role
+  name: {{ include "openfilter-pipelines-controller.fullname" . }}-pipeline-exec-role
 subjects:
   - kind: ServiceAccount
-    name: {{ include "openfilter-pipelines-runner.pipelineExecutorServiceAccountName" . }}
+    name: {{ include "openfilter-pipelines-controller.pipelineExecutorServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}

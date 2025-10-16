@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "openfilter-pipelines-runner.fullname" . }}
+  name: {{ include "openfilter-pipelines-controller.fullname" . }}
   labels:
-    {{- include "openfilter-pipelines-runner.labels" . | nindent 4 }}
+    {{- include "openfilter-pipelines-controller.labels" . | nindent 4 }}
     control-plane: controller-manager
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "openfilter-pipelines-runner.selectorLabels" . | nindent 6 }}
+      {{- include "openfilter-pipelines-controller.selectorLabels" . | nindent 6 }}
       control-plane: controller-manager
   template:
     metadata:
@@ -18,7 +18,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "openfilter-pipelines-runner.labels" . | nindent 8 }}
+        {{- include "openfilter-pipelines-controller.labels" . | nindent 8 }}
         control-plane: controller-manager
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
@@ -28,7 +28,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "openfilter-pipelines-runner.serviceAccountName" . }}
+      serviceAccountName: {{ include "openfilter-pipelines-controller.serviceAccountName" . }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -104,7 +104,7 @@ spec:
         {{- if .Values.controller.webhook.enabled }}
         - name: cert
           secret:
-            secretName: {{ include "openfilter-pipelines-runner.fullname" . }}-webhook-cert
+            secretName: {{ include "openfilter-pipelines-controller.fullname" . }}-webhook-cert
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

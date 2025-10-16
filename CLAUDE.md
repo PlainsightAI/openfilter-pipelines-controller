@@ -9,7 +9,7 @@ This is a Kubernetes operator built with Kubebuilder v4 that manages Pipeline cu
 **Domain**: plainsight.ai
 **API Group**: filter.plainsight.ai
 **Current Version**: v1alpha1
-**Repository**: github.com/PlainsightAI/openfilter-pipelines-runner
+**Repository**: github.com/PlainsightAI/openfilter-pipelines-controller
 
 ## Development Commands
 
@@ -70,7 +70,7 @@ make generate
 make install
 
 # Deploy controller to cluster
-make deploy IMG=<registry>/openfilter-pipelines-runner:tag
+make deploy IMG=<registry>/openfilter-pipelines-controller:tag
 
 # Create sample Pipeline resources
 kubectl apply -k config/samples/
@@ -85,19 +85,19 @@ make undeploy
 ### Docker/Container
 ```bash
 # Build Docker image
-make docker-build IMG=<registry>/openfilter-pipelines-runner:tag
+make docker-build IMG=<registry>/openfilter-pipelines-controller:tag
 
 # Push Docker image
-make docker-push IMG=<registry>/openfilter-pipelines-runner:tag
+make docker-push IMG=<registry>/openfilter-pipelines-controller:tag
 
 # Build and push multi-platform images
-make docker-buildx IMG=<registry>/openfilter-pipelines-runner:tag
+make docker-buildx IMG=<registry>/openfilter-pipelines-controller:tag
 ```
 
 ### Distribution
 ```bash
 # Generate consolidated install.yaml in dist/
-make build-installer IMG=<registry>/openfilter-pipelines-runner:tag
+make build-installer IMG=<registry>/openfilter-pipelines-controller:tag
 ```
 
 ### Helm Chart
@@ -106,21 +106,21 @@ make build-installer IMG=<registry>/openfilter-pipelines-runner:tag
 make helm-update-crds
 
 # Install chart locally
-helm install openfilter-pipelines-runner charts/openfilter-pipelines-runner \
+helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
   --namespace pipelines-system \
   --create-namespace
 
 # Install with Valkey enabled
-helm install openfilter-pipelines-runner charts/openfilter-pipelines-runner \
+helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
   --namespace pipelines-system \
   --create-namespace \
   --set valkey.enabled=true
 
 # Lint Helm chart
-cd charts/openfilter-pipelines-runner && helm lint .
+cd charts/openfilter-pipelines-controller && helm lint .
 
 # Update Helm dependencies
-cd charts/openfilter-pipelines-runner && helm dependency update
+cd charts/openfilter-pipelines-controller && helm dependency update
 ```
 
 ## Architecture
@@ -150,10 +150,10 @@ cd charts/openfilter-pipelines-runner && helm dependency update
   - `config/manager/`: Controller deployment manifest
 
 - **charts/**: Helm charts for deployment
-  - `charts/openfilter-pipelines-runner/`: Main Helm chart
-  - `charts/openfilter-pipelines-runner/crds/`: CRD manifests (synced from config/crd/bases)
-  - `charts/openfilter-pipelines-runner/templates/`: Kubernetes resource templates
-  - `charts/openfilter-pipelines-runner/values.yaml`: Default configuration values
+  - `charts/openfilter-pipelines-controller/`: Main Helm chart
+  - `charts/openfilter-pipelines-controller/crds/`: CRD manifests (synced from config/crd/bases)
+  - `charts/openfilter-pipelines-controller/templates/`: Kubernetes resource templates
+  - `charts/openfilter-pipelines-controller/values.yaml`: Default configuration values
 
 - **hack/**: Utility scripts
   - `hack/update-helm-crds.sh`: Script to sync CRDs from config/crd/bases to Helm chart
@@ -199,7 +199,7 @@ When modifying CRD types or controller RBAC:
 ## Testing Notes
 
 - Unit tests use envtest to simulate a Kubernetes API server
-- E2e tests create a temporary Kind cluster named `openfilter-pipelines-runner-test-e2e`
+- E2e tests create a temporary Kind cluster named `openfilter-pipelines-controller-test-e2e`
 - Kind must be pre-installed for e2e tests
 - Test framework: Ginkgo v2 with Gomega matchers
 

@@ -71,7 +71,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= openfilter-pipelines-runner-test-e2e
+KIND_CLUSTER ?= openfilter-pipelines-controller-test-e2e
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -152,19 +152,19 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name openfilter-pipelines-runner-builder
-	$(CONTAINER_TOOL) buildx use openfilter-pipelines-runner-builder
+	- $(CONTAINER_TOOL) buildx create --name openfilter-pipelines-controller-builder
+	$(CONTAINER_TOOL) buildx use openfilter-pipelines-controller-builder
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm openfilter-pipelines-runner-builder
+	- $(CONTAINER_TOOL) buildx rm openfilter-pipelines-controller-builder
 	rm Dockerfile.cross
 
 .PHONY: docker-buildx-claimer
 docker-buildx-claimer: ## Build and push docker image for claimer for cross-platform support
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' cmd/claimer/Dockerfile > cmd/claimer/Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name openfilter-pipelines-runner-claimer-builder
-	$(CONTAINER_TOOL) buildx use openfilter-pipelines-runner-claimer-builder
+	- $(CONTAINER_TOOL) buildx create --name openfilter-pipelines-controller-claimer-builder
+	$(CONTAINER_TOOL) buildx use openfilter-pipelines-controller-claimer-builder
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${CLAIMER_IMG} -f cmd/claimer/Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm openfilter-pipelines-runner-claimer-builder
+	- $(CONTAINER_TOOL) buildx rm openfilter-pipelines-controller-claimer-builder
 	rm cmd/claimer/Dockerfile.cross
 
 .PHONY: build-installer

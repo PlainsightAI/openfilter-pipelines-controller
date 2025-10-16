@@ -39,8 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1"
-	"github.com/PlainsightAI/openfilter-pipelines-runner/internal/queue"
+	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/queue"
 )
 
 const (

@@ -6,8 +6,8 @@ cliVersion: 4.9.0
 domain: plainsight.ai
 layout:
 - go.kubebuilder.io/v4
-projectName: openfilter-pipelines-runner
-repo: github.com/PlainsightAI/openfilter-pipelines-runner
+projectName: openfilter-pipelines-controller
+repo: github.com/PlainsightAI/openfilter-pipelines-controller
 resources:
 - api:
     crdVersion: v1
@@ -16,7 +16,7 @@ resources:
   domain: plainsight.ai
   group: filter
   kind: Pipeline
-  path: github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1
+  path: github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -25,6 +25,6 @@ resources:
   domain: plainsight.ai
   group: filter
   kind: PipelineRun
-  path: github.com/PlainsightAI/openfilter-pipelines-runner/api/v1alpha1
+  path: github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1
   version: v1alpha1
 version: "3"

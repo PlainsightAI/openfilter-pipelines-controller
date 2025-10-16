@@ -12,7 +12,7 @@ set -o pipefail
 
 SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CRD_SOURCE_DIR="${SCRIPT_ROOT}/config/crd/bases"
-CHART_CRD_DIR="${SCRIPT_ROOT}/charts/openfilter-pipelines-runner/crds"
+CHART_CRD_DIR="${SCRIPT_ROOT}/charts/openfilter-pipelines-controller/crds"
 
 # Colors for output
 RED='\033[0;31m'
@@ -95,8 +95,8 @@ function main() {
     log_info ""
     log_info "Next steps:"
     echo "  1. Review the changes: git diff ${CHART_CRD_DIR}"
-    echo "  2. Test the chart: helm template test charts/openfilter-pipelines-runner"
-    echo "  3. Lint the chart: cd charts/openfilter-pipelines-runner && helm lint ."
+    echo "  2. Test the chart: helm template test charts/openfilter-pipelines-controller"
+    echo "  3. Lint the chart: cd charts/openfilter-pipelines-controller && helm lint ."
     echo "  4. Commit the changes: git add ${CHART_CRD_DIR} && git commit"
 }
 

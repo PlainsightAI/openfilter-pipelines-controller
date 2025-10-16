@@ -1,10 +1,10 @@
-# Production values for openfilter-pipelines-runner
+# Production values for openfilter-pipelines-controller
 # This is a sample configuration for production deployments
 
 replicaCount: 1
 
 image:
-  repository: ghcr.io/plainsightai/openfilter-pipelines-runner
+  repository: ghcr.io/plainsightai/openfilter-pipelines-controller
   pullPolicy: IfNotPresent
   tag: ""
 
@@ -78,5 +78,5 @@ affinity:
               - key: app.kubernetes.io/name
                 operator: In
                 values:
-                  - openfilter-pipelines-runner
+                  - openfilter-pipelines-controller
           topologyKey: kubernetes.io/hostname

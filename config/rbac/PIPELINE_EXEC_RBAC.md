@@ -128,10 +128,10 @@ These RBAC resources are automatically installed when you deploy the controller:
 make install
 
 # Or deploy the full controller
-make deploy IMG=<your-registry>/openfilter-pipelines-runner:tag
+make deploy IMG=<your-registry>/openfilter-pipelines-controller:tag
 ```
 
-The resources will be created in the controller's namespace (typically `openfilter-pipelines-runner-system`).
+The resources will be created in the controller's namespace (typically `openfilter-pipelines-controller-system`).
 
 ## Troubleshooting
 
@@ -145,13 +145,13 @@ This indicates the ServiceAccount doesn't have patch permissions. Verify:
 
 ```bash
 # Check ServiceAccount
-kubectl get sa pipeline-exec -n openfilter-pipelines-runner-system
+kubectl get sa pipeline-exec -n openfilter-pipelines-controller-system
 
 # Check Role
-kubectl get role pipeline-exec-role -n openfilter-pipelines-runner-system -o yaml
+kubectl get role pipeline-exec-role -n openfilter-pipelines-controller-system -o yaml
 
 # Check RoleBinding
-kubectl get rolebinding pipeline-exec-rolebinding -n openfilter-pipelines-runner-system -o yaml
+kubectl get rolebinding pipeline-exec-rolebinding -n openfilter-pipelines-controller-system -o yaml
 ```
 
 ### Error: "failed to create in-cluster config"

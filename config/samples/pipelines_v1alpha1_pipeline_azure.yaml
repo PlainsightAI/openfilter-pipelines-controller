@@ -6,9 +6,10 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-azure-sample
 spec:
-  input:
-    bucket: mycontainer
-    prefix: data/
-    endpoint: https://myaccount.blob.core.windows.net
-    credentialsSecret:
-      name: azure-s3-credentials
+  source:
+    bucket:
+      name: mycontainer
+      prefix: data/
+      endpoint: https://myaccount.blob.core.windows.net
+      credentialsSecret:
+        name: azure-s3-credentials

@@ -7,12 +7,13 @@ metadata:
   name: pipeline-failure-sample
   namespace: default
 spec:
-  input:
-    bucket: cow-demo-development
-    prefix: videos
-    endpoint: storage.googleapis.com
-    credentialsSecret:
-      name: gcs-credentials
+  source:
+    bucket:
+      name: cow-demo-development
+      prefix: videos
+      endpoint: storage.googleapis.com
+      credentialsSecret:
+        name: gcs-credentials
 
   execution:
     parallelism: 1

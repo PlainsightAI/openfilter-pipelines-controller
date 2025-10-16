@@ -36,12 +36,12 @@ type SecretReference struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
-// ObjectStorageSource defines an S3-compatible object storage bucket
-type ObjectStorageSource struct {
-	// bucket is the name of the S3-compatible bucket
+// BucketSource defines an S3-compatible object storage bucket source
+type BucketSource struct {
+	// name is the name of the S3-compatible bucket
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	Bucket string `json:"bucket"`
+	Name string `json:"name"`
 
 	// prefix is an optional path prefix within the bucket (e.g., "input-data/")
 	// +optional
@@ -76,6 +76,15 @@ type ObjectStorageSource struct {
 	// +optional
 	// +kubebuilder:default=false
 	UsePathStyle bool `json:"usePathStyle,omitempty"`
+}
+
+// Source defines the input source for the pipeline
+// Currently supports bucket (S3-compatible object storage)
+// Future: will support rtsp, kafka, etc.
+type Source struct {
+	// bucket defines an S3-compatible object storage source
+	// +optional
+	Bucket *BucketSource `json:"bucket,omitempty"`
 }
 
 // Filter defines a containerized processing step in the pipeline
@@ -121,9 +130,11 @@ type PipelineSpec struct {
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// input defines the S3-compatible bucket containing input data for the pipeline
+	// source defines the input source for the pipeline
+	// Currently supports bucket (S3-compatible object storage)
+	// Future: will support rtsp, kafka, etc.
 	// +kubebuilder:validation:Required
-	Input ObjectStorageSource `json:"input"`
+	Source Source `json:"source"`
 
 	// filters is an ordered list of processing steps to apply to the input data
 	// Filters are executed sequentially in the order they are defined

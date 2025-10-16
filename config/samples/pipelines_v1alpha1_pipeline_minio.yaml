@@ -6,13 +6,14 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-minio-sample
 spec:
-  input:
-    bucket: pipeline-data
-    prefix: datasets/
-    endpoint: http://minio.default.svc.cluster.local:9000
-    usePathStyle: true
-    credentialsSecret:
-      name: minio-credentials
+  source:
+    bucket:
+      name: pipeline-data
+      prefix: datasets/
+      endpoint: http://minio.default.svc.cluster.local:9000
+      usePathStyle: true
+      credentialsSecret:
+        name: minio-credentials
 
   filters:
     - name: data-validator

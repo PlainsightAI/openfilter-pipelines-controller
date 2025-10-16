@@ -6,12 +6,13 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-advanced-sample
 spec:
-  input:
-    bucket: video-processing-input
-    prefix: raw-videos/
-    region: us-east-1
-    credentialsSecret:
-      name: s3-credentials
+  source:
+    bucket:
+      name: video-processing-input
+      prefix: raw-videos/
+      region: us-east-1
+      credentialsSecret:
+        name: s3-credentials
 
   filters:
     # First filter: Extract metadata

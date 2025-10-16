@@ -6,12 +6,13 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-sample
 spec:
-  input:
-    bucket: cow-demo-development
-    prefix: videos
-    endpoint: storage.googleapis.com
-    credentialsSecret:
-      name: gcs-credentials
+  source:
+    bucket:
+      name: cow-demo-development
+      prefix: videos
+      endpoint: storage.googleapis.com
+      credentialsSecret:
+        name: gcs-credentials
 
   execution:
     parallelism: 10

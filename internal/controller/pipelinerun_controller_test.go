@@ -190,10 +190,12 @@ var _ = Describe("PipelineRun Controller", func() {
 					Namespace: namespace,
 				},
 				Spec: pipelinesv1alpha1.PipelineSpec{
-					Input: pipelinesv1alpha1.ObjectStorageSource{
-						Bucket:   "test-bucket",
-						Endpoint: "http://minio:9000",
-						Region:   "us-east-1",
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
 					},
 					Filters: []pipelinesv1alpha1.Filter{
 						{
@@ -366,8 +368,10 @@ var _ = Describe("PipelineRun Controller", func() {
 			Expect(*job.Spec.Completions).To(Equal(int32(100)))
 			Expect(job.Spec.Template.Spec.InitContainers).To(HaveLen(1))
 			Expect(job.Spec.Template.Spec.InitContainers[0].Name).To(Equal("claimer"))
-			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1))
-			Expect(job.Spec.Template.Spec.Containers[0].Name).To(Equal("test-filter"))
+			// Should have video-in container (implicit) + test-filter (user-defined)
+			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(2))
+			Expect(job.Spec.Template.Spec.Containers[0].Name).To(Equal("video-in"))
+			Expect(job.Spec.Template.Spec.Containers[1].Name).To(Equal("test-filter"))
 		})
 
 		It("should update status with file counts from Valkey", func() {

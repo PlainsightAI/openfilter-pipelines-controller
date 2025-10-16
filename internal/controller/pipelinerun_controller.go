@@ -81,6 +81,7 @@ type PipelineRunReconciler struct {
 	ValkeyAddr     string
 	ValkeyPassword string
 	ClaimerImage   string // Image for the claimer init container
+	VideoInImage   string // Image for the video-in container
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineruns,verbs=get;list;watch;create;update;patch;delete
@@ -397,9 +398,13 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 	return true, nil
 }
 
-// getCredentials retrieves S3 credentials for the pipeline input secret, if configured.
+// getCredentials retrieves S3 credentials for the pipeline source secret, if configured.
 func (r *PipelineRunReconciler) getCredentials(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline) (string, string, error) {
-	secretRef := pipeline.Spec.Input.CredentialsSecret
+	if pipeline.Spec.Source.Bucket == nil {
+		return "", "", nil
+	}
+
+	secretRef := pipeline.Spec.Source.Bucket.CredentialsSecret
 	if secretRef == nil {
 		return "", "", nil
 	}
@@ -424,11 +429,15 @@ func (r *PipelineRunReconciler) getCredentials(ctx context.Context, pipeline *pi
 	return accessKey, secretKey, nil
 }
 
-// listBucketFiles lists objects available to process for the pipeline input configuration.
+// listBucketFiles lists objects available to process for the pipeline source configuration.
 func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline, accessKey, secretKey string) ([]string, error) {
-	input := pipeline.Spec.Input
+	if pipeline.Spec.Source.Bucket == nil {
+		return nil, fmt.Errorf("pipeline has no bucket source configured")
+	}
 
-	endpoint := input.Endpoint
+	bucket := pipeline.Spec.Source.Bucket
+
+	endpoint := bucket.Endpoint
 	useSSL := true
 	if endpoint != "" {
 		if len(endpoint) > 7 && endpoint[:7] == "http://" {
@@ -447,7 +456,7 @@ func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *p
 	}
 
 	var customTransport http.RoundTripper
-	if input.InsecureSkipTLSVerify {
+	if bucket.InsecureSkipTLSVerify {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		customTransport = transport
@@ -456,7 +465,7 @@ func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *p
 	minioClient, err := minio.New(endpoint, &minio.Options{
 		Creds:     creds,
 		Secure:    useSSL,
-		Region:    input.Region,
+		Region:    bucket.Region,
 		Transport: customTransport,
 	})
 	if err != nil {
@@ -464,8 +473,8 @@ func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *p
 	}
 
 	var files []string
-	objectCh := minioClient.ListObjects(ctx, input.Bucket, minio.ListObjectsOptions{
-		Prefix:    input.Prefix,
+	objectCh := minioClient.ListObjects(ctx, bucket.Name, minio.ListObjectsOptions{
+		Prefix:    bucket.Prefix,
 		Recursive: true,
 	})
 
@@ -569,9 +578,9 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 
 	// Get S3 credentials from Pipeline
 	var s3SecretName, s3SecretNamespace string
-	if pipeline.Spec.Input.CredentialsSecret != nil {
-		s3SecretName = pipeline.Spec.Input.CredentialsSecret.Name
-		s3SecretNamespace = pipeline.Spec.Input.CredentialsSecret.Namespace
+	if pipeline.Spec.Source.Bucket != nil && pipeline.Spec.Source.Bucket.CredentialsSecret != nil {
+		s3SecretName = pipeline.Spec.Source.Bucket.CredentialsSecret.Name
+		s3SecretNamespace = pipeline.Spec.Source.Bucket.CredentialsSecret.Namespace
 		if s3SecretNamespace == "" {
 			s3SecretNamespace = pipeline.Namespace
 		}
@@ -591,11 +600,17 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
-		{Name: "S3_BUCKET", Value: pipeline.Spec.Input.Bucket},
-		{Name: "S3_ENDPOINT", Value: pipeline.Spec.Input.Endpoint},
-		{Name: "S3_REGION", Value: pipeline.Spec.Input.Region},
-		{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", pipeline.Spec.Input.UsePathStyle)},
-		{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", pipeline.Spec.Input.InsecureSkipTLSVerify)},
+	}
+
+	// Add S3 config if bucket source is configured
+	if pipeline.Spec.Source.Bucket != nil {
+		claimerEnv = append(claimerEnv, []corev1.EnvVar{
+			{Name: "S3_BUCKET", Value: pipeline.Spec.Source.Bucket.Name},
+			{Name: "S3_ENDPOINT", Value: pipeline.Spec.Source.Bucket.Endpoint},
+			{Name: "S3_REGION", Value: pipeline.Spec.Source.Bucket.Region},
+			{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", pipeline.Spec.Source.Bucket.UsePathStyle)},
+			{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", pipeline.Spec.Source.Bucket.InsecureSkipTLSVerify)},
+		}...)
 	}
 
 	// Add S3 credentials if secret is specified
@@ -624,8 +639,26 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 		})
 	}
 
+	// Build video-in container (implicit, always first)
+	// The claimer downloads files to /ws/input, so we read from there
+	videoInContainer := corev1.Container{
+		Name:  "video-in",
+		Image: r.VideoInImage,
+		Env: []corev1.EnvVar{
+			{Name: "FILTER_SOURCES", Value: "/ws/input.mp4"},
+			{Name: "FILTER_OUTPUTS", Value: "tcp://*:5550"},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "workspace", MountPath: "/ws"},
+		},
+	}
+
 	// Build filter containers from Pipeline spec
-	filterContainers := make([]corev1.Container, 0, len(pipeline.Spec.Filters))
+	filterContainers := make([]corev1.Container, 0, len(pipeline.Spec.Filters)+1)
+	// Add video-in as first container
+	filterContainers = append(filterContainers, videoInContainer)
+
+	// Add user-defined filters
 	for _, filter := range pipeline.Spec.Filters {
 		container := corev1.Container{
 			Name:            filter.Name,

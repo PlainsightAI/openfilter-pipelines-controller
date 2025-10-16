@@ -44,7 +44,7 @@ const (
 	EnvS3SkipTLS    = "S3_INSECURE_SKIP_TLS_VERIFY"
 
 	// Volume mount paths
-	InputPath = "/ws/input"
+	InputPath = "/ws/input.mp4"
 
 	// Pod annotations
 	AnnotationMessageID = "queue.valkey.mid"

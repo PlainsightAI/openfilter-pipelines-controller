@@ -52,10 +52,12 @@ var _ = Describe("Pipeline Controller", func() {
 						Namespace: "default",
 					},
 					Spec: pipelinesv1alpha1.PipelineSpec{
-						Input: pipelinesv1alpha1.ObjectStorageSource{
-							Bucket:   "test-bucket",
-							Endpoint: "http://minio:9000",
-							Region:   "us-east-1",
+						Source: pipelinesv1alpha1.Source{
+							Bucket: &pipelinesv1alpha1.BucketSource{
+								Name:     "test-bucket",
+								Endpoint: "http://minio:9000",
+								Region:   "us-east-1",
+							},
 						},
 						Filters: []pipelinesv1alpha1.Filter{
 							{

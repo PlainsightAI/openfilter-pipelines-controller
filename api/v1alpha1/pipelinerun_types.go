@@ -143,7 +143,7 @@ type PipelineRun struct {
 
 	// metadata is a standard object metadata
 	// +optional
-	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// spec defines the desired state of PipelineRun
 	// +required
@@ -151,7 +151,7 @@ type PipelineRun struct {
 
 	// status defines the observed state of PipelineRun
 	// +optional
-	Status PipelineRunStatus `json:"status,omitempty,omitzero"`
+	Status PipelineRunStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

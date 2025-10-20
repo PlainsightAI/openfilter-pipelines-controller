@@ -190,6 +190,7 @@ var _ = Describe("PipelineRun Controller", func() {
 					Namespace: namespace,
 				},
 				Spec: pipelinesv1alpha1.PipelineSpec{
+					VideoInputPath: "/ws/custom-input.mp4",
 					Source: pipelinesv1alpha1.Source{
 						Bucket: &pipelinesv1alpha1.BucketSource{
 							Name:     "test-bucket",
@@ -252,14 +253,12 @@ var _ = Describe("PipelineRun Controller", func() {
 			}
 
 			// Cleanup any remaining pods for this test
-			runID := fmt.Sprintf("run%d", testCounter)
 			podList := &corev1.PodList{}
 			err := k8sClient.List(ctx, podList, client.InNamespace(namespace))
 			if err == nil {
 				for _, pod := range podList.Items {
-					// Delete pods matching this test's runID or test-specific pod names
-					if pod.Labels["filter.plainsight.ai/run"] == runID ||
-						pod.Labels["filter.plainsight.ai/run"] == "test123" {
+					// Delete pods matching test-specific pod names
+					if pod.Labels["filter.plainsight.ai/run"] == "test123" {
 						k8sClient.Delete(ctx, &pod)
 					}
 				}
@@ -279,10 +278,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
-					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: "pr:test123:work",
-						Group:  "cg:test123",
 					},
 				},
 			}
@@ -316,10 +311,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
-					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: "pr:test123:work",
-						Group:  "cg:test123",
 					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						Parallelism: ptr.To(int32(5)),
@@ -368,10 +359,11 @@ var _ = Describe("PipelineRun Controller", func() {
 			Expect(*job.Spec.Completions).To(Equal(int32(100)))
 			Expect(job.Spec.Template.Spec.InitContainers).To(HaveLen(1))
 			Expect(job.Spec.Template.Spec.InitContainers[0].Name).To(Equal("claimer"))
-			// Should have video-in container (implicit) + test-filter (user-defined)
-			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(2))
-			Expect(job.Spec.Template.Spec.Containers[0].Name).To(Equal("video-in"))
-			Expect(job.Spec.Template.Spec.Containers[1].Name).To(Equal("test-filter"))
+			claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+			Expect(claimerEnv).To(ContainElement(corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: "/ws/custom-input.mp4"}))
+			// Only user-defined filters should be present.
+			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1))
+			Expect(job.Spec.Template.Spec.Containers[0].Name).To(Equal("test-filter"))
 		})
 
 		It("should update status with file counts from Valkey", func() {
@@ -380,7 +372,6 @@ var _ = Describe("PipelineRun Controller", func() {
 			mockValkey.PendingCount = 20
 			mockValkey.DLQLength = 5
 
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -389,10 +380,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
-					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
 					},
 				},
 			}
@@ -442,7 +429,6 @@ var _ = Describe("PipelineRun Controller", func() {
 		})
 
 		It("should handle completed pods and ACK successful messages", func() {
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -452,13 +438,16 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
-					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			// Get the runID from the created PipelineRun
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			runID := pipelineRun.GetRunID()
 
 			// Create a successful pod with queue annotations
 			pod := &corev1.Pod{
@@ -537,7 +526,6 @@ var _ = Describe("PipelineRun Controller", func() {
 		})
 
 		It("should re-enqueue failed pods with incremented attempts", func() {
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -547,16 +535,19 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
-					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						MaxAttempts: ptr.To(int32(3)),
 					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			// Get the runID from the created PipelineRun
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			runID := pipelineRun.GetRunID()
 
 			// Create a failed pod
 			pod := &corev1.Pod{
@@ -634,7 +625,6 @@ var _ = Describe("PipelineRun Controller", func() {
 		})
 
 		It("should send files to DLQ after max attempts", func() {
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -644,16 +634,19 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
-					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						MaxAttempts: ptr.To(int32(3)),
 					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			// Get the runID from the created PipelineRun
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			runID := pipelineRun.GetRunID()
 
 			// Create a failed pod with max attempts
 			pod := &corev1.Pod{
@@ -731,7 +724,6 @@ var _ = Describe("PipelineRun Controller", func() {
 		})
 
 		It("should set Progressing condition during execution", func() {
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -740,10 +732,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
-					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
 					},
 				},
 			}
@@ -782,7 +770,6 @@ var _ = Describe("PipelineRun Controller", func() {
 			mockValkey.ConsumerGroupLag = 0
 			mockValkey.PendingCount = 0
 
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -791,10 +778,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
-					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
 					},
 				},
 			}
@@ -878,7 +861,6 @@ var _ = Describe("PipelineRun Controller", func() {
 			mockValkey.ConsumerGroupLag = 0
 			mockValkey.PendingCount = 0
 
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -887,10 +869,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
-					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
 					},
 				},
 			}
@@ -984,7 +962,6 @@ var _ = Describe("PipelineRun Controller", func() {
 		})
 
 		It("should re-enqueue when a pod is stuck in ImagePullBackOff", func() {
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -994,16 +971,19 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
-					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						MaxAttempts: ptr.To(int32(2)),
 					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			// Get the runID from the created PipelineRun
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			runID := pipelineRun.GetRunID()
 
 			for i := 0; i < 2; i++ {
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -1107,7 +1087,6 @@ var _ = Describe("PipelineRun Controller", func() {
 		})
 
 		It("should re-enqueue when a pod is crash looping", func() {
-			runID := fmt.Sprintf("run%d", testCounter)
 			pipelineRun = &pipelinesv1alpha1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineRunName,
@@ -1117,16 +1096,19 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: fmt.Sprintf("pr:%s:work", runID),
-						Group:  fmt.Sprintf("cg:%s", runID),
-					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						MaxAttempts: ptr.To(int32(2)),
 					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			// Get the runID from the created PipelineRun
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			runID := pipelineRun.GetRunID()
 
 			for i := 0; i < 2; i++ {
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -1231,10 +1213,6 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: "nonexistent-pipeline",
 					},
-					Queue: pipelinesv1alpha1.QueueConfig{
-						Stream: "pr:test123:work",
-						Group:  "cg:test123",
-					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
@@ -1254,26 +1232,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				degradedCond := meta.FindStatusCondition(pipelineRun.Status.Conditions, ConditionTypeDegraded)
 				return degradedCond != nil && degradedCond.Status == metav1.ConditionTrue
 			}, timeout, interval).Should(BeTrue())
-		})
-	})
-
-	Context("extractRunID function", func() {
-		It("should extract run ID from stream key correctly", func() {
-			testCases := []struct {
-				streamKey  string
-				expectedID string
-			}{
-				{"pr:test123:work", "test123"},
-				{"pr:abc-def-123:work", "abc-def-123"},
-				{"pr:simple:work", "simple"},
-				{"pr::work", ""},
-				{"invalid", ""},
-			}
-
-			for _, tc := range testCases {
-				result := extractRunID(tc.streamKey)
-				Expect(result).To(Equal(tc.expectedID), "Failed for stream key: %s", tc.streamKey)
-			}
 		})
 	})
 })

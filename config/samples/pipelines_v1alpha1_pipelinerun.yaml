@@ -8,10 +8,7 @@ metadata:
 spec:
   pipelineRef:
     name: pipeline-sample
-  queue:
-    stream: "pr:example-run:work"
-    group: "cg:example-run"
   execution:
-    parallelism: 10
+    parallelism: 1
     maxAttempts: 3
     pendingTimeout: "15m"

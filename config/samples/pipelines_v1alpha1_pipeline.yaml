@@ -13,14 +13,20 @@ spec:
       endpoint: storage.googleapis.com
       credentialsSecret:
         name: gcs-credentials
+  videoInputPath: /ws/input.mp4
 
-  execution:
-    parallelism: 10
-    maxAttempts: 3
-    pendingTimeout: 15m # Kubernetes duration format (e.g., "15m", "1h", "30s")
+  # Global configuration that will be injected as FILTER_* env vars into all filter containers
+  config:
+    - name: sources
+      value: tcp://localhost:5550
+    - name: outputs
+      value: tcp://*:5551
 
   filters:
-    - name: list-file
-      image: alpine:latest
-      command: ["ls"]
-      args: ["-la", "/ws/input"]
+    - name: video-in
+      image: plainsightai/openfilter-videoin:v0.1.10
+      # These filters will inherit FILTER_SOURCES=tcp://localhost:5550 and FILTER_OUTPUTS=tcp://*:5551
+      # from the config above. Individual filters can override these by specifying their own env vars.
+    - name: face-blur
+      image: plainsightai/openfilter-faceblur:v1.1.4
+      # This filter also inherits the config env vars

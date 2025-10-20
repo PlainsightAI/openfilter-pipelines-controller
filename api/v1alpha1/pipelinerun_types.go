@@ -58,10 +58,6 @@ type PipelineRunSpec struct {
 	// execution defines how the pipeline should be executed
 	// +optional
 	Execution *ExecutionConfig `json:"execution,omitempty"`
-
-	// queue defines the Valkey stream configuration for this run
-	// +required
-	Queue QueueConfig `json:"queue"`
 }
 
 // PipelineReference defines a reference to a Pipeline resource
@@ -74,17 +70,6 @@ type PipelineReference struct {
 	// If not specified, the PipelineRun's namespace is used
 	// +optional
 	Namespace *string `json:"namespace,omitempty"`
-}
-
-// QueueConfig defines the Valkey stream configuration for a pipeline run
-type QueueConfig struct {
-	// stream is the Valkey stream key for work messages (format: pr:<runId>:work)
-	// +required
-	Stream string `json:"stream"`
-
-	// group is the consumer group name (format: cg:<runId>)
-	// +required
-	Group string `json:"group"`
 }
 
 // PipelineRunStatus defines the observed state of PipelineRun.
@@ -176,6 +161,23 @@ type PipelineRunList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []PipelineRun `json:"items"`
+}
+
+// GetQueueStream returns the Valkey stream key for this PipelineRun
+// Format: pr:<uid>:work
+func (pr *PipelineRun) GetQueueStream() string {
+	return "pr:" + string(pr.UID) + ":work"
+}
+
+// GetQueueGroup returns the Valkey consumer group name for this PipelineRun
+// Format: cg:<uid>
+func (pr *PipelineRun) GetQueueGroup() string {
+	return "cg:" + string(pr.UID)
+}
+
+// GetRunID returns the run ID (UID) for this PipelineRun
+func (pr *PipelineRun) GetRunID() string {
+	return string(pr.UID)
 }
 
 func init() {

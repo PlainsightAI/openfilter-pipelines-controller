@@ -87,6 +87,19 @@ type Source struct {
 	Bucket *BucketSource `json:"bucket,omitempty"`
 }
 
+// ConfigVar defines a configuration key-value pair that will be injected
+// as an environment variable with the FILTER_ prefix
+type ConfigVar struct {
+	// name is the configuration key (will be prefixed with FILTER_ and uppercased)
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// value is the configuration value
+	// +kubebuilder:validation:Required
+	Value string `json:"value"`
+}
+
 // Filter defines a containerized processing step in the pipeline
 type Filter struct {
 	// name is a unique identifier for this filter within the pipeline
@@ -141,6 +154,21 @@ type PipelineSpec struct {
 	// +optional
 	// +kubebuilder:validation:MinItems=1
 	Filters []Filter `json:"filters,omitempty"`
+
+	// config is a list of configuration key-value pairs that will be injected
+	// as environment variables into all filter containers with the FILTER_ prefix.
+	// For example, a config with name "sources" and value "mysource" will result
+	// in the environment variable FILTER_SOURCES=mysource
+	// +optional
+	Config []ConfigVar `json:"config,omitempty"`
+
+	// videoInputPath defines where the claimer stores downloaded source files.
+	// Downstream filters can reference this path to read the input artifact.
+	// Defaults to /ws/input.mp4.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:default=/ws/input.mp4
+	VideoInputPath string `json:"videoInputPath,omitempty"`
 }
 
 // PipelineStatus defines the observed state of Pipeline.

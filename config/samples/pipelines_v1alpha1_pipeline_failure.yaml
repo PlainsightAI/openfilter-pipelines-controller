@@ -7,6 +7,7 @@ metadata:
   name: pipeline-failure-sample
   namespace: default
 spec:
+  videoInputPath: /ws/input.mp4
   source:
     bucket:
       name: cow-demo-development

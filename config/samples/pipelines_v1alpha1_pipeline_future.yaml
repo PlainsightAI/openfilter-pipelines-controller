@@ -6,6 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-advanced-sample
 spec:
+  videoInputPath: /ws/input.mp4
   source:
     bucket:
       name: video-processing-input

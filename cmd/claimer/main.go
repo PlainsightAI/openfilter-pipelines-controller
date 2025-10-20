@@ -42,9 +42,10 @@ const (
 	EnvS3SecretKey  = "S3_SECRET_ACCESS_KEY"
 	EnvS3PathStyle  = "S3_USE_PATH_STYLE"
 	EnvS3SkipTLS    = "S3_INSECURE_SKIP_TLS_VERIFY"
+	EnvVideoInput   = "VIDEO_INPUT_PATH"
 
 	// Volume mount paths
-	InputPath = "/ws/input.mp4"
+	defaultInputPath = "/ws/input.mp4"
 
 	// Pod annotations
 	AnnotationMessageID = "queue.valkey.mid"
@@ -125,10 +126,10 @@ func run() error {
 	}
 
 	// Download file from S3
-	if err := downloadFile(ctx, minioClient, cfg.S3Bucket, msg.File, InputPath); err != nil {
+	if err := downloadFile(ctx, minioClient, cfg.S3Bucket, msg.File, cfg.VideoInputPath); err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}
-	log.Printf("Downloaded file %s to %s", msg.File, InputPath)
+	log.Printf("Downloaded file %s to %s", msg.File, cfg.VideoInputPath)
 
 	// Patch pod annotations
 	if err := patchPodAnnotations(ctx, cfg, messageID, msg); err != nil {
@@ -153,6 +154,7 @@ type Config struct {
 	S3SecretKey    string
 	S3UsePathStyle bool
 	S3SkipTLS      bool
+	VideoInputPath string
 }
 
 func loadConfig() (*Config, error) {
@@ -168,6 +170,12 @@ func loadConfig() (*Config, error) {
 		S3Region:     getEnvOrDefault(EnvS3Region, "us-east-1"),
 		S3AccessKey:  os.Getenv(EnvS3AccessKey),
 		S3SecretKey:  os.Getenv(EnvS3SecretKey),
+		VideoInputPath: func() string {
+			if value := os.Getenv(EnvVideoInput); value != "" {
+				return value
+			}
+			return defaultInputPath
+		}(),
 	}
 
 	// Parse boolean flags
@@ -189,6 +197,9 @@ func loadConfig() (*Config, error) {
 	}
 	if cfg.S3Bucket == "" {
 		return nil, fmt.Errorf("S3_BUCKET is required")
+	}
+	if cfg.VideoInputPath == "" {
+		return nil, fmt.Errorf("VIDEO_INPUT_PATH is required")
 	}
 
 	return cfg, nil

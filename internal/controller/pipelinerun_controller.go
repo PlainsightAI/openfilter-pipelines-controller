@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -57,6 +58,9 @@ const (
 	// Reconciliation intervals
 	StatusUpdateInterval = 30 * time.Second
 	ReclaimerInterval    = 5 * time.Minute
+
+	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not overridden.
+	DefaultVideoInputPath = "/ws/input.mp4"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations
@@ -81,7 +85,6 @@ type PipelineRunReconciler struct {
 	ValkeyAddr     string
 	ValkeyPassword string
 	ClaimerImage   string // Image for the claimer init container
-	VideoInImage   string // Image for the video-in container
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineruns,verbs=get;list;watch;create;update;patch;delete
@@ -272,18 +275,8 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 		return false, err
 	}
 
-	if pipelineRun.Spec.Queue.Stream == "" || pipelineRun.Spec.Queue.Group == "" {
-		err := fmt.Errorf("queue configuration is required on PipelineRun spec")
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueMissing", err.Error())
-		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueMissing", "PipelineRun cannot start without queue configuration")
-		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
-			return false, statusErr
-		}
-		return false, err
-	}
-
 	// Ensure the stream and consumer group exist. This call is idempotent and safe on retries.
-	if err := r.ValkeyClient.CreateStreamAndGroup(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group); err != nil {
+	if err := r.ValkeyClient.CreateStreamAndGroup(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup()); err != nil {
 		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInitializationFailed", err.Error())
 		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInitializationFailed", "PipelineRun cannot initialize its queue")
 		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
@@ -292,7 +285,7 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 		return false, fmt.Errorf("failed to create stream and group: %w", err)
 	}
 
-	currentLength, err := r.ValkeyClient.GetStreamLength(ctx, pipelineRun.Spec.Queue.Stream)
+	currentLength, err := r.ValkeyClient.GetStreamLength(ctx, pipelineRun.GetQueueStream())
 	if err != nil {
 		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInspectionFailed", err.Error())
 		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInspectionFailed", "PipelineRun cannot inspect queue state")
@@ -302,7 +295,7 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 		return false, fmt.Errorf("failed to get stream length: %w", err)
 	}
 
-	runID := extractRunID(pipelineRun.Spec.Queue.Stream)
+	runID := pipelineRun.GetRunID()
 
 	if currentLength == 0 {
 		accessKey, secretKey, credErr := r.getCredentials(ctx, pipeline)
@@ -349,7 +342,7 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 
 		successful := int64(0)
 		for _, file := range files {
-			if _, enqueueErr := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.Spec.Queue.Stream, runID, file, 0); enqueueErr != nil {
+			if _, enqueueErr := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.GetQueueStream(), runID, file, 0); enqueueErr != nil {
 				log.Error(enqueueErr, "Failed to enqueue file", "file", file)
 				continue
 			}
@@ -357,7 +350,7 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 		}
 
 		// Refresh the stream length to reflect any enqueued work items.
-		currentLength, err = r.ValkeyClient.GetStreamLength(ctx, pipelineRun.Spec.Queue.Stream)
+		currentLength, err = r.ValkeyClient.GetStreamLength(ctx, pipelineRun.GetQueueStream())
 		if err != nil {
 			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInspectionFailed", err.Error())
 			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInspectionFailed", "PipelineRun cannot inspect queue state")
@@ -559,8 +552,8 @@ func (r *PipelineRunReconciler) ensureJob(ctx context.Context, pipelineRun *pipe
 func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline, jobName string) (*batchv1.Job, error) {
 	log := logf.FromContext(ctx)
 
-	// Extract run ID from the stream name (format: pr:<runId>:work)
-	runID := extractRunID(pipelineRun.Spec.Queue.Stream)
+	// Get run ID from the PipelineRun UID
+	runID := pipelineRun.GetRunID()
 
 	// Get execution config with defaults
 	parallelism := int32(10)
@@ -588,8 +581,8 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 
 	// Build claimer init container env vars
 	claimerEnv := []corev1.EnvVar{
-		{Name: "STREAM", Value: pipelineRun.Spec.Queue.Stream},
-		{Name: "GROUP", Value: pipelineRun.Spec.Queue.Group},
+		{Name: "STREAM", Value: pipelineRun.GetQueueStream()},
+		{Name: "GROUP", Value: pipelineRun.GetQueueGroup()},
 		{Name: "VALKEY_URL", Value: r.ValkeyAddr},
 		{Name: "CONSUMER_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
@@ -639,33 +632,44 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 		})
 	}
 
-	// Build video-in container (implicit, always first)
-	// The claimer downloads files to /ws/input, so we read from there
-	videoInContainer := corev1.Container{
-		Name:  "video-in",
-		Image: r.VideoInImage,
-		Env: []corev1.EnvVar{
-			{Name: "FILTER_SOURCES", Value: "/ws/input.mp4"},
-			{Name: "FILTER_OUTPUTS", Value: "tcp://*:5550"},
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "workspace", MountPath: "/ws"},
-		},
+	// Provide video input path to claimer for storing downloaded files.
+	videoInputPath := pipeline.Spec.VideoInputPath
+	if videoInputPath == "" {
+		videoInputPath = DefaultVideoInputPath
+	}
+	claimerEnv = append(claimerEnv, corev1.EnvVar{
+		Name:  "VIDEO_INPUT_PATH",
+		Value: videoInputPath,
+	})
+
+	// Build config environment variables from Pipeline.Spec.Config
+	configEnvVars := make([]corev1.EnvVar, 0, len(pipeline.Spec.Config))
+	for _, cfg := range pipeline.Spec.Config {
+		// Convert name to uppercase and prefix with FILTER_
+		envName := "FILTER_" + strings.ToUpper(cfg.Name)
+		configEnvVars = append(configEnvVars, corev1.EnvVar{
+			Name:  envName,
+			Value: cfg.Value,
+		})
 	}
 
 	// Build filter containers from Pipeline spec
-	filterContainers := make([]corev1.Container, 0, len(pipeline.Spec.Filters)+1)
-	// Add video-in as first container
-	filterContainers = append(filterContainers, videoInContainer)
+	filterContainers := make([]corev1.Container, 0, len(pipeline.Spec.Filters))
 
 	// Add user-defined filters
 	for _, filter := range pipeline.Spec.Filters {
+		// Start with config env vars, then add filter-specific env vars
+		// Filter-specific env vars can override config if they have the same name
+		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))
+		containerEnv = append(containerEnv, configEnvVars...)
+		containerEnv = append(containerEnv, filter.Env...)
+
 		container := corev1.Container{
 			Name:            filter.Name,
 			Image:           filter.Image,
 			Command:         filter.Command,
 			Args:            filter.Args,
-			Env:             filter.Env,
+			Env:             containerEnv,
 			ImagePullPolicy: filter.ImagePullPolicy,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/ws"},
@@ -733,31 +737,13 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 	return job, nil
 }
 
-// extractRunID extracts the run ID from a stream key (format: pr:<runId>:work)
-func extractRunID(streamKey string) string {
-	// Simple extraction assuming format pr:<runId>:work
-	if len(streamKey) < 8 { // "pr:x:work" minimum
-		return ""
-	}
-	// Remove "pr:" prefix
-	if streamKey[:3] != "pr:" {
-		return ""
-	}
-	runID := streamKey[3:]
-	// Remove ":work" suffix
-	if len(runID) >= 5 && runID[len(runID)-5:] == ":work" {
-		runID = runID[:len(runID)-5]
-	}
-	return runID
-}
-
 // handleCompletedPods processes pods that have completed (succeeded or failed)
 func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) error {
 	log := logf.FromContext(ctx)
 
 	// List all pods for this PipelineRun
 	podList := &corev1.PodList{}
-	runID := extractRunID(pipelineRun.Spec.Queue.Stream)
+	runID := pipelineRun.GetRunID()
 	if err := r.List(ctx, podList, client.InNamespace(pipelineRun.Namespace), client.MatchingLabels{
 		"filter.plainsight.ai/run": runID,
 	}); err != nil {
@@ -799,7 +785,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 
 		if pod.Status.Phase == corev1.PodSucceeded {
 			// ACK the message
-			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group, messageID); err != nil {
+			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), messageID); err != nil {
 				log.Error(err, "Failed to ACK message", "messageID", messageID)
 				continue
 			}
@@ -821,7 +807,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 			attempts++
 			if attempts < int(maxAttempts) {
 				// Re-enqueue with incremented attempts
-				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.Spec.Queue.Stream, runID, filepath, attempts); err != nil {
+				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.GetQueueStream(), runID, filepath, attempts); err != nil {
 					log.Error(err, "Failed to re-enqueue file", "file", filepath)
 				} else {
 					log.Info("Re-enqueued failed file", "file", filepath, "attempts", attempts)
@@ -836,7 +822,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 			}
 
 			// ACK the original message
-			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group, messageID); err != nil {
+			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), messageID); err != nil {
 				log.Error(err, "Failed to ACK failed message", "messageID", messageID)
 				continue
 			}
@@ -927,7 +913,7 @@ func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *p
 	consumerName := "controller-reclaimer"
 
 	// Run XAUTOCLAIM
-	messages, err := r.ValkeyClient.AutoClaim(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group, consumerName, minIdleTime, 100)
+	messages, err := r.ValkeyClient.AutoClaim(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), consumerName, minIdleTime, 100)
 	if err != nil {
 		return fmt.Errorf("failed to auto-claim messages: %w", err)
 	}
@@ -935,7 +921,7 @@ func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *p
 	if len(messages) > 0 {
 		log.Info("Reclaimed stale messages", "count", len(messages))
 
-		runID := extractRunID(pipelineRun.Spec.Queue.Stream)
+		runID := pipelineRun.GetRunID()
 		maxAttempts := int32(3)
 		if pipelineRun.Spec.Execution != nil && pipelineRun.Spec.Execution.MaxAttempts != nil {
 			maxAttempts = *pipelineRun.Spec.Execution.MaxAttempts
@@ -952,7 +938,7 @@ func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *p
 
 			if attempts < int(maxAttempts) {
 				// Re-enqueue with incremented attempts
-				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.Spec.Queue.Stream, runID, filepath, attempts); err != nil {
+				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.GetQueueStream(), runID, filepath, attempts); err != nil {
 					log.Error(err, "Failed to re-enqueue reclaimed file", "file", filepath)
 				}
 			} else {
@@ -964,7 +950,7 @@ func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *p
 			}
 
 			// ACK the reclaimed message
-			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group, msg.ID); err != nil {
+			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), msg.ID); err != nil {
 				log.Error(err, "Failed to ACK reclaimed message", "messageID", msg.ID)
 			}
 		}
@@ -982,21 +968,21 @@ func (r *PipelineRunReconciler) updateStatus(ctx context.Context, pipelineRun *p
 	}
 
 	// Get queued count (consumer group lag - messages not yet read)
-	queued, err := r.ValkeyClient.GetConsumerGroupLag(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group)
+	queued, err := r.ValkeyClient.GetConsumerGroupLag(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup())
 	if err != nil {
 		log.Error(err, "Failed to get consumer group lag")
 		queued = 0
 	}
 
 	// Get running count (pending messages - read but not acknowledged)
-	running, err := r.ValkeyClient.GetPendingCount(ctx, pipelineRun.Spec.Queue.Stream, pipelineRun.Spec.Queue.Group)
+	running, err := r.ValkeyClient.GetPendingCount(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup())
 	if err != nil {
 		log.Error(err, "Failed to get pending count")
 		running = 0
 	}
 
 	// Get failed count (DLQ length)
-	runID := extractRunID(pipelineRun.Spec.Queue.Stream)
+	runID := pipelineRun.GetRunID()
 	dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
 	failed, err := r.ValkeyClient.GetStreamLength(ctx, dlqKey)
 	if err != nil {
@@ -1085,9 +1071,9 @@ func (r *PipelineRunReconciler) checkFailure(ctx context.Context, pipelineRun *p
 func (r *PipelineRunReconciler) flushOutstandingWork(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, reason, message string) {
 	log := logf.FromContext(ctx)
 
-	streamKey := pipelineRun.Spec.Queue.Stream
-	groupName := pipelineRun.Spec.Queue.Group
-	runID := extractRunID(streamKey)
+	streamKey := pipelineRun.GetQueueStream()
+	groupName := pipelineRun.GetQueueGroup()
+	runID := pipelineRun.GetRunID()
 	dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
 
 	maxAttempts := int32(3)

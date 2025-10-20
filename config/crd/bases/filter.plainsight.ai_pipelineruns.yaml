@@ -77,24 +77,8 @@ spec:
                 required:
                 - name
                 type: object
-              queue:
-                description: queue defines the Valkey stream configuration for this
-                  run
-                properties:
-                  group:
-                    description: 'group is the consumer group name (format: cg:<runId>)'
-                    type: string
-                  stream:
-                    description: 'stream is the Valkey stream key for work messages
-                      (format: pr:<runId>:work)'
-                    type: string
-                required:
-                - group
-                - stream
-                type: object
             required:
             - pipelineRef
-            - queue
             type: object
           status:
             description: status defines the observed state of PipelineRun

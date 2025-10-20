@@ -1,8 +1,10 @@
 # openfilter-pipelines-controller
-// TODO(user): Add simple overview of use/purpose
+
+A Kubernetes operator built with Kubebuilder v4 that manages and reconciles Openfilter Pipeline custom resources in the `filter.plainsight.ai` API group.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+This operator provides a Kubernetes-native way to define and manage data processing Openfilter Pipelines through the `Pipeline` custom resource definition (CRD). It runs within a Kubernetes cluster and automatically reconciles Pipeline resources, implementing the declarative configuration model for defining, deploying, and managing filter-based data pipelines. The operator is built with controller-runtime and handles all aspects of Pipeline lifecycle management including creation, updates, status tracking, and deletion.
 
 ## Getting Started
 
@@ -111,7 +113,28 @@ previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml
 is manually re-applied afterwards.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+
+We welcome contributions to the openfilter-pipelines-controller project! Here's how you can contribute:
+
+1. **Report Issues**: If you find bugs or have feature requests, please open an issue on the GitHub repository.
+
+2. **Submit Pull Requests**:
+   - Fork the repository and create a feature branch
+   - Make your changes and ensure tests pass (`make test`)
+   - Run linting checks (`make lint`) and fix any issues
+   - Submit a pull request with a clear description of your changes
+
+3. **Code Standards**:
+   - Follow Go code conventions and best practices
+   - Run `make fmt` to format code and `make vet` to check for issues
+   - Ensure all tests pass before submitting a PR
+   - Update API types with kubebuilder markers if modifying CRDs
+   - Run `make manifests` and `make helm-update-crds` after API changes
+
+4. **Development Setup**:
+   - Install Go 1.25.1+ and Docker
+   - Install Kind for e2e testing
+   - Use `make test` for unit tests and `make test-e2e` for integration tests
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 
@@ -132,4 +155,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-

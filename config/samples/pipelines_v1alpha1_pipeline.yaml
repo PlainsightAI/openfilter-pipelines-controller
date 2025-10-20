@@ -18,15 +18,39 @@ spec:
   filters:
     - name: video-in
       image: plainsightai/openfilter-video-in:v0.1.10
+      resources:
+        requests:
+          cpu: "1"
+        limits:
+          cpu: "1"
       config:
         - name: sources
           value: file:///ws/input.mp4
         - name: outputs
           value: tcp://*:5550
+      env:
+        - name: LOG_LEVEL
+          value: debug
     - name: face-blur
       image: plainsightai/openfilter-faceblur:v1.1.4
+      resources:
+        requests:
+          cpu: "1"
       config:
         - name: sources
           value: tcp://localhost:5550
         - name: outputs
           value: tcp://*:5552
+        - name: debug
+          value: "true"
+        - name: mq_log
+          value: pretty
+    - name: webvis
+      image: plainsightai/openfilter-webvis:v0.1.10
+      config:
+        - name: sources
+          value: tcp://localhost:5552
+        - name: host
+          value: "0.0.0.0"
+        - name: port
+          value: "8080"

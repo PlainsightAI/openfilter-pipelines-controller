@@ -11,4 +11,4 @@ spec:
   execution:
     parallelism: 1
     maxAttempts: 3
-    pendingTimeout: "15m"
+    pendingTimeout: "5m"

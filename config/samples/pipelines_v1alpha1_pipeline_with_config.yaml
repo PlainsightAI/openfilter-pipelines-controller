@@ -17,42 +17,49 @@ spec:
 
   videoInputPath: /ws/input.mp4
 
-  # Global configuration - these will be injected as environment variables
-  # with the FILTER_ prefix into ALL filter containers
-  config:
-    - name: sources           # Becomes FILTER_SOURCES in containers
-      value: tcp://localhost:5550
-    - name: outputs           # Becomes FILTER_OUTPUTS in containers
-      value: tcp://*:5551
-    - name: log_level         # Becomes FILTER_LOG_LEVEL in containers
-      value: debug
-    - name: model_path        # Becomes FILTER_MODEL_PATH in containers
-      value: /models/default.onnx
-
   filters:
     - name: video-decoder
       image: plainsightai/openfilter-videoin:v0.1.10
+      # Filter-specific config - these will be injected as environment variables
+      # with the FILTER_ prefix into this filter's container
+      config:
+        - name: sources           # Becomes FILTER_SOURCES in container
+          value: tcp://localhost:5550
+        - name: outputs           # Becomes FILTER_OUTPUTS in container
+          value: tcp://*:5551
+        - name: log_level         # Becomes FILTER_LOG_LEVEL in container
+          value: debug
       # This container will have:
       #   FILTER_SOURCES=tcp://localhost:5550
       #   FILTER_OUTPUTS=tcp://*:5551
       #   FILTER_LOG_LEVEL=debug
-      #   FILTER_MODEL_PATH=/models/default.onnx
 
     - name: object-detector
       image: plainsightai/openfilter-detector:v2.0.0
-      # This container inherits all config env vars, but can override them:
+      config:
+        - name: sources
+          value: tcp://localhost:5551  # Different source for this filter
+        - name: outputs
+          value: tcp://*:5552
+        - name: model_path
+          value: /models/yolov8.onnx
+      # Additional env vars using the standard Kubernetes env field
       env:
-        - name: FILTER_MODEL_PATH
-          value: /models/yolov8.onnx  # Overrides the config value
         - name: CONFIDENCE_THRESHOLD
-          value: "0.7"                # Additional env var not in config
+          value: "0.7"
+        - name: FILTER_LOG_LEVEL  # Can override config values via env
+          value: info
       # Final env vars for this container:
-      #   FILTER_SOURCES=tcp://localhost:5550
-      #   FILTER_OUTPUTS=tcp://*:5551
-      #   FILTER_LOG_LEVEL=debug
-      #   FILTER_MODEL_PATH=/models/yolov8.onnx (overridden)
+      #   FILTER_SOURCES=tcp://localhost:5551
+      #   FILTER_OUTPUTS=tcp://*:5552
+      #   FILTER_MODEL_PATH=/models/yolov8.onnx
       #   CONFIDENCE_THRESHOLD=0.7 (additional)
+      #   FILTER_LOG_LEVEL=info (env overrides config)
 
     - name: video-encoder
       image: plainsightai/openfilter-videoout:v0.1.10
-      # This container inherits all config env vars without any overrides
+      config:
+        - name: sources
+          value: tcp://localhost:5552
+        - name: outputs
+          value: tcp://*:5553

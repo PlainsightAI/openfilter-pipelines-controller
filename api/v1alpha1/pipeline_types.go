@@ -112,6 +112,13 @@ type Filter struct {
 	// +kubebuilder:validation:Required
 	Image string `json:"image"`
 
+	// config is a list of configuration key-value pairs that will be injected
+	// as environment variables with the FILTER_ prefix.
+	// For example, a config with name "sources" and value "mysource" will result
+	// in the environment variable FILTER_SOURCES=mysource
+	// +optional
+	Config []ConfigVar `json:"config,omitempty"`
+
 	// env is a list of environment variables to set in the container
 	// Uses the standard Kubernetes EnvVar type for full compatibility
 	// +optional
@@ -155,14 +162,7 @@ type PipelineSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	Filters []Filter `json:"filters,omitempty"`
 
-	// config is a list of configuration key-value pairs that will be injected
-	// as environment variables into all filter containers with the FILTER_ prefix.
-	// For example, a config with name "sources" and value "mysource" will result
-	// in the environment variable FILTER_SOURCES=mysource
-	// +optional
-	Config []ConfigVar `json:"config,omitempty"`
-
-	// videoInputPath defines where the claimer stores downloaded source files.
+	// videoInputPath defines where the controller stores downloaded source files.
 	// Downstream filters can reference this path to read the input artifact.
 	// Defaults to /ws/input.mp4.
 	// +kubebuilder:validation:Optional

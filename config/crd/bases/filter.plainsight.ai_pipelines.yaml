@@ -39,30 +39,6 @@ spec:
           spec:
             description: spec defines the desired state of Pipeline
             properties:
-              config:
-                description: |-
-                  config is a list of configuration key-value pairs that will be injected
-                  as environment variables into all filter containers with the FILTER_ prefix.
-                  For example, a config with name "sources" and value "mysource" will result
-                  in the environment variable FILTER_SOURCES=mysource
-                items:
-                  description: |-
-                    ConfigVar defines a configuration key-value pair that will be injected
-                    as an environment variable with the FILTER_ prefix
-                  properties:
-                    name:
-                      description: name is the configuration key (will be prefixed
-                        with FILTER_ and uppercased)
-                      minLength: 1
-                      type: string
-                    value:
-                      description: value is the configuration value
-                      type: string
-                  required:
-                  - name
-                  - value
-                  type: object
-                type: array
               filters:
                 description: |-
                   filters is an ordered list of processing steps to apply to the input data
@@ -81,6 +57,30 @@ spec:
                         container
                       items:
                         type: string
+                      type: array
+                    config:
+                      description: |-
+                        config is a list of configuration key-value pairs that will be injected
+                        as environment variables with the FILTER_ prefix.
+                        For example, a config with name "sources" and value "mysource" will result
+                        in the environment variable FILTER_SOURCES=mysource
+                      items:
+                        description: |-
+                          ConfigVar defines a configuration key-value pair that will be injected
+                          as an environment variable with the FILTER_ prefix
+                        properties:
+                          name:
+                            description: name is the configuration key (will be prefixed
+                              with FILTER_ and uppercased)
+                            minLength: 1
+                            type: string
+                          value:
+                            description: value is the configuration value
+                            type: string
+                        required:
+                        - name
+                        - value
+                        type: object
                       type: array
                     env:
                       description: |-
@@ -391,7 +391,7 @@ spec:
               videoInputPath:
                 default: /ws/input.mp4
                 description: |-
-                  videoInputPath defines where the claimer stores downloaded source files.
+                  videoInputPath defines where the controller stores downloaded source files.
                   Downstream filters can reference this path to read the input artifact.
                   Defaults to /ws/input.mp4.
                 minLength: 1

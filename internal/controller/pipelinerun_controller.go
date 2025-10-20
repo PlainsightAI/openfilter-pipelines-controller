@@ -642,22 +642,22 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 		Value: videoInputPath,
 	})
 
-	// Build config environment variables from Pipeline.Spec.Config
-	configEnvVars := make([]corev1.EnvVar, 0, len(pipeline.Spec.Config))
-	for _, cfg := range pipeline.Spec.Config {
-		// Convert name to uppercase and prefix with FILTER_
-		envName := "FILTER_" + strings.ToUpper(cfg.Name)
-		configEnvVars = append(configEnvVars, corev1.EnvVar{
-			Name:  envName,
-			Value: cfg.Value,
-		})
-	}
-
 	// Build filter containers from Pipeline spec
 	filterContainers := make([]corev1.Container, 0, len(pipeline.Spec.Filters))
 
 	// Add user-defined filters
 	for _, filter := range pipeline.Spec.Filters {
+		// Build config environment variables from filter.Config
+		configEnvVars := make([]corev1.EnvVar, 0, len(filter.Config))
+		for _, cfg := range filter.Config {
+			// Convert name to uppercase and prefix with FILTER_
+			envName := "FILTER_" + strings.ToUpper(cfg.Name)
+			configEnvVars = append(configEnvVars, corev1.EnvVar{
+				Name:  envName,
+				Value: cfg.Value,
+			})
+		}
+
 		// Start with config env vars, then add filter-specific env vars
 		// Filter-specific env vars can override config if they have the same name
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))

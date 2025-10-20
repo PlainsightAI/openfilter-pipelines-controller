@@ -15,18 +15,18 @@ spec:
         name: gcs-credentials
   videoInputPath: /ws/input.mp4
 
-  # Global configuration that will be injected as FILTER_* env vars into all filter containers
-  config:
-    - name: sources
-      value: tcp://localhost:5550
-    - name: outputs
-      value: tcp://*:5551
-
   filters:
     - name: video-in
-      image: plainsightai/openfilter-videoin:v0.1.10
-      # These filters will inherit FILTER_SOURCES=tcp://localhost:5550 and FILTER_OUTPUTS=tcp://*:5551
-      # from the config above. Individual filters can override these by specifying their own env vars.
+      image: plainsightai/openfilter-video-in:v0.1.10
+      config:
+        - name: sources
+          value: file:///ws/input.mp4
+        - name: outputs
+          value: tcp://*:5550
     - name: face-blur
       image: plainsightai/openfilter-faceblur:v1.1.4
-      # This filter also inherits the config env vars
+      config:
+        - name: sources
+          value: tcp://localhost:5550
+        - name: outputs
+          value: tcp://*:5552

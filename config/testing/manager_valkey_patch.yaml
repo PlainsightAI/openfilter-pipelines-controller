@@ -8,6 +8,11 @@ spec:
     spec:
       containers:
       - name: manager
+        args:
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=:8080
+        - --metrics-secure=false
         env:
         - name: VALKEY_ADDR
           value: "valkey:6379"

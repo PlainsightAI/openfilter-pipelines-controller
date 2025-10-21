@@ -189,9 +189,11 @@ func (r *PipelineRunReconciler) ensureStreamingDeployment(ctx context.Context, p
 		return nil
 	}
 
-	// Update existing Deployment if needed
+	// Update existing Deployment using Patch to avoid conflicts
+	// We only patch the spec to avoid race conditions with status updates
+	patchBase := client.MergeFrom(deployment.DeepCopy())
 	deployment.Spec = desiredDeployment.Spec
-	if err := r.Update(ctx, deployment); err != nil {
+	if err := r.Patch(ctx, deployment, patchBase); err != nil {
 		return fmt.Errorf("failed to update deployment: %w", err)
 	}
 	pipelineRun.Status.Streaming.DeploymentName = deploymentName
@@ -539,10 +541,11 @@ func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipeli
 			} else if err != nil {
 				return fmt.Errorf("failed to get service %s: %w", serviceName, err)
 			} else {
-				// Update existing Service
+				// Update existing Service using Patch to avoid conflicts
+				patchBase := client.MergeFrom(service.DeepCopy())
 				service.Spec = desiredService.Spec
 				service.Labels = desiredService.Labels
-				if err := r.Update(ctx, service); err != nil {
+				if err := r.Patch(ctx, service, patchBase); err != nil {
 					return fmt.Errorf("failed to update service %s: %w", serviceName, err)
 				}
 			}

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rtsp-video-stream
+  labels:
+    app: rtsp-video-stream
+spec:
+  type: ClusterIP
+  ports:
+  - name: rtsp
+    port: 8554
+    targetPort: 8554
+    protocol: TCP
+  - name: api
+    port: 9997
+    targetPort: 9997
+    protocol: TCP
+  - name: metrics
+    port: 9998
+    targetPort: 9998
+    protocol: TCP
+  selector:
+    app: rtsp-video-stream
+---
+# Optional: NodePort service for external access
+# Uncomment if you need to access the RTSP stream from outside the cluster
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: rtsp-video-stream-external
+#   labels:
+#     app: rtsp-video-stream
+# spec:
+#   type: NodePort
+#   ports:
+#   - name: rtsp
+#     port: 8554
+#     targetPort: 8554
+#     protocol: TCP
+#     nodePort: 30554  # Adjust as needed (range: 30000-32767)
+#   selector:
+#     app: rtsp-video-stream

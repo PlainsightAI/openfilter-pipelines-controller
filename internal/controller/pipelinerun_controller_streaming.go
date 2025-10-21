@@ -221,19 +221,8 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 			container.Args = filter.Args
 		}
 
-		// Add filter config as env vars with FILTER_ prefix
+		// Inject RTSP environment variables first so they can be referenced in filter config
 		var envVars []corev1.EnvVar
-		for _, cfg := range filter.Config {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "FILTER_" + strings.ToUpper(cfg.Name),
-				Value: cfg.Value,
-			})
-		}
-
-		// Add user-defined env vars
-		envVars = append(envVars, filter.Env...)
-
-		// Inject RTSP environment variables
 		if pipeline.Spec.Source.RTSP != nil {
 			// If credentials are provided, inject internal env vars for username/password
 			// and build URL with embedded credentials
@@ -275,6 +264,18 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 				})
 			}
 		}
+
+		// Add filter config as env vars with FILTER_ prefix
+		// These are added after RTSP_URL so they can reference it using $(RTSP_URL)
+		for _, cfg := range filter.Config {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "FILTER_" + strings.ToUpper(cfg.Name),
+				Value: cfg.Value,
+			})
+		}
+
+		// Add user-defined env vars
+		envVars = append(envVars, filter.Env...)
 
 		container.Env = envVars
 

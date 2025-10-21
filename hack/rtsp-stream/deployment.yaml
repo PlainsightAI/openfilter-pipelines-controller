@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtsp-video-stream
+  labels:
+    app: rtsp-video-stream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rtsp-video-stream
+  template:
+    metadata:
+      labels:
+        app: rtsp-video-stream
+    spec:
+      containers:
+      - name: mediamtx
+        image: rtsp-video-stream:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: rtsp
+          containerPort: 8554
+          protocol: TCP
+        - name: api
+          containerPort: 9997
+          protocol: TCP
+        - name: metrics
+          containerPort: 9998
+          protocol: TCP
+        env:
+        - name: VIDEO_URL
+          value: "https://videos.pexels.com/video-files/855564/855564-hd_1280_720_24fps.mp4"
+        - name: STREAM_NAME
+          value: "stream"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: video-storage
+          mountPath: /videos
+        livenessProbe:
+          tcpSocket:
+            port: 8554
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /v3/config/global/get
+            port: 9997
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: video-storage
+        emptyDir: {}

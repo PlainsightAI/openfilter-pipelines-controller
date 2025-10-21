@@ -1,0 +1,36 @@
+# MediaMTX configuration
+# See https://github.com/bluenviron/mediamtx for full documentation
+
+# RTSP server settings
+rtspAddress: :8554
+rtspEncryption: "no"
+rtspTransports: [tcp, udp]
+
+# Logging
+logLevel: info
+logDestinations: [stdout]
+
+# API settings
+api: yes
+apiAddress: :9997
+
+# Metrics
+metrics: yes
+metricsAddress: :9998
+
+# Authentication - allow any user for all actions
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+      - action: metrics
+
+# Path configuration
+paths:
+  # This path will serve the looped video
+  stream:

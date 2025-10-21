@@ -40,7 +40,7 @@ const namespace = "openfilter-pipelines-controller-system"
 const serviceAccountName = "openfilter-pipelines-controller-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "openfilter-pipelines-controller-controller-manager-metrics-service"
+const metricsServiceName = "openfilter-pipelines-controller-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "openfilter-pipelines-controller-metrics-binding"
@@ -68,10 +68,20 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
-		_, err = utils.Run(cmd)
+		By("deploying the controller-manager with test configuration")
+		// Use the testing overlay which includes Valkey
+		cmd = exec.Command("kubectl", "apply", "-k", "config/testing")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			fmt.Fprintf(GinkgoWriter, "Deploy output: %s\n", output)
+		}
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		// Patch the controller image
+		cmd = exec.Command("kubectl", "set", "image", "deployment/openfilter-pipelines-controller-controller-manager",
+			fmt.Sprintf("manager=%s", projectImage), "-n", namespace)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to set controller image")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -81,8 +91,12 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)
 
+		By("cleaning up the ClusterRoleBinding")
+		cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found")
+		_, _ = utils.Run(cmd)
+
 		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
+		cmd = exec.Command("kubectl", "delete", "-k", "config/testing", "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 
 		By("uninstalling CRDs")

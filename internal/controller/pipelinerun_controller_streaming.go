@@ -353,6 +353,11 @@ func (r *PipelineRunReconciler) checkIdleTimeout(ctx context.Context, pipelineRu
 		return false, ""
 	}
 
+	// Ensure streaming status exists
+	if pipelineRun.Status.Streaming == nil {
+		return false, ""
+	}
+
 	idleTimeout := pipeline.Spec.Source.RTSP.IdleTimeout.Duration
 
 	// Check if all replicas are unready

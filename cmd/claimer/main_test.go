@@ -27,7 +27,7 @@ import (
 )
 
 func TestExponentialBackoff(t *testing.T) {
-	backoff := newExponentialBackoff(1*time.Second, 8*time.Second)
+	backoff := newExponentialBackoff(8 * time.Second)
 
 	if got := backoff.Next(); got != 1*time.Second {
 		t.Fatalf("expected first delay 1s, got %s", got)
@@ -74,8 +74,9 @@ func TestIsRetryableValkeyError(t *testing.T) {
 			retryable: true,
 		},
 		{
-			name:      "wrapped client creation error",
-			err:       fmt.Errorf("failed to create Valkey client: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}),
+			name: "wrapped client creation error",
+			err: fmt.Errorf("failed to create Valkey client: %w",
+				&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}),
 			retryable: true,
 		},
 		{
@@ -106,7 +107,7 @@ func TestIsRetryableValkeyError(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
+
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

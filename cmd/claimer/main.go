@@ -99,7 +99,7 @@ func run() error {
 
 	// Create Valkey client (with retry for outages during startup)
 	var valkeyClient valkey.Client
-	clientBackoff := newExponentialBackoff(1*time.Second, 30*time.Second)
+	clientBackoff := newExponentialBackoff(30 * time.Second)
 	for {
 		valkeyClient, err = createValkeyClient(cfg)
 		if err == nil {
@@ -247,7 +247,7 @@ func pingValkey(ctx context.Context, client valkey.Client) error {
 }
 
 func claimMessage(ctx context.Context, client valkey.Client, cfg *Config) (*Message, string, error) {
-	backoff := newExponentialBackoff(1*time.Second, 30*time.Second)
+	backoff := newExponentialBackoff(30 * time.Second)
 
 	for {
 		msg, messageID, err := claimMessageOnce(ctx, client, cfg)
@@ -380,14 +380,22 @@ func downloadFile(ctx context.Context, client *minio.Client, bucket, key, destPa
 	if err != nil {
 		return fmt.Errorf("failed to get object from S3: %w", err)
 	}
-	defer object.Close()
+	defer func() {
+		if cerr := object.Close(); cerr != nil {
+			log.Printf("failed to close S3 object: %v", cerr)
+		}
+	}()
 
 	// Create destination file
 	file, err := os.Create(destPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			log.Printf("failed to close file: %v", cerr)
+		}
+	}()
 
 	// Copy content
 	if _, err := io.Copy(file, object); err != nil {
@@ -444,7 +452,7 @@ func patchPodAnnotations(ctx context.Context, cfg *Config, messageID string, msg
 }
 
 func waitForValkey(ctx context.Context, client valkey.Client) error {
-	backoff := newExponentialBackoff(1*time.Second, 30*time.Second)
+	backoff := newExponentialBackoff(30 * time.Second)
 
 	for {
 		if err := pingValkey(ctx, client); err != nil {
@@ -528,10 +536,8 @@ type exponentialBackoff struct {
 	current time.Duration
 }
 
-func newExponentialBackoff(min, max time.Duration) *exponentialBackoff {
-	if min <= 0 {
-		min = time.Second
-	}
+func newExponentialBackoff(max time.Duration) *exponentialBackoff {
+	min := time.Second
 	if max < min {
 		max = min
 	}

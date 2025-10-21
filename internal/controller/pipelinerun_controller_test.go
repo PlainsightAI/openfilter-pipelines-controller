@@ -241,7 +241,7 @@ var _ = Describe("PipelineRun Controller", func() {
 						Namespace: namespace,
 					}, job)
 					if err == nil {
-						k8sClient.Delete(ctx, job)
+						_ = k8sClient.Delete(ctx, job)
 					}
 				}
 
@@ -259,7 +259,7 @@ var _ = Describe("PipelineRun Controller", func() {
 				for _, pod := range podList.Items {
 					// Delete pods matching test-specific pod names
 					if pod.Labels["filter.plainsight.ai/run"] == "test123" {
-						k8sClient.Delete(ctx, &pod)
+						_ = k8sClient.Delete(ctx, &pod)
 					}
 				}
 			}

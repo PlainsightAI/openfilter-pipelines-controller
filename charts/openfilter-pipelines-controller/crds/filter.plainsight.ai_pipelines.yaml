@@ -327,14 +327,14 @@ spec:
                 minItems: 1
                 type: array
               mode:
-                default: Batch
+                default: batch
                 description: |-
-                  mode defines the execution mode for this pipeline (Batch or Stream)
-                  Batch mode processes files from S3 using Kubernetes Jobs
-                  Stream mode processes RTSP streams using Kubernetes Deployments
+                  mode defines the execution mode for this pipeline (batch or stream)
+                  batch mode processes files from S3 using Kubernetes Jobs
+                  stream mode processes RTSP streams using Kubernetes Deployments
                 enum:
-                - Batch
-                - Stream
+                - batch
+                - stream
                 type: string
               source:
                 description: |-

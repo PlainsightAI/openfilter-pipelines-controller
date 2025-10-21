@@ -76,9 +76,13 @@ func main() {
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
-	flag.StringVar(&valkeyAddr, "valkey-addr", os.Getenv("VALKEY_ADDR"), "The Valkey server address (e.g., localhost:6379). Can also be set via VALKEY_ADDR env var.")
-	flag.StringVar(&valkeyPassword, "valkey-password", os.Getenv("VALKEY_PASSWORD"), "The Valkey server password. Can also be set via VALKEY_PASSWORD env var.")
-	flag.StringVar(&claimerImage, "claimer-image", getEnvOrDefault("CLAIMER_IMAGE", "ghcr.io/plainsightai/openfilter-claimer:latest"), "The container image for the claimer init container. Can also be set via CLAIMER_IMAGE env var.")
+	flag.StringVar(&valkeyAddr, "valkey-addr", os.Getenv("VALKEY_ADDR"),
+		"The Valkey server address (e.g., localhost:6379). Can also be set via VALKEY_ADDR env var.")
+	flag.StringVar(&valkeyPassword, "valkey-password", os.Getenv("VALKEY_PASSWORD"),
+		"The Valkey server password. Can also be set via VALKEY_PASSWORD env var.")
+	flag.StringVar(&claimerImage, "claimer-image",
+		getEnvOrDefault("CLAIMER_IMAGE", "ghcr.io/plainsightai/openfilter-claimer:latest"),
+		"The container image for the claimer init container. Can also be set via CLAIMER_IMAGE env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+

@@ -137,14 +137,14 @@ type ConfigVar struct {
 }
 
 // PipelineMode defines the execution mode for a Pipeline
-// +kubebuilder:validation:Enum=Batch;Stream
+// +kubebuilder:validation:Enum=batch;stream
 type PipelineMode string
 
 const (
 	// PipelineModeBatch runs the pipeline as a Kubernetes Job processing files from S3
-	PipelineModeBatch PipelineMode = "Batch"
+	PipelineModeBatch PipelineMode = "batch"
 	// PipelineModeStream runs the pipeline as a Kubernetes Deployment processing an RTSP stream
-	PipelineModeStream PipelineMode = "Stream"
+	PipelineModeStream PipelineMode = "stream"
 )
 
 // Filter defines a containerized processing step in the pipeline
@@ -197,11 +197,11 @@ type PipelineSpec struct {
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// mode defines the execution mode for this pipeline (Batch or Stream)
-	// Batch mode processes files from S3 using Kubernetes Jobs
-	// Stream mode processes RTSP streams using Kubernetes Deployments
+	// mode defines the execution mode for this pipeline (batch or stream)
+	// batch mode processes files from S3 using Kubernetes Jobs
+	// stream mode processes RTSP streams using Kubernetes Deployments
 	// +optional
-	// +kubebuilder:default=Batch
+	// +kubebuilder:default=batch
 	Mode PipelineMode `json:"mode,omitempty"`
 
 	// source defines the input source for the pipeline

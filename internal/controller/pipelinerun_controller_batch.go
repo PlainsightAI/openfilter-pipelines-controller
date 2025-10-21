@@ -80,10 +80,7 @@ func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun 
 	}
 
 	// Step 4: Update status from Valkey metrics
-	if err := r.updateStatus(ctx, pipelineRun); err != nil {
-		log.Error(err, "Failed to update status")
-		// Don't fail reconciliation, just log and continue
-	}
+	r.updateStatus(ctx, pipelineRun)
 
 	// Detect job failure and mark the run as degraded
 	if failedCond, err := r.checkFailure(ctx, pipelineRun); err != nil {
@@ -328,10 +325,7 @@ func (r *PipelineRunReconciler) ensureJob(ctx context.Context, pipelineRun *pipe
 	jobName := fmt.Sprintf("%s-job", pipelineRun.Name)
 
 	// Build the Job spec
-	job, err := r.buildJob(ctx, pipelineRun, pipeline, jobName)
-	if err != nil {
-		return fmt.Errorf("failed to build job: %w", err)
-	}
+	job := r.buildJob(ctx, pipelineRun, pipeline, jobName)
 
 	// Set PipelineRun as owner of the Job
 	if err := controllerutil.SetControllerReference(pipelineRun, job, r.Scheme); err != nil {
@@ -351,7 +345,7 @@ func (r *PipelineRunReconciler) ensureJob(ctx context.Context, pipelineRun *pipe
 }
 
 // buildJob constructs the Job specification for the PipelineRun
-func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline, jobName string) (*batchv1.Job, error) {
+func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline, jobName string) *batchv1.Job {
 	log := logf.FromContext(ctx)
 
 	// Get run ID from the PipelineRun UID
@@ -372,13 +366,9 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 	log.V(1).Info("Building job", "totalFiles", totalFiles, "parallelism", parallelism)
 
 	// Get S3 credentials from Pipeline
-	var s3SecretName, s3SecretNamespace string
+	var s3SecretName string
 	if pipeline.Spec.Source.Bucket != nil && pipeline.Spec.Source.Bucket.CredentialsSecret != nil {
 		s3SecretName = pipeline.Spec.Source.Bucket.CredentialsSecret.Name
-		s3SecretNamespace = pipeline.Spec.Source.Bucket.CredentialsSecret.Namespace
-		if s3SecretNamespace == "" {
-			s3SecretNamespace = pipeline.Namespace
-		}
 	}
 
 	// Build claimer init container env vars
@@ -536,7 +526,7 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 	}
 
 	log.Info("Built Job spec", "job", jobName, "completions", totalFiles, "parallelism", parallelism)
-	return job, nil
+	return job
 }
 
 // handleCompletedPods processes pods that have completed (succeeded or failed)
@@ -566,7 +556,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 		}
 
 		// Check if we've already processed this pod (by checking for a processed annotation)
-		if pod.Annotations["filter.plainsight.ai/processed"] == "true" {
+		if pod.Annotations["filter.plainsight.ai/processed"] == AnnotationValueTrue {
 			continue
 		}
 
@@ -646,7 +636,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 		if podCopy.Annotations == nil {
 			podCopy.Annotations = make(map[string]string)
 		}
-		podCopy.Annotations["filter.plainsight.ai/processed"] = "true"
+		podCopy.Annotations["filter.plainsight.ai/processed"] = AnnotationValueTrue
 		if err := r.Update(ctx, podCopy); err != nil {
 			log.Error(err, "Failed to mark pod as processed", "pod", pod.Name)
 		}
@@ -762,7 +752,7 @@ func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *p
 }
 
 // updateStatus updates the PipelineRun status from Valkey metrics
-func (r *PipelineRunReconciler) updateStatus(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) error {
+func (r *PipelineRunReconciler) updateStatus(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) {
 	log := logf.FromContext(ctx)
 
 	if pipelineRun.Status.Counts == nil {
@@ -805,7 +795,6 @@ func (r *PipelineRunReconciler) updateStatus(ctx context.Context, pipelineRun *p
 	pipelineRun.Status.Counts.Failed = failed
 
 	log.V(1).Info("Updated status counts", "queued", queued, "running", running, "succeeded", succeeded, "failed", failed)
-	return nil
 }
 
 // checkCompletion determines if the PipelineRun has completed

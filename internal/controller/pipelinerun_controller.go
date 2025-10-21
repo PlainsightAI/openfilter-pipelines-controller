@@ -46,6 +46,9 @@ const (
 	AnnotationFile      = "queue.file"
 	AnnotationAttempts  = "queue.attempts"
 
+	// Annotation values
+	AnnotationValueTrue = "true"
+
 	// Condition types
 	ConditionTypeProgressing = "Progressing"
 	ConditionTypeSucceeded   = "Succeeded"
@@ -221,7 +224,7 @@ func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *p
 		return nil, fmt.Errorf("failed to create minio client: %w", err)
 	}
 
-	var files []string
+	files := make([]string, 0, 100) // Pre-allocate with reasonable initial capacity
 	objectCh := minioClient.ListObjects(ctx, bucket.Name, minio.ListObjectsOptions{
 		Prefix:    bucket.Prefix,
 		Recursive: true,

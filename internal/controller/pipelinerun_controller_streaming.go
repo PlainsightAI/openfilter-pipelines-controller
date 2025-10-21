@@ -102,7 +102,7 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 
 	// Step 3: Check for idle timeout
 	if pipeline.Spec.Source.RTSP != nil && pipeline.Spec.Source.RTSP.IdleTimeout != nil {
-		if shouldComplete, reason := r.checkIdleTimeout(ctx, pipelineRun, pipeline); shouldComplete {
+		if shouldComplete, reason := r.checkIdleTimeout(pipelineRun, pipeline); shouldComplete {
 			log.Info("Streaming run idle timeout reached, marking as complete", "reason", reason)
 			r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionTrue, "IdleTimeout", reason)
 			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "IdleTimeout", reason)
@@ -185,7 +185,7 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 	maxSurge := intstr.FromInt32(1)
 
 	// Build filter containers
-	var containers []corev1.Container
+	containers := make([]corev1.Container, 0, len(pipeline.Spec.Filters))
 	for _, filter := range pipeline.Spec.Filters {
 		container := corev1.Container{
 			Name:            filter.Name,
@@ -348,7 +348,7 @@ func (r *PipelineRunReconciler) updateStreamingStatus(ctx context.Context, pipel
 }
 
 // checkIdleTimeout checks if the streaming run should complete due to idle timeout
-func (r *PipelineRunReconciler) checkIdleTimeout(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (bool, string) {
+func (r *PipelineRunReconciler) checkIdleTimeout(pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (bool, string) {
 	if pipeline.Spec.Source.RTSP == nil || pipeline.Spec.Source.RTSP.IdleTimeout == nil {
 		return false, ""
 	}

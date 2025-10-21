@@ -1,0 +1,86 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: Pipeline
+metadata:
+  name: pipeline-rtsp-example
+spec:
+  # Stream mode: processes RTSP streams using a Deployment
+  mode: Stream
+
+  source:
+    # RTSP source configuration
+    rtsp:
+      # RTSP server host (hostname or IP)
+      host: camera.example.com
+
+      # RTSP server port (default: 554)
+      port: 554
+
+      # RTSP stream path
+      path: /stream1
+
+      # Optional: credentials for authenticated streams
+      # credentialsSecret:
+      #   name: rtsp-credentials
+      #   # Expected keys in secret: username, password
+
+      # Optional: idle timeout - complete the run if stream is unready for this duration
+      # If not set, the stream will run indefinitely
+      # idleTimeout: 5m
+
+  # Filters process the RTSP stream
+  # The controller constructs and injects RTSP_URL from host/port/path
+  # Without credentials: rtsp://host:port/path (e.g., rtsp://camera.example.com:554/stream1)
+  # With credentials: rtsp://$_RTSP_USERNAME:$_RTSP_PASSWORD@host:port/path
+  #   (credentials are auto-substituted at runtime from the Secret)
+  filters:
+    - name: video-in
+      image: ghcr.io/plainsightai/openfilter-video-in:latest
+      imagePullPolicy: Always
+      config:
+        # Use the injected RTSP_URL environment variable
+        # If credentialsSecret is configured, credentials are already embedded in the URL
+        - name: sources
+          value: "$(RTSP_URL)"
+        - name: sinks
+          value: "/tmp/detection-in"
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+        limits:
+          memory: "1Gi"
+          cpu: "1000m"
+
+    - name: detection
+      image: ghcr.io/plainsightai/openfilter-detection:latest
+      imagePullPolicy: Always
+      config:
+        - name: sources
+          value: "/tmp/detection-in"
+        - name: sinks
+          value: "/tmp/detection-out"
+        - name: model
+          value: "yolov8n.pt"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "1000m"
+        limits:
+          memory: "2Gi"
+          cpu: "2000m"
+
+    - name: video-out
+      image: ghcr.io/plainsightai/openfilter-video-out:latest
+      imagePullPolicy: Always
+      config:
+        - name: sources
+          value: "/tmp/detection-out"
+        - name: sinks
+          value: "rtsp://output-server:8554/stream"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "250m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"

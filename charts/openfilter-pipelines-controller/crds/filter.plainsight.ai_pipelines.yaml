@@ -326,14 +326,26 @@ spec:
                   type: object
                 minItems: 1
                 type: array
+              mode:
+                default: Batch
+                description: |-
+                  mode defines the execution mode for this pipeline (Batch or Stream)
+                  Batch mode processes files from S3 using Kubernetes Jobs
+                  Stream mode processes RTSP streams using Kubernetes Deployments
+                enum:
+                - Batch
+                - Stream
+                type: string
               source:
                 description: |-
                   source defines the input source for the pipeline
-                  Currently supports bucket (S3-compatible object storage)
-                  Future: will support rtsp, kafka, etc.
+                  For Batch mode: source.bucket is required, source.rtsp is forbidden
+                  For Stream mode: source.rtsp is required, source.bucket is forbidden
                 properties:
                   bucket:
-                    description: bucket defines an S3-compatible object storage source
+                    description: |-
+                      bucket defines an S3-compatible object storage source
+                      Required when mode is Batch, forbidden when mode is Stream
                     properties:
                       credentialsSecret:
                         description: |-
@@ -387,6 +399,51 @@ spec:
                     required:
                     - name
                     type: object
+                  rtsp:
+                    description: |-
+                      rtsp defines an RTSP stream source
+                      Required when mode is Stream, forbidden when mode is Batch
+                    properties:
+                      credentialsSecret:
+                        description: |-
+                          credentialsSecret references a Secret containing RTSP credentials
+                          Expected keys: "username" and "password"
+                        properties:
+                          name:
+                            description: name is the name of the secret
+                            type: string
+                          namespace:
+                            description: |-
+                              namespace is the namespace of the secret
+                              If empty, uses the same namespace as the Pipeline resource
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      host:
+                        description: host is the RTSP server hostname or IP address
+                        minLength: 1
+                        type: string
+                      idleTimeout:
+                        description: |-
+                          idleTimeout defines the duration after which a continuously unready stream
+                          will cause the PipelineRun to complete and the Deployment to be deleted.
+                          If not set, the stream will run indefinitely.
+                        type: string
+                      path:
+                        description: path is the RTSP stream path (e.g., "/stream1",
+                          "/live/camera1")
+                        type: string
+                      port:
+                        default: 554
+                        description: port is the RTSP server port
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    required:
+                    - host
+                    type: object
                 type: object
               videoInputPath:
                 default: /ws/input.mp4
@@ -394,6 +451,7 @@ spec:
                   videoInputPath defines where the controller stores downloaded source files.
                   Downstream filters can reference this path to read the input artifact.
                   Defaults to /ws/input.mp4.
+                  Only applies to Batch mode.
                 minLength: 1
                 type: string
             required:

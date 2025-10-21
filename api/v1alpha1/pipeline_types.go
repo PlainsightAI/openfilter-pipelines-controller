@@ -78,13 +78,49 @@ type BucketSource struct {
 	UsePathStyle bool `json:"usePathStyle,omitempty"`
 }
 
+// RTSPSource defines an RTSP stream source
+type RTSPSource struct {
+	// host is the RTSP server hostname or IP address
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Host string `json:"host"`
+
+	// port is the RTSP server port
+	// +optional
+	// +kubebuilder:default=554
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port,omitempty"`
+
+	// path is the RTSP stream path (e.g., "/stream1", "/live/camera1")
+	// +optional
+	Path string `json:"path,omitempty"`
+
+	// credentialsSecret references a Secret containing RTSP credentials
+	// Expected keys: "username" and "password"
+	// +optional
+	CredentialsSecret *SecretReference `json:"credentialsSecret,omitempty"`
+
+	// idleTimeout defines the duration after which a continuously unready stream
+	// will cause the PipelineRun to complete and the Deployment to be deleted.
+	// If not set, the stream will run indefinitely.
+	// +optional
+	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
+}
+
 // Source defines the input source for the pipeline
-// Currently supports bucket (S3-compatible object storage)
-// Future: will support rtsp, kafka, etc.
+// Supports bucket (S3-compatible object storage) or rtsp (streaming video)
+// Exactly one source type must be specified based on the pipeline mode
 type Source struct {
 	// bucket defines an S3-compatible object storage source
+	// Required when mode is Batch, forbidden when mode is Stream
 	// +optional
 	Bucket *BucketSource `json:"bucket,omitempty"`
+
+	// rtsp defines an RTSP stream source
+	// Required when mode is Stream, forbidden when mode is Batch
+	// +optional
+	RTSP *RTSPSource `json:"rtsp,omitempty"`
 }
 
 // ConfigVar defines a configuration key-value pair that will be injected
@@ -99,6 +135,17 @@ type ConfigVar struct {
 	// +kubebuilder:validation:Required
 	Value string `json:"value"`
 }
+
+// PipelineMode defines the execution mode for a Pipeline
+// +kubebuilder:validation:Enum=Batch;Stream
+type PipelineMode string
+
+const (
+	// PipelineModeBatch runs the pipeline as a Kubernetes Job processing files from S3
+	PipelineModeBatch PipelineMode = "Batch"
+	// PipelineModeStream runs the pipeline as a Kubernetes Deployment processing an RTSP stream
+	PipelineModeStream PipelineMode = "Stream"
+)
 
 // Filter defines a containerized processing step in the pipeline
 type Filter struct {
@@ -150,9 +197,16 @@ type PipelineSpec struct {
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
+	// mode defines the execution mode for this pipeline (Batch or Stream)
+	// Batch mode processes files from S3 using Kubernetes Jobs
+	// Stream mode processes RTSP streams using Kubernetes Deployments
+	// +optional
+	// +kubebuilder:default=Batch
+	Mode PipelineMode `json:"mode,omitempty"`
+
 	// source defines the input source for the pipeline
-	// Currently supports bucket (S3-compatible object storage)
-	// Future: will support rtsp, kafka, etc.
+	// For Batch mode: source.bucket is required, source.rtsp is forbidden
+	// For Stream mode: source.rtsp is required, source.bucket is forbidden
 	// +kubebuilder:validation:Required
 	Source Source `json:"source"`
 
@@ -165,6 +219,7 @@ type PipelineSpec struct {
 	// videoInputPath defines where the controller stores downloaded source files.
 	// Downstream filters can reference this path to read the input artifact.
 	// Defaults to /ws/input.mp4.
+	// Only applies to Batch mode.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:default=/ws/input.mp4

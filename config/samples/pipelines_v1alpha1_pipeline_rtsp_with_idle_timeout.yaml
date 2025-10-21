@@ -1,0 +1,53 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: Pipeline
+metadata:
+  name: pipeline-rtsp-with-timeout
+spec:
+  # Stream mode with idle timeout
+  mode: Stream
+
+  source:
+    rtsp:
+      # RTSP server configuration
+      host: camera.example.com
+      port: 554
+      path: /stream1
+
+      # Complete the run if stream is unready for 5 minutes
+      # This is useful for temporary streams or testing scenarios
+      idleTimeout: 5m
+
+  filters:
+    - name: video-in
+      image: ghcr.io/plainsightai/openfilter-video-in:latest
+      imagePullPolicy: Always
+      config:
+        - name: sources
+          value: "$(RTSP_URL)"
+        - name: sinks
+          value: "/tmp/detection-in"
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+        limits:
+          memory: "1Gi"
+          cpu: "1000m"
+
+    - name: detection
+      image: ghcr.io/plainsightai/openfilter-detection:latest
+      imagePullPolicy: Always
+      config:
+        - name: sources
+          value: "/tmp/detection-in"
+        - name: sinks
+          value: "/tmp/detection-out"
+        - name: model
+          value: "yolov8n.pt"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "1000m"
+        limits:
+          memory: "2Gi"
+          cpu: "2000m"

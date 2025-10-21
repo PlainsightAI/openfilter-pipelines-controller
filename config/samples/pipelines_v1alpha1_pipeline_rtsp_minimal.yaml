@@ -1,0 +1,30 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: Pipeline
+metadata:
+  name: pipeline-rtsp-minimal
+spec:
+  mode: Stream
+
+  source:
+    rtsp:
+      # Minimal RTSP configuration
+      # Only host is required, port defaults to 554, path is optional
+      host: 192.168.1.100
+      # This will create RTSP_URL=rtsp://192.168.1.100:554
+
+      # If you specify path:
+      # path: /live/main
+      # This will create RTSP_URL=rtsp://192.168.1.100:554/live/main
+
+      # If you specify a custom port:
+      # port: 8554
+      # This will create RTSP_URL=rtsp://192.168.1.100:8554
+
+  filters:
+    - name: video-in
+      image: ghcr.io/plainsightai/openfilter-video-in:latest
+      config:
+        - name: sources
+          value: "$(RTSP_URL)"
+        - name: sinks
+          value: "/tmp/output"

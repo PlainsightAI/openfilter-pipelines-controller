@@ -157,7 +157,8 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               counts:
-                description: counts tracks the number of files in each state
+                description: counts tracks the number of files in each state (Batch
+                  mode only)
                 properties:
                   failed:
                     description: failed is the number of files that failed processing
@@ -182,12 +183,51 @@ spec:
                 type: object
               jobName:
                 description: jobName is the name of the Kubernetes Job created for
-                  this run
+                  this run (Batch mode only)
                 type: string
               startTime:
                 description: startTime is when the pipeline run was started
                 format: date-time
                 type: string
+              streaming:
+                description: streaming provides observability into streaming pipeline
+                  runs (Stream mode only)
+                properties:
+                  availableReplicas:
+                    description: availableReplicas is the number of available replicas
+                      in the streaming deployment
+                    format: int32
+                    type: integer
+                  containerRestarts:
+                    description: containerRestarts is the aggregate count of container
+                      restarts across all pods
+                    format: int32
+                    type: integer
+                  deploymentName:
+                    description: deploymentName is the name of the Kubernetes Deployment
+                      created for this streaming run
+                    type: string
+                  lastFrameAt:
+                    description: lastFrameAt is the timestamp of the last processed
+                      frame (best-effort)
+                    format: date-time
+                    type: string
+                  lastReadyTime:
+                    description: lastReadyTime is the last time the deployment became
+                      ready
+                    format: date-time
+                    type: string
+                  readyReplicas:
+                    description: readyReplicas is the number of ready replicas in
+                      the streaming deployment
+                    format: int32
+                    type: integer
+                  updatedReplicas:
+                    description: updatedReplicas is the number of updated replicas
+                      in the streaming deployment
+                    format: int32
+                    type: integer
+                type: object
             type: object
         required:
         - spec

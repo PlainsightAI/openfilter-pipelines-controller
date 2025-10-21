@@ -80,13 +80,17 @@ type PipelineRunStatus struct {
 	// For Kubernetes API conventions, see:
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
 
-	// counts tracks the number of files in each state
+	// counts tracks the number of files in each state (Batch mode only)
 	// +optional
 	Counts *FileCounts `json:"counts,omitempty"`
 
-	// jobName is the name of the Kubernetes Job created for this run
+	// jobName is the name of the Kubernetes Job created for this run (Batch mode only)
 	// +optional
 	JobName string `json:"jobName,omitempty"`
+
+	// streaming provides observability into streaming pipeline runs (Stream mode only)
+	// +optional
+	Streaming *StreamingStatus `json:"streaming,omitempty"`
 
 	// startTime is when the pipeline run was started
 	// +optional
@@ -132,6 +136,37 @@ type FileCounts struct {
 	// failed is the number of files that failed processing
 	// +optional
 	Failed int64 `json:"failed,omitempty"`
+}
+
+// StreamingStatus provides observability into streaming pipeline runs
+type StreamingStatus struct {
+	// readyReplicas is the number of ready replicas in the streaming deployment
+	// +optional
+	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
+
+	// updatedReplicas is the number of updated replicas in the streaming deployment
+	// +optional
+	UpdatedReplicas int32 `json:"updatedReplicas,omitempty"`
+
+	// availableReplicas is the number of available replicas in the streaming deployment
+	// +optional
+	AvailableReplicas int32 `json:"availableReplicas,omitempty"`
+
+	// containerRestarts is the aggregate count of container restarts across all pods
+	// +optional
+	ContainerRestarts int32 `json:"containerRestarts,omitempty"`
+
+	// lastReadyTime is the last time the deployment became ready
+	// +optional
+	LastReadyTime *metav1.Time `json:"lastReadyTime,omitempty"`
+
+	// lastFrameAt is the timestamp of the last processed frame (best-effort)
+	// +optional
+	LastFrameAt *metav1.Time `json:"lastFrameAt,omitempty"`
+
+	// deploymentName is the name of the Kubernetes Deployment created for this streaming run
+	// +optional
+	DeploymentName string `json:"deploymentName,omitempty"`
 }
 
 // +kubebuilder:object:root=true

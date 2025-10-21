@@ -1,0 +1,11 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineRun
+metadata:
+  name: pipelinerun-stream-example
+spec:
+  # Reference to the streaming Pipeline
+  pipelineRef:
+    name: pipeline-rtsp-example
+
+  # Note: execution config (parallelism, maxAttempts, pendingTimeout)
+  # is only applicable to Batch mode pipelines

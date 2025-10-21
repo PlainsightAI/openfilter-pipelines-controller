@@ -336,6 +336,48 @@ spec:
                 - batch
                 - stream
                 type: string
+              services:
+                description: |-
+                  services defines Kubernetes Services to expose filter ports
+                  Only applies to Stream mode. Multiple services can expose different ports for the same filter.
+                  Service naming: <pipelinerun-name>-<filter-name>-<index>
+                items:
+                  description: ServicePort defines a port to expose as a Kubernetes
+                    Service for a filter
+                  properties:
+                    name:
+                      description: |-
+                        name is the name of the filter to expose
+                        Must match one of the filter names in the pipeline
+                      minLength: 1
+                      type: string
+                    port:
+                      description: port is the port number to expose
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                    protocol:
+                      default: TCP
+                      description: protocol is the network protocol for this port
+                        (TCP or UDP)
+                      enum:
+                      - TCP
+                      - UDP
+                      type: string
+                    targetPort:
+                      description: |-
+                        targetPort is the port on the container to forward to
+                        If not specified, defaults to the same value as port
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                  required:
+                  - name
+                  - port
+                  type: object
+                type: array
               source:
                 description: |-
                   source defines the input source for the pipeline

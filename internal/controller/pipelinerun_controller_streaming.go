@@ -65,6 +65,12 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 				return ctrl.Result{}, err
 			}
 
+			// Delete the Services
+			if err := r.deleteFilterServices(ctx, pipelineRun, pipeline); err != nil {
+				log.Error(err, "Failed to delete filter services")
+				return ctrl.Result{}, err
+			}
+
 			// Remove finalizer
 			controllerutil.RemoveFinalizer(pipelineRun, finalizerName)
 			if err := r.Update(ctx, pipelineRun); err != nil {
@@ -94,6 +100,16 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 		return ctrl.Result{}, err
 	}
 
+	// Step 1.5: Ensure Services exist for filters with exposed ports
+	if err := r.ensureFilterServices(ctx, pipelineRun, pipeline); err != nil {
+		log.Error(err, "Failed to ensure filter services")
+		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "ServiceCreationFailed", err.Error())
+		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+			log.Error(err, "Failed to update status")
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Step 2: Update streaming status from Deployment
 	if err := r.updateStreamingStatus(ctx, pipelineRun); err != nil {
 		log.Error(err, "Failed to update streaming status")
@@ -113,6 +129,11 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 			// Delete the Deployment
 			if err := r.deleteStreamingDeployment(ctx, pipelineRun); err != nil {
 				log.Error(err, "Failed to delete deployment after idle timeout")
+			}
+
+			// Delete the Services
+			if err := r.deleteFilterServices(ctx, pipelineRun, pipeline); err != nil {
+				log.Error(err, "Failed to delete services after idle timeout")
 			}
 
 			if err := r.Status().Update(ctx, pipelineRun); err != nil {
@@ -444,4 +465,122 @@ func buildRTSPURLWithCredentials(rtspSource *pipelinesv1alpha1.RTSPSource) strin
 
 	// Use environment variable references that will be expanded at runtime
 	return fmt.Sprintf("rtsp://$_RTSP_USERNAME:$_RTSP_PASSWORD@%s:%d%s", host, port, path)
+}
+
+// ensureFilterServices creates or updates Kubernetes Services for filters with exposed ports
+func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) error {
+	log := logf.FromContext(ctx)
+
+	if len(pipeline.Spec.Services) == 0 {
+		return nil
+	}
+
+	// Group services by filter name to assign indices
+	servicesByFilter := make(map[string][]pipelinesv1alpha1.ServicePort)
+	for _, svc := range pipeline.Spec.Services {
+		servicesByFilter[svc.Name] = append(servicesByFilter[svc.Name], svc)
+	}
+
+	// Create or update each service
+	for filterName, services := range servicesByFilter {
+		for idx, svcPort := range services {
+			serviceName := fmt.Sprintf("%s-%s-%d", pipelineRun.Name, filterName, idx)
+
+			service := &corev1.Service{}
+			err := r.Get(ctx, types.NamespacedName{Name: serviceName, Namespace: pipelineRun.Namespace}, service)
+
+			targetPort := svcPort.Port
+			if svcPort.TargetPort != nil {
+				targetPort = *svcPort.TargetPort
+			}
+
+			protocol := corev1.ProtocolTCP
+			if svcPort.Protocol != "" {
+				protocol = svcPort.Protocol
+			}
+
+			desiredService := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      serviceName,
+					Namespace: pipelineRun.Namespace,
+					Labels: map[string]string{
+						"app":         "pipeline-stream",
+						"pipelinerun": pipelineRun.Name,
+						"filter":      filterName,
+					},
+				},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{
+						"app":         "pipeline-stream",
+						"pipelinerun": pipelineRun.Name,
+					},
+					Ports: []corev1.ServicePort{
+						{
+							Name:       filterName,
+							Port:       svcPort.Port,
+							TargetPort: intstr.FromInt32(targetPort),
+							Protocol:   protocol,
+						},
+					},
+					Type: corev1.ServiceTypeClusterIP,
+				},
+			}
+
+			if apierrors.IsNotFound(err) {
+				// Create the Service
+				log.Info("Creating filter service", "service", serviceName, "filter", filterName, "port", svcPort.Port)
+				if err := controllerutil.SetControllerReference(pipelineRun, desiredService, r.Scheme); err != nil {
+					return fmt.Errorf("failed to set controller reference on service %s: %w", serviceName, err)
+				}
+				if err := r.Create(ctx, desiredService); err != nil {
+					return fmt.Errorf("failed to create service %s: %w", serviceName, err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("failed to get service %s: %w", serviceName, err)
+			} else {
+				// Update existing Service
+				service.Spec = desiredService.Spec
+				service.Labels = desiredService.Labels
+				if err := r.Update(ctx, service); err != nil {
+					return fmt.Errorf("failed to update service %s: %w", serviceName, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// deleteFilterServices deletes all Services created for this PipelineRun's filters
+func (r *PipelineRunReconciler) deleteFilterServices(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) error {
+	if len(pipeline.Spec.Services) == 0 {
+		return nil
+	}
+
+	// Group services by filter name to determine indices
+	servicesByFilter := make(map[string][]pipelinesv1alpha1.ServicePort)
+	for _, svc := range pipeline.Spec.Services {
+		servicesByFilter[svc.Name] = append(servicesByFilter[svc.Name], svc)
+	}
+
+	// Delete each service
+	for filterName, services := range servicesByFilter {
+		for idx := range services {
+			serviceName := fmt.Sprintf("%s-%s-%d", pipelineRun.Name, filterName, idx)
+
+			service := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      serviceName,
+					Namespace: pipelineRun.Namespace,
+				},
+			}
+
+			err := r.Delete(ctx, service)
+			if err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to delete service %s: %w", serviceName, err)
+			}
+		}
+	}
+
+	return nil
 }

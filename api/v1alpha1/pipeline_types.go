@@ -147,6 +147,34 @@ const (
 	PipelineModeStream PipelineMode = "stream"
 )
 
+// ServicePort defines a port to expose as a Kubernetes Service for a filter
+type ServicePort struct {
+	// name is the name of the filter to expose
+	// Must match one of the filter names in the pipeline
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// port is the port number to expose
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// targetPort is the port on the container to forward to
+	// If not specified, defaults to the same value as port
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	TargetPort *int32 `json:"targetPort,omitempty"`
+
+	// protocol is the network protocol for this port (TCP or UDP)
+	// +optional
+	// +kubebuilder:default=TCP
+	// +kubebuilder:validation:Enum=TCP;UDP
+	Protocol corev1.Protocol `json:"protocol,omitempty"`
+}
+
 // Filter defines a containerized processing step in the pipeline
 type Filter struct {
 	// name is a unique identifier for this filter within the pipeline
@@ -215,6 +243,12 @@ type PipelineSpec struct {
 	// +optional
 	// +kubebuilder:validation:MinItems=1
 	Filters []Filter `json:"filters,omitempty"`
+
+	// services defines Kubernetes Services to expose filter ports
+	// Only applies to Stream mode. Multiple services can expose different ports for the same filter.
+	// Service naming: <pipelinerun-name>-<filter-name>-<index>
+	// +optional
+	Services []ServicePort `json:"services,omitempty"`
 
 	// videoInputPath defines where the controller stores downloaded source files.
 	// Downstream filters can reference this path to read the input artifact.

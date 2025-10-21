@@ -1,0 +1,95 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: Pipeline
+metadata:
+  name: pipeline-rtsp-with-services
+spec:
+  # Stream mode: processes RTSP streams using a Deployment
+  mode: Stream
+
+  source:
+    # RTSP source configuration
+    rtsp:
+      host: camera.example.com
+      port: 554
+      path: /stream1
+
+  # Filters process the RTSP stream
+  filters:
+    - name: video-in
+      image: ghcr.io/plainsightai/openfilter-video-in:latest
+      imagePullPolicy: Always
+      config:
+        - name: sources
+          value: "$(RTSP_URL)"
+        - name: sinks
+          value: "/tmp/detection-in"
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+        limits:
+          memory: "1Gi"
+          cpu: "1000m"
+
+    - name: detection
+      image: ghcr.io/plainsightai/openfilter-detection:latest
+      imagePullPolicy: Always
+      config:
+        - name: sources
+          value: "/tmp/detection-in"
+        - name: sinks
+          value: "/tmp/detection-out"
+        - name: model
+          value: "yolov8n.pt"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "1000m"
+        limits:
+          memory: "2Gi"
+          cpu: "2000m"
+
+    - name: video-out
+      image: ghcr.io/plainsightai/openfilter-video-out:latest
+      imagePullPolicy: Always
+      config:
+        - name: sources
+          value: "/tmp/detection-out"
+        # This filter will expose an RTSP output stream on port 8554
+        - name: sinks
+          value: "rtsp://0.0.0.0:8554/output"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "250m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+
+  # Expose filter ports as Kubernetes Services
+  # This creates ClusterIP services that route to the streaming deployment pods
+  services:
+    # Expose the RTSP output stream from video-out filter
+    - name: video-out
+      port: 8554
+      targetPort: 8554
+      protocol: TCP
+
+    # Example: expose a metrics endpoint from detection filter
+    - name: detection
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+
+    # Example: multiple ports for the same filter
+    # This creates a second service for video-out
+    - name: video-out
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+
+  # Service naming convention: <pipelinerun-name>-<filter-name>-<index>
+  # For a PipelineRun named "my-stream-run", this creates:
+  #   - my-stream-run-video-out-0 (port 8554)
+  #   - my-stream-run-detection-0 (port 9090)
+  #   - my-stream-run-video-out-1 (port 8080)

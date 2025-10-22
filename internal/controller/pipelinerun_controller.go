@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -55,7 +56,7 @@ const (
 	ConditionTypeDegraded    = "Degraded"
 
 	// Reconciliation intervals
-	StatusUpdateInterval = 30
+	StatusUpdateInterval = 30 * time.Second
 
 	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not overridden.
 	DefaultVideoInputPath = "/ws/input.mp4"

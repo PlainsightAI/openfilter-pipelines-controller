@@ -275,6 +275,50 @@ func (v *ValkeyClient) ReadRange(ctx context.Context, streamKey, start, end stri
 	return messages, nil
 }
 
+// GetPendingForConsumer returns up to 'count' pending message IDs for a specific consumer
+// in the given stream and consumer group.
+// It executes: XPENDING <stream> <group> <start> <end> <count> <consumer>
+func (v *ValkeyClient) GetPendingForConsumer(ctx context.Context, streamKey, groupName, consumer string, count int64) ([]string, error) {
+	if count <= 0 {
+		count = 10
+	}
+
+	cmd := v.client.B().Xpending().
+		Key(streamKey).
+		Group(groupName).
+		Start("-").
+		End("+").
+		Count(count).
+		Consumer(consumer).
+		Build()
+
+	result := v.client.Do(ctx, cmd)
+	if result.Error() != nil {
+		return nil, fmt.Errorf("failed to get pending for consumer %s: %w", consumer, result.Error())
+	}
+
+	// XPENDING with range returns an array of [id, consumer, idle, deliveries]
+	arr, err := result.ToArray()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse XPENDING entries: %w", err)
+	}
+
+	ids := make([]string, 0, len(arr))
+	for _, entry := range arr {
+		fields, err := entry.ToArray()
+		if err != nil || len(fields) < 1 {
+			continue
+		}
+		id, err := fields[0].ToString()
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
+}
+
 // DeleteMessages removes messages from a stream.
 func (v *ValkeyClient) DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error {
 	if len(messageIDs) == 0 {

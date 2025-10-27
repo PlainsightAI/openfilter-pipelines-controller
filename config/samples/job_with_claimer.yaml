@@ -1,5 +1,4 @@
 # Example Job manifest showing how to use the claimer init container
-# with the pipeline-exec ServiceAccount for RBAC
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -16,8 +15,7 @@ spec:
       labels:
         filter.plainsight.ai/run: "example-run-abc123"
     spec:
-      # Use the pipeline-exec ServiceAccount for RBAC permissions
-      serviceAccountName: pipeline-exec
+      # No special ServiceAccount required
       restartPolicy: Never
 
       volumes:

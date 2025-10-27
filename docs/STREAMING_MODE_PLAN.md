@@ -42,7 +42,7 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
   - Create/Update `apps/v1.Deployment` named `<pipelinerun-name>-deploy`.
   - `replicas: 1`, `strategy: RollingUpdate (maxUnavailable=0, maxSurge=1)`.
   - Pod template:
-    - `serviceAccountName: pipeline-exec`, `restartPolicy: Always`.
+    - No dedicated ServiceAccount required; pods run with the namespace default. `restartPolicy: Always`.
     - Volumes: none required by the controller for streaming mode (filters may declare their own if needed).
     - Filter containers built from `pipeline.spec.filters` (unchanged). Controller injects `RTSP_URL`, and optionally `RTSP_USERNAME`/`RTSP_PASSWORD`, to all filter containers. The `video-in` filter should reference these (e.g., `sources=$(RTSP_URL)`), or embed the full RTSP URL directly in its config.
 - Status and conditions:

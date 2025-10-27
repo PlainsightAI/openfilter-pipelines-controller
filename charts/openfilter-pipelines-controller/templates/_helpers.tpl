@@ -62,9 +62,5 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
-Create the name of the pipeline executor service account to use
-This service account is always created as it's required for pipeline execution
+Pipeline executor ServiceAccount helpers removed. Streaming and batch pods run with the namespace default SA.
 */}}
-{{- define "openfilter-pipelines-controller.pipelineExecutorServiceAccountName" -}}
-{{- default "pipeline-exec" .Values.pipelineExecutor.serviceAccount.name }}
-{{- end }}

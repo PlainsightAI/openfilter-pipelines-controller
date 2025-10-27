@@ -24,7 +24,7 @@ We're building a Kubernetes-native batch executor that processes large file sets
   - Job creation with `completions = totalFiles`, `parallelism = user-tunable`
   - Pod completion tracking for ACK/retry/DLQ decisions
   - Status updates from Valkey metrics
-- Init container per pod: claim one message from Valkey Stream, download from S3, patch pod annotations, then exit
+- Init container per pod: claim one message from Valkey Stream (consumer name = pod name), download from S3 to /ws, then exit (no pod annotations)
 - Filters as normal containers run sequentially against staged input
 - Controller (not pods) ACKs messages and handles retries/DLQ
 - Scalable to thousands of files without per-file Job objects
@@ -174,18 +174,17 @@ The controller implements the following steps on each reconciliation:
 1. Creates one Job (owner-referenced) with:
    - `completions = totalFiles`
    - `parallelism = spec.execution.parallelism`
-   - Init container: claimer (claims message, downloads file, patches pod)
+   - Init container: claimer (claims message, downloads file)
    - Main containers: filter containers from Pipeline spec
 
 **Phase 3: Pod Completion Handling**
 1. Lists pods with label `filter.plainsight.ai/run=<runId>`
 2. For each completed pod (Succeeded/Failed):
-   - Reads queue metadata from pod annotations (`queue.valkey.mid`, `queue.file`, `queue.attempts`)
+   - Uses XPENDING with `consumer=<pod.name>` to find the pending entry, then XRANGE(mid,mid) to read `{file, attempts}`
    - **Succeeded**: ACKs message via `XACK`
    - **Failed**:
      - If `attempts+1 < maxAttempts`: re-enqueues with `XADD` (incremented attempts), then ACKs original
      - Else: adds to DLQ (`pr:<runId>:dlq`) with reason, then ACKs original
-   - Marks pod as processed with annotation `filter.plainsight.ai/processed=true`
 
 **Phase 4: Reclaimer (stale message recovery)**
 1. Runs `XAUTOCLAIM(stream, group, "controller-reclaimer", pendingTimeout, 100)`
@@ -239,7 +238,6 @@ spec:
         filter.plainsight.ai/run: "{{ runId }}"
         filter.plainsight.ai/pipelinerun: "{{ pipelineRunName }}"
     spec:
-      serviceAccountName: pipeline-exec
       restartPolicy: Never
       volumes:
         - name: workspace
@@ -326,12 +324,7 @@ The claimer is a standalone Go binary (`cmd/claimer/main.go`) that runs as an in
    - Creates MinIO client using Pipeline bucket configuration
    - Downloads `file` to `/ws/input`
    - Supports AWS S3, GCS, MinIO, and other S3-compatible storage
-4. **Patch pod annotations** via Kubernetes API:
-   - `queue.valkey.mid`: message ID
-   - `queue.file`: file path
-   - `queue.attempts`: current attempt count
-   - These enable the controller to correlate pod completion with queue messages
-5. **Exit successfully** → filter containers start
+4. **Exit successfully** → filter containers start
 
 **Key behaviors**:
 - Retries Valkey connection failures with exponential backoff (1s to 30s)
@@ -339,9 +332,7 @@ The claimer is a standalone Go binary (`cmd/claimer/main.go`) that runs as an in
 - If claimer fails, pod enters Failed state → controller handles retry/DLQ logic
 
 **RBAC requirements**:
-- ServiceAccount `pipeline-exec` needs:
-  - `pods: [get, patch]` in namespace (to annotate self)
-  - Access to S3 credential secrets (via envFrom or secretRef)
+- Worker pods: no Kubernetes API access required. Access to S3 credential secrets is provided via env/secretRef.
 
 ### 5.3 Filter containers
 
@@ -400,8 +391,7 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
 **Steps**:
 1. List pods with label `filter.plainsight.ai/run=<runId>`
 2. For each pod in Succeeded/Failed phase:
-   - Skip if already marked `filter.plainsight.ai/processed=true`
-   - Read annotations: `queue.valkey.mid`, `queue.file`, `queue.attempts`
+   - Use XPENDING with `consumer=<pod.name>` to find the pending entry and XRANGE to fetch fields `{file, attempts}`
    - **If Succeeded**:
      - `XACK <stream> <group> <mid>`
    - **If Failed**:
@@ -482,9 +472,7 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
 
 ### Pod annotations
 
-- `queue.valkey.mid`
-- `queue.file`
-- `queue.attempts`
+Not used; message identity is derived from the Valkey consumer mapping (consumer = pod name).
 
 ### Labels
 
@@ -507,13 +495,13 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
 ##### A. Init container (claimer/stager)
 
 - **Before claim** → no message involved; pod fails; Job spawns a new pod
-- **After claim, before annotations/download completes** → message is pending in Valkey (PEL) under that pod's consumer; the controller's reclaimer (XAUTOCLAIM after pendingTimeout) takes it back and re-queues (or DLQs), then a new pod will claim it
-- **After claim, after annotations patch, download fails** → pod Failed; controller sees mid/file/attempts on the pod annotations → re-enqueue (attempts+1) or DLQ, then ACK the original mid
+- **After claim, before download completes** → message is pending in Valkey (PEL) under that pod's consumer; the controller's reclaimer (XAUTOCLAIM after pendingTimeout) takes it back and re-queues (or DLQs), then a new pod will claim it
+- **After claim, download fails** → pod Failed; controller reads `{file, attempts}` via XRANGE(mid,mid) → re-enqueue (attempts+1) or DLQ, then ACK the original mid
 
 ##### B. Filter containers (concurrent steps)
 
 - Any filter exits non-zero → pod phase = Failed
-- Controller reads mid/file/attempts (from annotations written by the init), and:
+- Controller fetches `{file, attempts}` for the pod’s pending entry and:
   - if `attempts+1 < maxAttempts` → re-enqueue new message with incremented attempts, ACK old mid
   - else → DLQ (with a reason), ACK old mid
 - Job will create replacement pods until it reaches the configured completions
@@ -558,12 +546,12 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 
 ### S3
 
-- IRSA/Workload Identity bound to `serviceAccountName: pipeline-exec`
+- IRSA/Workload Identity (optional) for object storage if needed; no special worker ServiceAccount required
 
 ### Kubernetes RBAC
 
-- **Worker SA:** `get`, `patch` on Pods in namespace (to annotate mid/file/attempts)
-- **Controller:** CRUD on PipelineRun, Jobs, Pods (read), status updates
+- **Worker pods:** no Kubernetes API access required
+- **Controller:** CRUD on PipelineRun, Jobs; read/watch Pods; status updates
 
 ### Valkey ACLs
 

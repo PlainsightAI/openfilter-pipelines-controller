@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,10 +36,6 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/valkey-io/valkey-go"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 const (
@@ -63,10 +58,7 @@ const (
 	// Volume mount paths
 	defaultInputPath = "/ws/input.mp4"
 
-	// Pod annotations
-	AnnotationMessageID = "queue.valkey.mid"
-	AnnotationFile      = "queue.file"
-	AnnotationAttempts  = "queue.attempts"
+	// Pod annotations are no longer used; controller derives queue state directly
 )
 
 // Message represents a work item from Valkey Stream
@@ -147,11 +139,7 @@ func run() error {
 	}
 	log.Printf("Downloaded file %s to %s", msg.File, cfg.VideoInputPath)
 
-	// Patch pod annotations
-	if err := patchPodAnnotations(ctx, cfg, messageID, msg); err != nil {
-		return fmt.Errorf("failed to patch pod annotations: %w", err)
-	}
-	log.Println("Patched pod annotations")
+	// No Kubernetes API calls are required; controller will infer ownership via consumer name.
 
 	return nil
 }
@@ -205,12 +193,7 @@ func loadConfig() (*Config, error) {
 	if cfg.Group == "" {
 		return nil, fmt.Errorf("GROUP is required")
 	}
-	if cfg.PodName == "" {
-		return nil, fmt.Errorf("POD_NAME is required")
-	}
-	if cfg.PodNamespace == "" {
-		return nil, fmt.Errorf("POD_NAMESPACE is required")
-	}
+	// POD_NAME and POD_NAMESPACE are optional; retained for diagnostics only.
 	if cfg.S3Bucket == "" {
 		return nil, fmt.Errorf("S3_BUCKET is required")
 	}
@@ -405,51 +388,7 @@ func downloadFile(ctx context.Context, client *minio.Client, bucket, key, destPa
 	return nil
 }
 
-func patchPodAnnotations(ctx context.Context, cfg *Config, messageID string, msg *Message) error {
-	// Create in-cluster Kubernetes client
-	kubeConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return fmt.Errorf("failed to create in-cluster config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(kubeConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
-	// Build patch for annotations
-	patch := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"annotations": map[string]string{
-				AnnotationMessageID: messageID,
-				AnnotationFile:      msg.File,
-				AnnotationAttempts:  strconv.Itoa(msg.Attempts),
-			},
-		},
-	}
-
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("failed to marshal patch: %w", err)
-	}
-
-	// Apply patch to pod
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	_, err = clientset.CoreV1().Pods(cfg.PodNamespace).Patch(
-		ctx,
-		cfg.PodName,
-		types.MergePatchType,
-		patchBytes,
-		metav1.PatchOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to patch pod: %w", err)
-	}
-
-	return nil
-}
+// patchPodAnnotations removed — no longer needed
 
 func waitForValkey(ctx context.Context, client valkey.Client) error {
 	backoff := newExponentialBackoff(30 * time.Second)

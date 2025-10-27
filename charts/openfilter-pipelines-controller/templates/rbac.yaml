@@ -10,6 +10,7 @@ rules:
   - filter.plainsight.ai
   resources:
   - pipelines
+  - pipelineruns
   verbs:
   - create
   - delete
@@ -22,12 +23,14 @@ rules:
   - filter.plainsight.ai
   resources:
   - pipelines/finalizers
+  - pipelineruns/finalizers
   verbs:
   - update
 - apiGroups:
   - filter.plainsight.ai
   resources:
   - pipelines/status
+  - pipelineruns/status
   verbs:
   - get
   - patch
@@ -36,6 +39,7 @@ rules:
   - ""
   resources:
   - pods
+  - secrets
   verbs:
   - create
   - delete
@@ -51,6 +55,51 @@ rules:
   verbs:
   - get
   - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments/status
+  - replicasets/status
+  verbs:
+  - get
+- apiGroups:
+  - apps
+  resources:
+  - replicasets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - jobs/status
+  verbs:
+  - get
 - apiGroups:
   - ""
   resources:

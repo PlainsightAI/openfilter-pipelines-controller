@@ -499,8 +499,8 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 					},
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "pipeline-exec",
-					RestartPolicy:      corev1.RestartPolicyNever,
+					// No special ServiceAccount required; default SA is sufficient
+					RestartPolicy: corev1.RestartPolicyNever,
 					Volumes: []corev1.Volume{
 						{
 							Name: "workspace",
@@ -555,22 +555,34 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 			continue
 		}
 
-		// Check if we've already processed this pod (by checking for a processed annotation)
-		if pod.Annotations["filter.plainsight.ai/processed"] == AnnotationValueTrue {
+		// Discover the message claimed by this pod's init container using the consumer name = pod.Name.
+		// There should be at most one pending entry for this consumer.
+		pendingIDs, err := r.ValkeyClient.GetPendingForConsumer(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), pod.Name, 1)
+		if err != nil {
+			log.Error(err, "Failed to get pending entries for consumer", "pod", pod.Name)
 			continue
 		}
 
-		// Get queue metadata from pod annotations
-		messageID := pod.Annotations[AnnotationMessageID]
-		filepath := pod.Annotations[AnnotationFile]
-		attemptsStr := pod.Annotations[AnnotationAttempts]
-
-		if messageID == "" || filepath == "" {
-			log.Info("Pod missing queue annotations, skipping", "pod", pod.Name)
+		if len(pendingIDs) == 0 {
+			// Nothing pending for this consumer; already processed or never claimed.
+			log.V(1).Info("No pending entries for consumer", "pod", pod.Name)
 			continue
 		}
 
-		attempts, _ := strconv.Atoi(attemptsStr)
+		messageID := pendingIDs[0]
+		// Fetch message fields
+		msgs, err := r.ValkeyClient.ReadRange(ctx, pipelineRun.GetQueueStream(), messageID, messageID, 1)
+		if err != nil || len(msgs) == 0 {
+			log.Error(err, "Failed to read message for pending entry; attempting to ACK", "messageID", messageID)
+			// Best-effort ACK to prevent leaks
+			if ackErr := r.ValkeyClient.AckMessage(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), messageID); ackErr != nil {
+				log.Error(ackErr, "Failed to ACK orphan pending entry", "messageID", messageID)
+			}
+			continue
+		}
+
+		filepath := msgs[0].Values["file"]
+		attempts := parseAttempts(msgs[0].Values["attempts"], int(maxAttempts))
 
 		// Get DLQ key
 		dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
@@ -631,15 +643,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 			}
 		}
 
-		// Mark pod as processed by adding annotation
-		podCopy := pod.DeepCopy()
-		if podCopy.Annotations == nil {
-			podCopy.Annotations = make(map[string]string)
-		}
-		podCopy.Annotations["filter.plainsight.ai/processed"] = AnnotationValueTrue
-		if err := r.Update(ctx, podCopy); err != nil {
-			log.Error(err, "Failed to mark pod as processed", "pod", pod.Name)
-		}
+		// No need to mark pod as processed; we rely on queue state to avoid reprocessing.
 	}
 
 	return nil

@@ -55,15 +55,7 @@ The following table lists the main configurable parameters of the chart and thei
 | `serviceAccount.create` | Create service account for controller | `true` |
 | `serviceAccount.name` | Service account name for controller | `""` |
 
-**Pipeline Executor RBAC**: Permissions for pods created by the controller (pipeline executor pods).
-
-The controller creates pods that execute pipeline workloads. These pods **require** a service account with permission to patch their own annotations (used by the claimer init container to store queue metadata). This service account is always created and cannot be disabled.
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `pipelineExecutor.serviceAccount.name` | Service account name for executor pods | `"pipeline-exec"` |
-| `pipelineExecutor.serviceAccount.automount` | Automount service account token | `true` |
-| `pipelineExecutor.serviceAccount.annotations` | Annotations for the service account | `{}` |
+The chart no longer installs any per-workload ServiceAccounts for pipeline execution. Batch and streaming pods use the namespace default ServiceAccount.
 
 ### CRD Configuration
 

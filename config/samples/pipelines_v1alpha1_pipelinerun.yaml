@@ -4,7 +4,8 @@ metadata:
   labels:
     app.kubernetes.io/name: openfilter-pipelines-controller
     app.kubernetes.io/managed-by: kustomize
-  name: pipelinerun-sample
+  # name: pipelinerun-sample
+  generateName: pipelinerun-sample-
 spec:
   pipelineRef:
     name: pipeline-sample

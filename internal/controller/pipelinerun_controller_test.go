@@ -50,6 +50,8 @@ type MockValkeyClient struct {
 	AutoClaimMessages  []mockMessage
 	AutoClaimCallCount int
 	DeletedMessageIDs  []string
+	// PendingByConsumer simulates XPENDING for a specific consumer
+	PendingByConsumer map[string][]string
 }
 
 type mockMessage struct {
@@ -113,6 +115,26 @@ func (m *MockValkeyClient) AddToDLQ(ctx context.Context, dlqKey, runID, filepath
 		Reason:   reason,
 	})
 	return nil
+}
+
+// GetPendingForConsumer returns up to 'count' pending message IDs for a consumer.
+func (m *MockValkeyClient) GetPendingForConsumer(ctx context.Context, streamKey, groupName, consumer string, count int64) ([]string, error) {
+	if m.PendingByConsumer == nil {
+		return []string{}, nil
+	}
+	pending := m.PendingByConsumer[consumer]
+	if len(pending) == 0 {
+		return []string{}, nil
+	}
+	// Respect count if > 0; pop from the slice to simulate consumption
+	if count > 0 && int64(len(pending)) > count {
+		ids := append([]string(nil), pending[:count]...)
+		m.PendingByConsumer[consumer] = append([]string(nil), pending[count:]...)
+		return ids, nil
+	}
+	ids := append([]string(nil), pending...)
+	m.PendingByConsumer[consumer] = nil
+	return ids, nil
 }
 
 func (m *MockValkeyClient) AutoClaim(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, count int64) ([]queue.XMessage, error) {

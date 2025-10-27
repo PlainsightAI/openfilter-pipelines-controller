@@ -1,0 +1,48 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: Pipeline
+metadata:
+  name: pipeline-rtsp-sg
+spec:
+  # Stream mode: processes RTSP streams using a Deployment
+  mode: stream
+  source:
+    rtsp:
+      host: 172.16.2.35
+      port: 554
+      path: /onvif-media/media.amp?profile=profile_1_h264&sessiontimeout=60&streamtype=unicast
+      credentialsSecret:
+        name: axis-rtsp-credentials
+  services:
+    - name: webvis
+      port: 8080
+      targetPort: 8080
+  filters:
+    - name: video-in
+      image: plainsightai/openfilter-video-in:v0.1.10
+      config:
+        # Use the injected RTSP_URL environment variable
+        # If credentialsSecret is configured, credentials are already embedded in the URL
+        - name: sources
+          value: "$(RTSP_URL)"
+        - name: outputs
+          value: tcp://*:5550
+    - name: face-blur
+      image: plainsightai/openfilter-faceblur:v1.1.4
+      config:
+        - name: sources
+          value: tcp://localhost:5550
+        - name: outputs
+          value: tcp://*:5552
+        - name: debug
+          value: "true"
+        - name: mq_log
+          value: pretty
+    - name: webvis
+      image: plainsightai/openfilter-webvis:v0.1.10
+      config:
+        - name: sources
+          value: tcp://localhost:5552
+        - name: host
+          value: "0.0.0.0"
+        - name: port
+          value: "8080"

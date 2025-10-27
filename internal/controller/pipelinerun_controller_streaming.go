@@ -320,9 +320,9 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 					},
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "pipeline-exec",
-					RestartPolicy:      corev1.RestartPolicyAlways,
-					Containers:         containers,
+					// No dedicated ServiceAccount required for streaming mode; default SA is sufficient
+					RestartPolicy: corev1.RestartPolicyAlways,
+					Containers:    containers,
 				},
 			},
 		},

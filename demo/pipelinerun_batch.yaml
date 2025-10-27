@@ -1,0 +1,11 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineRun
+metadata:
+  generateName: pipelinerun-batch-
+spec:
+  pipelineRef:
+    name: pipeline-batch
+  execution:
+    parallelism: 1
+    maxAttempts: 3
+    pendingTimeout: "5m"

@@ -27,16 +27,7 @@ rbac:
   # Create ClusterRole and ClusterRoleBinding
   create: true
 
-# Pipeline executor configuration (for pods created by the controller)
-# This service account is required for pipeline execution and is always created
-pipelineExecutor:
-  serviceAccount:
-    # Automount service account token
-    automount: true
-    # Annotations to add to the service account
-    annotations: {}
-    # Name of the service account (defaults to "pipeline-exec")
-    name: ""
+# Pipeline executor configuration removed — pods run with the default ServiceAccount.
 
 # CRD installation
 crds:

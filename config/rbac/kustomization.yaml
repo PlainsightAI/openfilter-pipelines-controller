@@ -28,9 +28,4 @@ resources:
 - pipeline_admin_role.yaml
 - pipeline_editor_role.yaml
 - pipeline_viewer_role.yaml
-# Pipeline execution RBAC resources
-# Used by Job pods (claimer init container) to patch pod annotations
-- pipeline_exec_service_account.yaml
-- pipeline_exec_role.yaml
-- pipeline_exec_role_binding.yaml
-
+# Pipeline execution RBAC resources removed; workloads run with default ServiceAccount.

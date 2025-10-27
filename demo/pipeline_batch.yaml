@@ -1,11 +1,9 @@
 apiVersion: filter.plainsight.ai/v1alpha1
 kind: Pipeline
 metadata:
-  labels:
-    app.kubernetes.io/name: openfilter-pipelines-controller
-    app.kubernetes.io/managed-by: kustomize
-  name: pipeline-sample
+  name: pipeline-batch
 spec:
+  mode: batch
   source:
     bucket:
       name: cow-demo-development

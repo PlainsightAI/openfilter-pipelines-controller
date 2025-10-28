@@ -1,9 +1,10 @@
 name: Update Helm Chart Version
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_run:
+    workflows: ["Build and Push Docker Images"]
+    types:
+      - completed
 
 permissions:
   contents: write
@@ -11,6 +12,11 @@ permissions:
 
 jobs:
   update-helm-chart:
+    # Only run if the Docker build workflow succeeded and was triggered by a tag
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -21,7 +27,8 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
+          TAG=${{ github.event.workflow_run.head_branch }}
+          TAG=${TAG#refs/tags/}
           VERSION=${TAG#v}
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT

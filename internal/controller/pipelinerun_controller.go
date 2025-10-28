@@ -125,6 +125,15 @@ func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Get the Pipeline resource
 	pipeline, err := r.getPipeline(ctx, pipelineRun)
 	if err != nil {
+		// If the PipelineRun is being deleted, we need to proceed with cleanup even if Pipeline is missing
+		if !pipelineRun.DeletionTimestamp.IsZero() {
+			log.Info("Pipeline not found but PipelineRun is being deleted, proceeding with cleanup")
+			// Attempt cleanup for both modes since we don't know which mode it was
+			// Streaming mode uses finalizers, batch mode uses owner references
+			// Try streaming cleanup first (it will no-op if no finalizer is present)
+			return r.reconcileStreaming(ctx, pipelineRun, nil)
+		}
+
 		log.Error(err, "Failed to get Pipeline")
 		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "PipelineNotFound", err.Error())
 		if err := r.Status().Update(ctx, pipelineRun); err != nil {

@@ -65,7 +65,7 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 				return ctrl.Result{}, err
 			}
 
-			// Delete the Services
+			// Delete the Services (pipeline can be nil during deletion)
 			if err := r.deleteFilterServices(ctx, pipelineRun, pipeline); err != nil {
 				log.Error(err, "Failed to delete filter services")
 				return ctrl.Result{}, err
@@ -77,8 +77,14 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 				log.Error(err, "Failed to remove finalizer")
 				return ctrl.Result{}, err
 			}
+			log.Info("Successfully removed finalizer and cleaned up resources")
 		}
 		return ctrl.Result{}, nil
+	}
+
+	// If we reach here during deletion without finalizer, Pipeline must exist for normal reconciliation
+	if pipeline == nil {
+		return ctrl.Result{}, fmt.Errorf("pipeline is required for non-deletion reconciliation")
 	}
 
 	// Add finalizer if not present
@@ -556,33 +562,23 @@ func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipeli
 }
 
 // deleteFilterServices deletes all Services created for this PipelineRun's filters
+// Uses label selectors to find services, so it works even if the Pipeline is deleted
 func (r *PipelineRunReconciler) deleteFilterServices(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) error {
-	if len(pipeline.Spec.Services) == 0 {
-		return nil
+	log := logf.FromContext(ctx)
+
+	// List all services with the pipelinerun label
+	serviceList := &corev1.ServiceList{}
+	if err := r.List(ctx, serviceList,
+		client.InNamespace(pipelineRun.Namespace),
+		client.MatchingLabels{"pipelinerun": pipelineRun.Name}); err != nil {
+		return fmt.Errorf("failed to list services: %w", err)
 	}
 
-	// Group services by filter name to determine indices
-	servicesByFilter := make(map[string][]pipelinesv1alpha1.ServicePort)
-	for _, svc := range pipeline.Spec.Services {
-		servicesByFilter[svc.Name] = append(servicesByFilter[svc.Name], svc)
-	}
-
-	// Delete each service
-	for filterName, services := range servicesByFilter {
-		for idx := range services {
-			serviceName := fmt.Sprintf("%s-%s-%d", pipelineRun.Name, filterName, idx)
-
-			service := &corev1.Service{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      serviceName,
-					Namespace: pipelineRun.Namespace,
-				},
-			}
-
-			err := r.Delete(ctx, service)
-			if err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to delete service %s: %w", serviceName, err)
-			}
+	// Delete each service found
+	for _, service := range serviceList.Items {
+		log.Info("Deleting filter service", "service", service.Name)
+		if err := r.Delete(ctx, &service); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete service %s: %w", service.Name, err)
 		}
 	}
 

@@ -1,0 +1,63 @@
+name: Update Helm Chart Version
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update Chart.yaml
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          sed -i "s/^version: .*/version: $VERSION/" charts/openfilter-pipelines-controller/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"$VERSION\"/" charts/openfilter-pipelines-controller/Chart.yaml
+
+      - name: Create Pull Request
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GH_BOT_USER_PAT }}
+          commit-message: "chore: Update Helm chart to version ${{ steps.version.outputs.version }}"
+          title: "chore: Update Helm chart to version ${{ steps.version.outputs.version }}"
+          body: |
+            This PR updates the Helm chart version to match the release tag `${{ steps.version.outputs.tag }}`.
+
+            ## Changes
+            - Updated `version` in Chart.yaml to `${{ steps.version.outputs.version }}`
+            - Updated `appVersion` in Chart.yaml to `${{ steps.version.outputs.version }}`
+
+            This PR was automatically created by the release workflow and will auto-merge once all checks pass.
+          branch: helm-version-${{ steps.version.outputs.version }}
+          base: main
+          delete-branch: true
+          labels: |
+            automated
+            helm
+            release
+
+      - name: Enable auto-merge
+        if: steps.cpr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_BOT_USER_PAT }}
+        run: |
+          gh pr merge ${{ steps.cpr.outputs.pull-request-number }} --auto --squash

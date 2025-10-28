@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -518,6 +519,19 @@ var _ = Describe("PipelineRun Controller", func() {
 				},
 			)
 
+			// Seed queue: map this pod (consumer) to a pending message and provide its fields
+			successPodName := fmt.Sprintf("test-pod-success-%d", testCounter)
+			mockValkey.PendingByConsumer = map[string][]string{
+				successPodName: {"msg-123"},
+			}
+			mockValkey.Messages = []mockMessage{{
+				ID: "msg-123",
+				Values: map[string]string{
+					"file":     "test-file.txt",
+					"attempts": "0",
+				},
+			}}
+
 			// Reconcile multiple times to ensure pod is processed
 			for i := 0; i < 3; i++ {
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -536,15 +550,15 @@ var _ = Describe("PipelineRun Controller", func() {
 				return false
 			}, timeout, interval).Should(BeTrue())
 
-			// Verify pod was marked as processed
-			Eventually(func() bool {
-				podName := fmt.Sprintf("test-pod-success-%d", testCounter)
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: podName, Namespace: namespace}, pod)
+			// Verify no legacy processed annotation was set
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: successPodName, Namespace: namespace}, pod)
 				if err != nil {
 					return false
 				}
-				return pod.Annotations["filter.plainsight.ai/processed"] == "true"
-			}, timeout, interval).Should(BeTrue())
+				_, exists := pod.Annotations["filter.plainsight.ai/processed"]
+				return !exists
+			}, time.Second*2, interval).Should(BeTrue())
 		})
 
 		It("should re-enqueue failed pods with incremented attempts", func() {
@@ -605,6 +619,18 @@ var _ = Describe("PipelineRun Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+
+			// Seed queue mapping and message for this consumer
+			mockValkey.PendingByConsumer = map[string][]string{
+				pod.Name: {"msg-456"},
+			}
+			mockValkey.Messages = []mockMessage{{
+				ID: "msg-456",
+				Values: map[string]string{
+					"file":     "failed-file.txt",
+					"attempts": "1",
+				},
+			}}
 
 			// Wait for the pod to exist before updating status
 			Eventually(func() bool {
@@ -704,6 +730,18 @@ var _ = Describe("PipelineRun Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+
+			// Seed queue mapping and message for this consumer (attempts will become 3)
+			mockValkey.PendingByConsumer = map[string][]string{
+				pod.Name: {"msg-789"},
+			}
+			mockValkey.Messages = []mockMessage{{
+				ID: "msg-789",
+				Values: map[string]string{
+					"file":     "dlq-file.txt",
+					"attempts": "2",
+				},
+			}}
 
 			// Wait for the pod to exist before updating status
 			Eventually(func() bool {
@@ -994,7 +1032,7 @@ var _ = Describe("PipelineRun Controller", func() {
 						Name: pipelineName,
 					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
-						MaxAttempts: ptr.To(int32(2)),
+						MaxAttempts: ptr.To(int32(3)),
 					},
 				},
 			}
@@ -1029,7 +1067,7 @@ var _ = Describe("PipelineRun Controller", func() {
 					Annotations: map[string]string{
 						AnnotationMessageID: "msg-imagepull",
 						AnnotationFile:      "videos/file1.mp4",
-						AnnotationAttempts:  "0",
+						AnnotationAttempts:  "1",
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -1056,6 +1094,18 @@ var _ = Describe("PipelineRun Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, imagePullPod)).To(Succeed())
+
+			// Seed queue mapping and message for this consumer
+			mockValkey.PendingByConsumer = map[string][]string{
+				imagePullPod.Name: {"msg-imagepull"},
+			}
+			mockValkey.Messages = []mockMessage{{
+				ID: "msg-imagepull",
+				Values: map[string]string{
+					"file":     "videos/file1.mp4",
+					"attempts": "1",
+				},
+			}}
 
 			Eventually(func() error {
 				existing := &corev1.Pod{}
@@ -1089,7 +1139,7 @@ var _ = Describe("PipelineRun Controller", func() {
 
 			Eventually(func() bool {
 				for _, entry := range mockValkey.EnqueuedFiles {
-					if entry.RunID == runID && entry.Attempts == 1 && entry.Filepath == "videos/file1.mp4" {
+					if entry.RunID == runID && entry.Attempts == 2 && entry.Filepath == "videos/file1.mp4" {
 						return true
 					}
 				}
@@ -1168,6 +1218,18 @@ var _ = Describe("PipelineRun Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, crashLoopPod)).To(Succeed())
 
+			// Seed queue mapping and message for this consumer
+			mockValkey.PendingByConsumer = map[string][]string{
+				crashLoopPod.Name: {"msg-crashloop"},
+			}
+			mockValkey.Messages = []mockMessage{{
+				ID: "msg-crashloop",
+				Values: map[string]string{
+					"file":     "videos/file2.mp4",
+					"attempts": "1",
+				},
+			}}
+
 			Eventually(func() error {
 				existing := &corev1.Pod{}
 				if err := k8sClient.Get(ctx, types.NamespacedName{
@@ -1243,6 +1305,7 @@ var _ = Describe("PipelineRun Controller", func() {
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace},
 			})
+
 			Expect(err).To(HaveOccurred())
 
 			// Verify Degraded condition is set
@@ -1254,6 +1317,55 @@ var _ = Describe("PipelineRun Controller", func() {
 				degradedCond := meta.FindStatusCondition(pipelineRun.Status.Conditions, ConditionTypeDegraded)
 				return degradedCond != nil && degradedCond.Status == metav1.ConditionTrue
 			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should build streaming Deployment without a ServiceAccountName", func() {
+			// Create a streaming Pipeline
+			pipelineName = fmt.Sprintf("test-pipeline-stream-%d", testCounter)
+			streamPipeline := &pipelinesv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineSpec{
+					Mode: pipelinesv1alpha1.PipelineModeStream,
+					Source: pipelinesv1alpha1.Source{
+						RTSP: &pipelinesv1alpha1.RTSPSource{Host: "rtsp-video-stream", Port: 8554, Path: "/live"},
+					},
+					Filters: []pipelinesv1alpha1.Filter{
+						{Name: "video-in", Image: "busybox:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, streamPipeline)).To(Succeed())
+
+			// Create PipelineRun
+			pipelineRunName = fmt.Sprintf("test-pipelinerun-stream-%d", testCounter)
+			pipelineRun = &pipelinesv1alpha1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineRunName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineRunSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipelineName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
+
+			// Reconcile to create Deployment
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: pipelineRunName, Namespace: namespace}})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Deployment name should be recorded in status
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRunName, Namespace: namespace}, pipelineRun)
+				return err == nil && pipelineRun.Status.Streaming != nil && pipelineRun.Status.Streaming.DeploymentName != ""
+			}, timeout, interval).Should(BeTrue())
+
+			// Deployment should not specify serviceAccountName
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pipelineRun.Status.Streaming.DeploymentName, Namespace: namespace}, dep)).To(Succeed())
+			Expect(dep.Spec.Template.Spec.ServiceAccountName).To(Equal(""))
 		})
 	})
 })

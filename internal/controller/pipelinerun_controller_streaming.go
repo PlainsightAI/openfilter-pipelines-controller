@@ -66,7 +66,7 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 			}
 
 			// Delete the Services (pipeline can be nil during deletion)
-			if err := r.deleteFilterServices(ctx, pipelineRun, pipeline); err != nil {
+			if err := r.deleteFilterServices(ctx, pipelineRun); err != nil {
 				log.Error(err, "Failed to delete filter services")
 				return ctrl.Result{}, err
 			}
@@ -138,7 +138,7 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 			}
 
 			// Delete the Services
-			if err := r.deleteFilterServices(ctx, pipelineRun, pipeline); err != nil {
+			if err := r.deleteFilterServices(ctx, pipelineRun); err != nil {
 				log.Error(err, "Failed to delete services after idle timeout")
 			}
 
@@ -563,7 +563,7 @@ func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipeli
 
 // deleteFilterServices deletes all Services created for this PipelineRun's filters
 // Uses label selectors to find services, so it works even if the Pipeline is deleted
-func (r *PipelineRunReconciler) deleteFilterServices(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) error {
+func (r *PipelineRunReconciler) deleteFilterServices(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) error {
 	log := logf.FromContext(ctx)
 
 	// List all services with the pipelinerun label

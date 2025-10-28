@@ -6,7 +6,7 @@ replicaCount: 1
 
 # Controller image configuration
 image:
-  repository: ghcr.io/plainsightai/openfilter-pipelines-controller
+  repository: plainsightai/openfilter-pipelines-controller
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion
   tag: ""

@@ -41,7 +41,7 @@ The following table lists the main configurable parameters of the chart and thei
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `replicaCount` | Number of controller replicas | `1` |
-| `image.repository` | Controller image repository | `ghcr.io/plainsightai/openfilter-pipelines-controller` |
+| `image.repository` | Controller image repository | `plainsightai/openfilter-pipelines-controller` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `image.tag` | Image tag (defaults to chart appVersion) | `""` |
 

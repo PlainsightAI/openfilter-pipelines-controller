@@ -4,7 +4,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/plainsightai/openfilter-pipelines-controller
+  repository: plainsightai/openfilter-pipelines-controller
   pullPolicy: IfNotPresent
   tag: ""
 

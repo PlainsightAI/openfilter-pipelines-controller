@@ -94,23 +94,43 @@ the project, i.e.:
 kubectl apply -f https://raw.githubusercontent.com/<org>/openfilter-pipelines-controller/<tag or branch>/dist/install.yaml
 ```
 
-### By providing a Helm Chart
+### Using Helm Chart from GitHub Pages
 
-1. Build the chart using the optional helm plugin
+The Helm chart is automatically published to GitHub Pages on each release. To install using Helm:
+
+1. Add the Helm repository:
 
 ```sh
-kubebuilder edit --plugins=helm/v1-alpha
+helm repo add openfilter-pipelines https://plainsightai.github.io/openfilter-pipelines-controller
+helm repo update
 ```
 
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
+2. Install the chart:
 
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
+```sh
+helm install openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
+  --namespace pipelines-system \
+  --create-namespace
+```
+
+3. Install with Valkey enabled (optional):
+
+```sh
+helm install openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
+  --namespace pipelines-system \
+  --create-namespace \
+  --set valkey.enabled=true
+```
+
+4. To upgrade an existing installation:
+
+```sh
+helm repo update
+helm upgrade openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
+  --namespace pipelines-system
+```
+
+For more configuration options, see the [chart values](charts/openfilter-pipelines-controller/values.yaml).
 
 ## Contributing
 

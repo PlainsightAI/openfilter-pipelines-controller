@@ -26,17 +26,21 @@ Versions (repo defaults):
 
 ## Install the Controller (Helm)
 
-Use the Helm chart under `charts/openfilter-pipelines-controller`.
+The Helm chart is published to GitHub Pages for easy installation:
 
 ```bash
+# Add the Helm repository
+helm repo add openfilter-pipelines https://plainsightai.github.io/openfilter-pipelines-controller
+helm repo update
+
 # Install (set your own VALKEY endpoint)
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
   --namespace pipelines-system --create-namespace \
   --set controller.env.VALKEY_ADDR="<host:port>" \
   --set controller.env.VALKEY_PASSWORD=""
 
 # With an in-cluster Valkey (enable the bundled subchart)
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
   --namespace pipelines-system --create-namespace \
   --set valkey.enabled=true
 ```
@@ -191,10 +195,15 @@ kubectl -n <ns> get deploy,pods -l pipelinerun=<run-name>
 We used Helm and kubectl to validate this guide:
 
 ```bash
-# Lint the Helm chart — OK
+# Test the GitHub Pages repository
+helm repo add openfilter-pipelines https://plainsightai.github.io/openfilter-pipelines-controller
+helm repo update
+helm search repo openfilter-pipelines
+
+# For local development: lint the Helm chart — OK
 helm lint charts/openfilter-pipelines-controller
 
-# Render the chart — OK
+# For local development: render the chart — OK
 helm template test charts/openfilter-pipelines-controller >/dev/null
 
 # After installing the chart in your cluster, you can run the demos

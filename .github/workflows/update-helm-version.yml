@@ -54,10 +54,3 @@ jobs:
             automated
             helm
             release
-
-      - name: Enable auto-merge
-        if: steps.cpr.outputs.pull-request-number != ''
-        env:
-          GH_TOKEN: ${{ secrets.GH_BOT_USER_PAT }}
-        run: |
-          gh pr merge ${{ steps.cpr.outputs.pull-request-number }} --auto --squash

@@ -1,0 +1,43 @@
+name: Release Helm Chart
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/openfilter-pipelines-controller/Chart.yaml'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "plainsight-bot"
+          git config user.email "cloudinfra@plainsight.ai"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Update Helm dependencies
+        run: |
+          cd charts/openfilter-pipelines-controller
+          helm dependency update
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        env:
+          CR_TOKEN: "${{ secrets.GH_BOT_USER_PAT }}"
+        with:
+          charts_dir: charts
+          skip_existing: true

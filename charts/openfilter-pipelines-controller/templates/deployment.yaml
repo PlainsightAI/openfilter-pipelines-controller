@@ -46,7 +46,6 @@ spec:
           args:
             {{- if .Values.controller.leaderElection.enabled }}
             - --leader-elect
-            - --leader-elect-id={{ .Values.controller.leaderElection.id }}
             {{- end }}
             {{- if .Values.controller.metrics.enabled }}
             - --metrics-bind-address=:{{ .Values.controller.metrics.port }}
@@ -95,10 +94,32 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
-          {{- with .Values.env }}
           env:
+            {{- if .Values.valkey.enabled }}
+            - name: VALKEY_ADDR
+              value: {{ include "openfilter-pipelines-controller.fullname" . }}-valkey-primary:6379
+            {{- if .Values.valkey.auth.enabled }}
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openfilter-pipelines-controller.fullname" . }}-valkey
+                  key: valkey-password
+            {{- end }}
+            {{- end }}
+            {{- if .Values.valkey.externalValkey.enabled }}
+            - name: VALKEY_ADDR
+              value: {{ .Values.valkey.externalValkey.host }}:{{ .Values.valkey.externalValkey.port }}
+            {{- if .Values.valkey.externalValkey.password }}
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.valkey.externalValkey.existingSecret }}
+                  key: {{ .Values.valkey.externalValkey.existingSecretPasswordKey }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
       {{- if or .Values.volumes .Values.controller.webhook.enabled }}
       volumes:
         {{- if .Values.controller.webhook.enabled }}

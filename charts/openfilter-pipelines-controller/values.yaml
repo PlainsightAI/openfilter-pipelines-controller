@@ -135,8 +135,9 @@ args: []
 # Valkey (Redis alternative) configuration
 # See https://artifacthub.io/packages/helm/bitnami/valkey for all options
 valkey:
-  # Enable Valkey installation
-  enabled: false
+  # Enable built-in Valkey installation
+  # Set to false if using an external Valkey instance
+  enabled: true
 
   # Valkey architecture (standalone or replication)
   architecture: standalone
@@ -173,3 +174,14 @@ valkey:
       requests:
         cpu: 100m
         memory: 128Mi
+
+  # External Valkey configuration
+  # Use this to connect to an existing Valkey instance instead of deploying one
+  externalValkey:
+    enabled: false
+    host: ""
+    port: 6379
+    password: false
+    # If password is true, specify the secret containing the password
+    existingSecret: ""
+    existingSecretPasswordKey: "password"

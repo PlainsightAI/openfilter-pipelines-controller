@@ -5,3 +5,10 @@ metadata:
 spec:
   pipelineRef:
     name: pipeline-rtsp
+  source:
+    rtsp:
+      host: rtsp-video-stream
+      port: 8554
+      path: /stream
+      # credentialsSecret:
+      #   name: axis-rtsp-credentials

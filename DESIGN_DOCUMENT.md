@@ -47,36 +47,8 @@ kind: Pipeline
 metadata:
   name: <pipeline-name>
 spec:
-  # source defines where to read input files from
-  source:
-    bucket:
-      # name is the S3-compatible bucket name (required)
-      name: my-input-bucket
-
-      # prefix is an optional path prefix within the bucket (e.g., "input-data/")
-      prefix: "images/"
-
-      # endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
-      # Leave empty for AWS S3 (will use default AWS endpoints)
-      # Examples: "storage.googleapis.com", "http://minio.example.com:9000"
-      endpoint: "storage.googleapis.com"
-
-      # region is the bucket region (e.g., "us-east-1")
-      # Required for AWS S3, optional for other providers
-      region: "us-east-1"
-
-      # credentialsSecret references a Secret containing access credentials
-      # Expected keys: "accessKeyId" and "secretAccessKey"
-      credentialsSecret:
-        name: s3-credentials
-        namespace: default  # optional, defaults to Pipeline namespace
-
-      # insecureSkipTLSVerify skips TLS certificate verification (useful for dev/test)
-      insecureSkipTLSVerify: false
-
-      # usePathStyle forces path-style addressing (endpoint.com/bucket vs bucket.endpoint.com)
-      # Required for MinIO and some S3-compatible services
-      usePathStyle: false
+  # mode defines the processing mode: batch or stream
+  # mode: batch  # default
 
   # filters is an ordered list of processing steps (executed sequentially)
   # At least one filter is required
@@ -123,6 +95,39 @@ spec:
   pipelineRef:
     name: <pipeline-name>
     namespace: default  # optional, defaults to PipelineRun namespace
+
+  # source defines where to read input files from (moved from Pipeline for reusability)
+  # For Batch mode: source.bucket is required
+  # For Stream mode: source.rtsp is required
+  source:
+    bucket:
+      # name is the S3-compatible bucket name (required)
+      name: my-input-bucket
+
+      # prefix is an optional path prefix within the bucket (e.g., "input-data/")
+      prefix: "images/"
+
+      # endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
+      # Leave empty for AWS S3 (will use default AWS endpoints)
+      # Examples: "storage.googleapis.com", "http://minio.example.com:9000"
+      endpoint: "storage.googleapis.com"
+
+      # region is the bucket region (e.g., "us-east-1")
+      # Required for AWS S3, optional for other providers
+      region: "us-east-1"
+
+      # credentialsSecret references a Secret containing access credentials
+      # Expected keys: "accessKeyId" and "secretAccessKey"
+      credentialsSecret:
+        name: s3-credentials
+        namespace: default  # optional, defaults to PipelineRun namespace
+
+      # insecureSkipTLSVerify skips TLS certificate verification (useful for dev/test)
+      insecureSkipTLSVerify: false
+
+      # usePathStyle forces path-style addressing (endpoint.com/bucket vs bucket.endpoint.com)
+      # Required for MinIO and some S3-compatible services
+      usePathStyle: false
 
   # execution defines how the pipeline should be executed
   execution:
@@ -267,25 +272,25 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: S3_BUCKET
-              value: "{{ pipeline.spec.source.bucket.name }}"
+              value: "{{ pipelineRun.spec.source.bucket.name }}"
             - name: S3_ENDPOINT
-              value: "{{ pipeline.spec.source.bucket.endpoint }}"
+              value: "{{ pipelineRun.spec.source.bucket.endpoint }}"
             - name: S3_REGION
-              value: "{{ pipeline.spec.source.bucket.region }}"
+              value: "{{ pipelineRun.spec.source.bucket.region }}"
             - name: S3_USE_PATH_STYLE
-              value: "{{ pipeline.spec.source.bucket.usePathStyle }}"
+              value: "{{ pipelineRun.spec.source.bucket.usePathStyle }}"
             - name: S3_INSECURE_SKIP_TLS_VERIFY
-              value: "{{ pipeline.spec.source.bucket.insecureSkipTLSVerify }}"
+              value: "{{ pipelineRun.spec.source.bucket.insecureSkipTLSVerify }}"
             # S3 credentials from secret (if configured)
             - name: S3_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: "{{ pipeline.spec.source.bucket.credentialsSecret.name }}"
+                  name: "{{ pipelineRun.spec.source.bucket.credentialsSecret.name }}"
                   key: accessKeyId
             - name: S3_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: "{{ pipeline.spec.source.bucket.credentialsSecret.name }}"
+                  name: "{{ pipelineRun.spec.source.bucket.credentialsSecret.name }}"
                   key: secretAccessKey
           volumeMounts:
             - name: workspace
@@ -356,7 +361,7 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
 1. Fetch referenced Pipeline resource
 2. Create Valkey stream and consumer group (idempotent via `XGROUP CREATE MKSTREAM`)
 3. Check stream length; if 0, proceed with file enumeration:
-   - Get S3 credentials from Pipeline's credentialsSecret
+   - Get S3 credentials from PipelineRun's source.bucket.credentialsSecret
    - List bucket files using `minio.ListObjects` (streaming, non-buffered)
    - For each file: `XADD <stream> * run <runId> file <filepath> attempts 0`
 4. Set `status.counts.totalFiles` from final stream length

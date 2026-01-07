@@ -6,15 +6,6 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-with-config-example
 spec:
-  source:
-    bucket:
-      name: my-bucket
-      prefix: input/
-      endpoint: s3.amazonaws.com
-      region: us-east-1
-      credentialsSecret:
-        name: s3-credentials
-
   videoInputPath: /ws/input.mp4
 
   filters:

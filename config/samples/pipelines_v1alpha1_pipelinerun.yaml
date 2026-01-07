@@ -9,6 +9,13 @@ metadata:
 spec:
   pipelineRef:
     name: pipeline-sample
+  source:
+    bucket:
+      name: cow-demo-development
+      prefix: videos
+      endpoint: storage.googleapis.com
+      credentialsSecret:
+        name: gcs-credentials
   execution:
     parallelism: 1
     maxAttempts: 3

@@ -6,10 +6,4 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-gcs-sample
 spec:
-  source:
-    bucket:
-      name: my-gcs-bucket
-      prefix: pipeline-inputs/
-      endpoint: https://storage.googleapis.com
-      credentialsSecret:
-        name: gcs-s3-credentials
+  filters: []

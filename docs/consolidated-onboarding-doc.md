@@ -48,7 +48,7 @@ docker run --rm -it --platform linux/amd64   jrottenberg/ffmpeg:6.1-alpine   -re
 Continuously publishes a color‑bar test video into the RTSP demo server at path `/stream`.
 
 **Why the docs need it:**  
-Stream mode needs `spec.source.rtsp` to be a real, live RTSP stream. This is your live input.
+Stream mode needs the PipelineRun's `spec.source.rtsp` to be a real, live RTSP stream. This is your live input.
 
 ---
 
@@ -111,15 +111,16 @@ Leave it running.
 kubectl -n openfilter-system apply -f demo/pipeline_rtsp.yaml
 ```
 
-**What this does:**  
+**What this does:**
 Creates a Pipeline CR declaring:
 - `spec.mode: stream`
-- RTSP source (`spec.source.rtsp`)
 - ordered filters (`spec.filters[]`), typically:
-  - `video-in` (reads RTSP)
+  - `video-in` (reads RTSP via `$(RTSP_URL)`)
   - `face-blur` (processes frames)
   - `webvis` (renders output)
 - `spec.services[]` to expose webvis port 8080
+
+Note: The RTSP source is defined in the PipelineRun, not the Pipeline.
 
 ---
 
@@ -164,8 +165,8 @@ Expected line:
 video open: rtsp://rtsp-video-stream:8554/stream (30.0 fps)
 ```
 
-**What this proves (docs):**  
-The required `spec.source.rtsp` input is valid and producing frames.
+**What this proves (docs):**
+The PipelineRun's `spec.source.rtsp` input is valid and producing frames.
 
 ---
 

@@ -8,18 +8,6 @@ metadata:
   namespace: default
 spec:
   videoInputPath: /ws/input.mp4
-  source:
-    bucket:
-      name: cow-demo-development
-      prefix: videos
-      endpoint: storage.googleapis.com
-      credentialsSecret:
-        name: gcs-credentials
-
-  execution:
-    parallelism: 1
-    maxAttempts: 1
-    pendingTimeout: 1m
 
   filters:
     - name: intentional-failure

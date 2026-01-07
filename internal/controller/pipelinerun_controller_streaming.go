@@ -123,8 +123,8 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 	}
 
 	// Step 3: Check for idle timeout
-	if pipeline.Spec.Source.RTSP != nil && pipeline.Spec.Source.RTSP.IdleTimeout != nil {
-		if shouldComplete, reason := r.checkIdleTimeout(pipelineRun, pipeline); shouldComplete {
+	if pipelineRun.Spec.Source.RTSP != nil && pipelineRun.Spec.Source.RTSP.IdleTimeout != nil {
+		if shouldComplete, reason := r.checkIdleTimeout(pipelineRun); shouldComplete {
 			log.Info("Streaming run idle timeout reached, marking as complete", "reason", reason)
 			r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionTrue, "IdleTimeout", reason)
 			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "IdleTimeout", reason)
@@ -231,11 +231,11 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 
 		// Inject RTSP environment variables first so they can be referenced in filter config
 		var envVars []corev1.EnvVar
-		if pipeline.Spec.Source.RTSP != nil {
+		if pipelineRun.Spec.Source.RTSP != nil {
 			// If credentials are provided, inject internal env vars for username/password
 			// and build URL with embedded credentials
-			if pipeline.Spec.Source.RTSP.CredentialsSecret != nil {
-				secretName := pipeline.Spec.Source.RTSP.CredentialsSecret.Name
+			if pipelineRun.Spec.Source.RTSP.CredentialsSecret != nil {
+				secretName := pipelineRun.Spec.Source.RTSP.CredentialsSecret.Name
 				// Internal env vars for credential substitution
 				envVars = append(envVars,
 					corev1.EnvVar{
@@ -258,14 +258,14 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 					},
 				)
 				// Build URL with credential placeholders
-				rtspURL := buildRTSPURLWithCredentials(pipeline.Spec.Source.RTSP)
+				rtspURL := buildRTSPURLWithCredentials(pipelineRun.Spec.Source.RTSP)
 				envVars = append(envVars, corev1.EnvVar{
 					Name:  "RTSP_URL",
 					Value: rtspURL,
 				})
 			} else {
 				// No credentials, build simple URL
-				rtspURL := buildRTSPURL(pipeline.Spec.Source.RTSP)
+				rtspURL := buildRTSPURL(pipelineRun.Spec.Source.RTSP)
 				envVars = append(envVars, corev1.EnvVar{
 					Name:  "RTSP_URL",
 					Value: rtspURL,
@@ -378,8 +378,8 @@ func (r *PipelineRunReconciler) updateStreamingStatus(ctx context.Context, pipel
 }
 
 // checkIdleTimeout checks if the streaming run should complete due to idle timeout
-func (r *PipelineRunReconciler) checkIdleTimeout(pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (bool, string) {
-	if pipeline.Spec.Source.RTSP == nil || pipeline.Spec.Source.RTSP.IdleTimeout == nil {
+func (r *PipelineRunReconciler) checkIdleTimeout(pipelineRun *pipelinesv1alpha1.PipelineRun) (bool, string) {
+	if pipelineRun.Spec.Source.RTSP == nil || pipelineRun.Spec.Source.RTSP.IdleTimeout == nil {
 		return false, ""
 	}
 
@@ -388,7 +388,7 @@ func (r *PipelineRunReconciler) checkIdleTimeout(pipelineRun *pipelinesv1alpha1.
 		return false, ""
 	}
 
-	idleTimeout := pipeline.Spec.Source.RTSP.IdleTimeout.Duration
+	idleTimeout := pipelineRun.Spec.Source.RTSP.IdleTimeout.Duration
 
 	// Check if all replicas are unready
 	if pipelineRun.Status.Streaming.ReadyReplicas > 0 {

@@ -3,20 +3,7 @@ kind: Pipeline
 metadata:
   name: pipeline-rtsp-authenticated
 spec:
-  mode: Stream
-
-  source:
-    rtsp:
-      # RTSP server configuration
-      host: camera.example.com
-      port: 554
-      path: /stream1
-
-      # Reference to a Secret containing RTSP credentials
-      # The Secret must have keys: username and password
-      credentialsSecret:
-        name: rtsp-camera-credentials
-        # namespace: other-namespace  # optional, defaults to Pipeline's namespace
+  mode: stream
 
   filters:
     - name: video-in

@@ -6,13 +6,6 @@ spec:
   # Stream mode: processes RTSP streams using a Deployment
   mode: Stream
 
-  source:
-    # RTSP source configuration
-    rtsp:
-      host: camera.example.com
-      port: 554
-      path: /stream1
-
   # Filters process the RTSP stream
   filters:
     - name: video-in

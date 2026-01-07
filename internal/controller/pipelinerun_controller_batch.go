@@ -46,7 +46,7 @@ func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun 
 		pipelineRun.Status.Counts = &pipelinesv1alpha1.FileCounts{}
 	}
 
-	initialized, err := r.initializePipelineRun(ctx, pipelineRun, pipeline)
+	initialized, err := r.initializePipelineRun(ctx, pipelineRun)
 	if err != nil {
 		log.Error(err, "Failed to initialize PipelineRun")
 		return ctrl.Result{}, err
@@ -160,7 +160,7 @@ func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun 
 // work items, and seeds status counters. The logic is safe to call multiple times;
 // after successful initialization it becomes a no-op. On error it returns a
 // non-nil error so the reconciliation loop can retry.
-func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (bool, error) {
+func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) (bool, error) {
 	log := logf.FromContext(ctx)
 
 	// If StartTime is already set, initialization has completed previously.
@@ -205,7 +205,7 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 	runID := pipelineRun.GetRunID()
 
 	if currentLength == 0 {
-		accessKey, secretKey, credErr := r.getCredentials(ctx, pipeline)
+		accessKey, secretKey, credErr := r.getCredentials(ctx, pipelineRun)
 		if credErr != nil {
 			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "CredentialsError", credErr.Error())
 			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "CredentialsError", "PipelineRun cannot access object storage credentials")
@@ -215,7 +215,7 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 			return false, fmt.Errorf("failed to get S3 credentials: %w", credErr)
 		}
 
-		files, listErr := r.listBucketFiles(ctx, pipeline, accessKey, secretKey)
+		files, listErr := r.listBucketFiles(ctx, pipelineRun, accessKey, secretKey)
 		if listErr != nil {
 			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "ListingFailed", listErr.Error())
 			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "ListingFailed", "PipelineRun cannot enumerate input files")
@@ -365,10 +365,10 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 
 	log.V(1).Info("Building job", "totalFiles", totalFiles, "parallelism", parallelism)
 
-	// Get S3 credentials from Pipeline
+	// Get S3 credentials from PipelineRun
 	var s3SecretName string
-	if pipeline.Spec.Source.Bucket != nil && pipeline.Spec.Source.Bucket.CredentialsSecret != nil {
-		s3SecretName = pipeline.Spec.Source.Bucket.CredentialsSecret.Name
+	if pipelineRun.Spec.Source.Bucket != nil && pipelineRun.Spec.Source.Bucket.CredentialsSecret != nil {
+		s3SecretName = pipelineRun.Spec.Source.Bucket.CredentialsSecret.Name
 	}
 
 	// Build claimer init container env vars
@@ -388,13 +388,13 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 	}
 
 	// Add S3 config if bucket source is configured
-	if pipeline.Spec.Source.Bucket != nil {
+	if pipelineRun.Spec.Source.Bucket != nil {
 		claimerEnv = append(claimerEnv, []corev1.EnvVar{
-			{Name: "S3_BUCKET", Value: pipeline.Spec.Source.Bucket.Name},
-			{Name: "S3_ENDPOINT", Value: pipeline.Spec.Source.Bucket.Endpoint},
-			{Name: "S3_REGION", Value: pipeline.Spec.Source.Bucket.Region},
-			{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", pipeline.Spec.Source.Bucket.UsePathStyle)},
-			{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", pipeline.Spec.Source.Bucket.InsecureSkipTLSVerify)},
+			{Name: "S3_BUCKET", Value: pipelineRun.Spec.Source.Bucket.Name},
+			{Name: "S3_ENDPOINT", Value: pipelineRun.Spec.Source.Bucket.Endpoint},
+			{Name: "S3_REGION", Value: pipelineRun.Spec.Source.Bucket.Region},
+			{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", pipelineRun.Spec.Source.Bucket.UsePathStyle)},
+			{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", pipelineRun.Spec.Source.Bucket.InsecureSkipTLSVerify)},
 		}...)
 	}
 

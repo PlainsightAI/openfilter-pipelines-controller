@@ -59,13 +59,14 @@ These fields come from the CRD types in `api/v1alpha1/` and the controller code 
 - Purpose: process files from object storage using one Kubernetes Job.
 - Work queue: Valkey Streams (required).
 - Required Pipeline inputs:
+  - `spec.filters[]`: ordered container steps. Each filter supports `image`, optional `command`, `args`, `env`, `resources`, and `config` (becomes `FILTER_<NAME>=<value>` envs).
+  - Optional: `spec.videoInputPath` (default `/ws/input.mp4`), path where the init "claimer" stages the file.
+- Required PipelineRun inputs:
   - `spec.source.bucket`:
     - `name` (string): bucket/container name.
     - Optional: `prefix` (string), `endpoint` (URL; use for MinIO/GCS/Azure S3-compat), `region`, `insecureSkipTLSVerify` (bool), `usePathStyle` (bool).
     - Optional `credentialsSecret`: Secret reference with keys `accessKeyId` and `secretAccessKey` (S3-compatible credentials).
-  - `spec.filters[]`: ordered container steps. Each filter supports `image`, optional `command`, `args`, `env`, `resources`, and `config` (becomes `FILTER_<NAME>=<value>` envs).
-  - Optional: `spec.videoInputPath` (default `/ws/input.mp4`), path where the init “claimer” stages the file.
-- PipelineRun controls:
+- PipelineRun execution controls:
   - `spec.execution.parallelism` (default 10)
   - `spec.execution.maxAttempts` (default 3)
   - `spec.execution.pendingTimeout` (default 15m; reclaim stale work)
@@ -75,13 +76,13 @@ These fields come from the CRD types in `api/v1alpha1/` and the controller code 
 - Purpose: process a live RTSP source via a single-replica Deployment.
 - No Valkey queue; runs continuously (or until idle timeout fires).
 - Required Pipeline inputs:
+  - `spec.filters[]`: containers build the streaming pipeline; use `$(RTSP_URL)` in a filter config value to consume the injected URL.
+  - Optional: `spec.services[]`: expose specific ports from filters as Services. Each entry has `name` (filter name), `port`, optional `targetPort` and `protocol`. Services are named `<pipelinerun-name>-<filter-name>-<index>`.
+- Required PipelineRun inputs:
   - `spec.source.rtsp`:
     - `host` (string), `port` (default 554), `path` (string)
     - Optional `credentialsSecret`: Secret with keys `username` and `password` (controller injects `_RTSP_USERNAME/_RTSP_PASSWORD` and expands `RTSP_URL`).
     - Optional `idleTimeout` (duration): if the streaming pod remains Unready for this long, the controller marks the run complete and deletes the Deployment.
-  - `spec.filters[]`: containers build the streaming pipeline; use `$(RTSP_URL)` in a filter config value to consume the injected URL.
-  - Optional: `spec.services[]`: expose specific ports from filters as Services. Each entry has `name` (filter name), `port`, optional `targetPort` and `protocol`. Services are named `<pipelinerun-name>-<filter-name>-<index>`.
-- PipelineRun: minimal; only references the Pipeline.
 
 ## Quickstarts
 

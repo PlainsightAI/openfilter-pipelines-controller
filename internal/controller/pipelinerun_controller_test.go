@@ -214,13 +214,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineSpec{
 					VideoInputPath: "/ws/custom-input.mp4",
-					Source: pipelinesv1alpha1.Source{
-						Bucket: &pipelinesv1alpha1.BucketSource{
-							Name:     "test-bucket",
-							Endpoint: "http://minio:9000",
-							Region:   "us-east-1",
-						},
-					},
 					Filters: []pipelinesv1alpha1.Filter{
 						{
 							Name:  "test-filter",
@@ -302,6 +295,13 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
@@ -334,6 +334,13 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
+					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
 					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						Parallelism: ptr.To(int32(5)),
@@ -404,6 +411,13 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
@@ -460,6 +474,13 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
+					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
 					},
 				},
 			}
@@ -570,6 +591,13 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
+					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
 					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						MaxAttempts: ptr.To(int32(3)),
@@ -682,6 +710,13 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
+					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						MaxAttempts: ptr.To(int32(3)),
 					},
@@ -793,6 +828,13 @@ var _ = Describe("PipelineRun Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())
@@ -838,6 +880,13 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
+					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
 					},
 				},
 			}
@@ -929,6 +978,13 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
+					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
 					},
 				},
 			}
@@ -1030,6 +1086,13 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
+					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
 					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						MaxAttempts: ptr.To(int32(3)),
@@ -1167,6 +1230,13 @@ var _ = Describe("PipelineRun Controller", func() {
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
+					},
+					Source: pipelinesv1alpha1.Source{
+						Bucket: &pipelinesv1alpha1.BucketSource{
+							Name:     "test-bucket",
+							Endpoint: "http://minio:9000",
+							Region:   "us-east-1",
+						},
 					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
 						MaxAttempts: ptr.To(int32(2)),
@@ -1329,9 +1399,6 @@ var _ = Describe("PipelineRun Controller", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineSpec{
 					Mode: pipelinesv1alpha1.PipelineModeStream,
-					Source: pipelinesv1alpha1.Source{
-						RTSP: &pipelinesv1alpha1.RTSPSource{Host: "rtsp-video-stream", Port: 8554, Path: "/live"},
-					},
 					Filters: []pipelinesv1alpha1.Filter{
 						{Name: "video-in", Image: "busybox:latest"},
 					},
@@ -1348,6 +1415,9 @@ var _ = Describe("PipelineRun Controller", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineRunSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipelineName},
+					Source: pipelinesv1alpha1.Source{
+						RTSP: &pipelinesv1alpha1.RTSPSource{Host: "rtsp-video-stream", Port: 8554, Path: "/live"},
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pipelineRun)).To(Succeed())

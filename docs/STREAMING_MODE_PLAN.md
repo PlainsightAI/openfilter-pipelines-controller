@@ -5,7 +5,7 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
 ## Summary
 - Mode is defined on `Pipeline.spec.mode` (`Batch` default, `Stream` alternative).
 - `Stream` mode uses a `Deployment` per `PipelineRun` with `replicas: 1`.
-- RTSP source configuration lives in `Pipeline.spec.source.rtsp`.
+- RTSP source configuration lives in `PipelineRun.spec.source.rtsp` (allows reusing the same Pipeline with different sources).
 - The controller injects `RTSP_URL` and (optional) credentials as env vars for filters to consume directly (e.g., the `video-in` filter sets `sources=$(RTSP_URL)` or a full `rtsp://username:password@host:port/path`). No ingest sidecar is required.
 - Optional `idleTimeout` can complete and clean up a streaming run when the stream is idle for a configured duration.
 
@@ -15,17 +15,18 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
 - Add `spec.mode`:
   - Enum: `Batch | Stream`.
   - Default: `Batch`.
-- Add `spec.source.rtsp` (mutually exclusive with `spec.source.bucket`):
-  - `url` (string, required)
-  - `credentialsSecret` (optional; keys: `username`, `password`)
-  - `transport` (optional; enum: `tcp|udp|auto`, default `tcp`)
-  - `idleTimeout` (optional `metav1.Duration`): continuous Unready ≥ idleTimeout → controller completes the run and deletes the Deployment.
-- Validation (controller-level with CRD hints):
-  - If `mode=Batch`: require `source.bucket`, forbid `source.rtsp`.
-  - If `mode=Stream`: require `source.rtsp`, forbid `source.bucket`.
+- No `source` field (moved to PipelineRun for reusability).
 
 ### PipelineRun (api/v1alpha1/pipelinerun_types.go)
-- No new spec fields (no `replicas` knob).
+- Add `spec.source` (required):
+  - For Batch mode: `spec.source.bucket` (mutually exclusive with `rtsp`)
+  - For Stream mode: `spec.source.rtsp` (mutually exclusive with `bucket`)
+    - `host` (string, required), `port` (int, default 554), `path` (string, required)
+    - `credentialsSecret` (optional; keys: `username`, `password`)
+    - `idleTimeout` (optional `metav1.Duration`): continuous Unready ≥ idleTimeout → controller completes the run and deletes the Deployment.
+- Validation (controller-level):
+  - If Pipeline `mode=Batch`: require `source.bucket`, forbid `source.rtsp`.
+  - If Pipeline `mode=Stream`: require `source.rtsp`, forbid `source.bucket`.
 - Optional `status.streaming` block for observability:
   - `readyReplicas`, `updatedReplicas`, `availableReplicas`
   - `containerRestarts` (aggregate), `lastReadyTime`, `lastFrameAt` (best-effort)
@@ -68,10 +69,11 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
 ## Samples
 - `config/samples/pipeline_rtsp.yaml` (mode: Stream):
   - `spec.mode: Stream`
-  - `spec.source.rtsp.url: rtsp://...`
-  - Optional `credentialsSecret`
   - Filters set the `video-in` source to RTSP, e.g. `config: - name: sources value: $(RTSP_URL)` (or a full `rtsp://username:password@host:port/path`).
-- `config/samples/pipelinerun_stream.yaml`: minimal `PipelineRun` referencing the Pipeline.
+- `config/samples/pipelinerun_stream.yaml`:
+  - References the Pipeline
+  - `spec.source.rtsp` with `host`, `port`, `path`
+  - Optional `credentialsSecret`
 
 ## Testing
 - Unit tests:

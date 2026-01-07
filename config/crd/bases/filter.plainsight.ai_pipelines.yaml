@@ -378,115 +378,6 @@ spec:
                   - port
                   type: object
                 type: array
-              source:
-                description: |-
-                  source defines the input source for the pipeline
-                  For Batch mode: source.bucket is required, source.rtsp is forbidden
-                  For Stream mode: source.rtsp is required, source.bucket is forbidden
-                properties:
-                  bucket:
-                    description: |-
-                      bucket defines an S3-compatible object storage source
-                      Required when mode is Batch, forbidden when mode is Stream
-                    properties:
-                      credentialsSecret:
-                        description: |-
-                          credentialsSecret references a Secret containing access credentials
-                          Expected keys: "accessKeyId" and "secretAccessKey"
-                        properties:
-                          name:
-                            description: name is the name of the secret
-                            type: string
-                          namespace:
-                            description: |-
-                              namespace is the namespace of the secret
-                              If empty, uses the same namespace as the Pipeline resource
-                            type: string
-                        required:
-                        - name
-                        type: object
-                      endpoint:
-                        description: |-
-                          endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
-                          Examples:
-                            - MinIO: "http://minio.example.com:9000"
-                            - GCS: "https://storage.googleapis.com"
-                            - Custom S3: "https://s3.custom.example.com"
-                          Leave empty for AWS S3 (will use default AWS endpoints)
-                        type: string
-                      insecureSkipTLSVerify:
-                        default: false
-                        description: insecureSkipTLSVerify skips TLS certificate verification
-                          (useful for dev/test)
-                        type: boolean
-                      name:
-                        description: name is the name of the S3-compatible bucket
-                        minLength: 1
-                        type: string
-                      prefix:
-                        description: prefix is an optional path prefix within the
-                          bucket (e.g., "input-data/")
-                        type: string
-                      region:
-                        description: |-
-                          region is the bucket region (e.g., "us-east-1")
-                          Required for AWS S3, optional for other providers
-                        type: string
-                      usePathStyle:
-                        default: false
-                        description: |-
-                          usePathStyle forces path-style addressing (endpoint.com/bucket vs bucket.endpoint.com)
-                          Required for MinIO and some S3-compatible services
-                        type: boolean
-                    required:
-                    - name
-                    type: object
-                  rtsp:
-                    description: |-
-                      rtsp defines an RTSP stream source
-                      Required when mode is Stream, forbidden when mode is Batch
-                    properties:
-                      credentialsSecret:
-                        description: |-
-                          credentialsSecret references a Secret containing RTSP credentials
-                          Expected keys: "username" and "password"
-                        properties:
-                          name:
-                            description: name is the name of the secret
-                            type: string
-                          namespace:
-                            description: |-
-                              namespace is the namespace of the secret
-                              If empty, uses the same namespace as the Pipeline resource
-                            type: string
-                        required:
-                        - name
-                        type: object
-                      host:
-                        description: host is the RTSP server hostname or IP address
-                        minLength: 1
-                        type: string
-                      idleTimeout:
-                        description: |-
-                          idleTimeout defines the duration after which a continuously unready stream
-                          will cause the PipelineRun to complete and the Deployment to be deleted.
-                          If not set, the stream will run indefinitely.
-                        type: string
-                      path:
-                        description: path is the RTSP stream path (e.g., "/stream1",
-                          "/live/camera1")
-                        type: string
-                      port:
-                        default: 554
-                        description: port is the RTSP server port
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
-                    required:
-                    - host
-                    type: object
-                type: object
               videoInputPath:
                 default: /ws/input.mp4
                 description: |-
@@ -496,8 +387,6 @@ spec:
                   Only applies to Batch mode.
                 minLength: 1
                 type: string
-            required:
-            - source
             type: object
           status:
             description: status defines the observed state of Pipeline

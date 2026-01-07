@@ -161,20 +161,20 @@ func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 // - pipelinerun_controller_batch.go
 // - pipelinerun_controller_streaming.go
 
-// getCredentials retrieves S3 credentials for the pipeline source secret, if configured.
-func (r *PipelineRunReconciler) getCredentials(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline) (string, string, error) {
-	if pipeline.Spec.Source.Bucket == nil {
+// getCredentials retrieves S3 credentials for the pipelineRun source secret, if configured.
+func (r *PipelineRunReconciler) getCredentials(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) (string, string, error) {
+	if pipelineRun.Spec.Source.Bucket == nil {
 		return "", "", nil
 	}
 
-	secretRef := pipeline.Spec.Source.Bucket.CredentialsSecret
+	secretRef := pipelineRun.Spec.Source.Bucket.CredentialsSecret
 	if secretRef == nil {
 		return "", "", nil
 	}
 
 	namespace := secretRef.Namespace
 	if namespace == "" {
-		namespace = pipeline.Namespace
+		namespace = pipelineRun.Namespace
 	}
 
 	secret := &corev1.Secret{}
@@ -192,13 +192,13 @@ func (r *PipelineRunReconciler) getCredentials(ctx context.Context, pipeline *pi
 	return accessKey, secretKey, nil
 }
 
-// listBucketFiles lists objects available to process for the pipeline source configuration.
-func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline, accessKey, secretKey string) ([]string, error) {
-	if pipeline.Spec.Source.Bucket == nil {
-		return nil, fmt.Errorf("pipeline has no bucket source configured")
+// listBucketFiles lists objects available to process for the pipelineRun source configuration.
+func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, accessKey, secretKey string) ([]string, error) {
+	if pipelineRun.Spec.Source.Bucket == nil {
+		return nil, fmt.Errorf("pipelineRun has no bucket source configured")
 	}
 
-	bucket := pipeline.Spec.Source.Bucket
+	bucket := pipelineRun.Spec.Source.Bucket
 
 	endpoint := bucket.Endpoint
 	useSSL := true

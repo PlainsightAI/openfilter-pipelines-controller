@@ -58,6 +58,12 @@ type PipelineRunSpec struct {
 	// execution defines how the pipeline should be executed
 	// +optional
 	Execution *ExecutionConfig `json:"execution,omitempty"`
+
+	// source defines the input source for the pipeline run
+	// For Batch mode: source.bucket is required, source.rtsp is forbidden
+	// For Stream mode: source.rtsp is required, source.bucket is forbidden
+	// +kubebuilder:validation:Required
+	Source Source `json:"source"`
 }
 
 // PipelineReference defines a reference to a Pipeline resource

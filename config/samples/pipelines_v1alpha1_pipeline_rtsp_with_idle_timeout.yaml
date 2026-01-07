@@ -4,18 +4,7 @@ metadata:
   name: pipeline-rtsp-with-timeout
 spec:
   # Stream mode with idle timeout
-  mode: Stream
-
-  source:
-    rtsp:
-      # RTSP server configuration
-      host: camera.example.com
-      port: 554
-      path: /stream1
-
-      # Complete the run if stream is unready for 5 minutes
-      # This is useful for temporary streams or testing scenarios
-      idleTimeout: 5m
+  mode: stream
 
   filters:
     - name: video-in

@@ -27,3 +27,5 @@ go.work
 *.swo
 *~
 .secrets
+
+.claude/settings.local.json

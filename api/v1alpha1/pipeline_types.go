@@ -232,12 +232,6 @@ type PipelineSpec struct {
 	// +kubebuilder:default=batch
 	Mode PipelineMode `json:"mode,omitempty"`
 
-	// source defines the input source for the pipeline
-	// For Batch mode: source.bucket is required, source.rtsp is forbidden
-	// For Stream mode: source.rtsp is required, source.bucket is forbidden
-	// +kubebuilder:validation:Required
-	Source Source `json:"source"`
-
 	// filters is an ordered list of processing steps to apply to the input data
 	// Filters are executed sequentially in the order they are defined
 	// +optional

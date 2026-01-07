@@ -5,3 +5,8 @@ metadata:
 spec:
   pipelineRef:
     name: pipeline-rtsp-sg
+  source:
+    rtsp:
+      host: camera.example.com
+      port: 554
+      path: /stream1

@@ -148,8 +148,9 @@ helm uninstall openfilter-pipelines-controller
 **Note:** By default, CRDs are kept on uninstall to prevent data loss. To remove CRDs manually:
 
 ```bash
-kubectl delete crd filter.plainsight.ai
-kubectl delete crd pipelineruns.plainsight.ai
+kubectl delete crd pipelines.filter.plainsight.ai
+kubectl delete crd pipelinesources.filter.plainsight.ai
+kubectl delete crd pipelineinstances.filter.plainsight.ai
 ```
 
 ## Development

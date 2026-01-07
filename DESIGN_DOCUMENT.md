@@ -2,7 +2,7 @@
 
 ## 1. Summary
 
-We're building a Kubernetes-native batch executor that processes large file sets through a configurable pipeline of containerized filters. Users create a Pipeline CRD (defining input bucket and filters) and a PipelineRun CRD (referencing the pipeline with execution parameters). The PipelineRun controller reconciles by: (1) listing files from S3-compatible storage, (2) enqueuing one Valkey Stream message per file, (3) creating exactly one Kubernetes Job whose pods each process one message via an init container that claims + downloads, then filter containers run, and (4) watching pod completions to ACK messages and handle retries/DLQ.
+We're building a Kubernetes-native batch executor that processes large file sets through a configurable pipeline of containerized filters. Users create a Pipeline CRD (defining filters), a PipelineSource CRD (defining input source like S3 bucket or RTSP stream), and a PipelineInstance CRD (referencing both Pipeline and PipelineSource with execution parameters). The PipelineInstance controller reconciles by: (1) listing files from S3-compatible storage, (2) enqueuing one Valkey Stream message per file, (3) creating exactly one Kubernetes Job whose pods each process one message via an init container that claims + downloads, then filter containers run, and (4) watching pod completions to ACK messages and handle retries/DLQ.
 
 ### Key Attributes
 
@@ -17,9 +17,10 @@ We're building a Kubernetes-native batch executor that processes large file sets
 ### Goals
 
 - Fully declarative Kubernetes-native workflow via CRDs
-- Pipeline defined as a CRD with input source (S3-compatible bucket) and ordered filters
-- PipelineRun CRD references a Pipeline and provides execution parameters
-- PipelineRun controller handles:
+- Pipeline defined as a CRD with ordered filters
+- PipelineSource CRD defines input source (S3-compatible bucket or RTSP stream)
+- PipelineInstance CRD references a Pipeline and a PipelineSource with execution parameters
+- PipelineInstance controller handles:
   - S3 file listing and Valkey stream initialization on first reconciliation
   - Job creation with `completions = totalFiles`, `parallelism = user-tunable`
   - Pod completion tracking for ACK/retry/DLQ decisions
@@ -28,7 +29,7 @@ We're building a Kubernetes-native batch executor that processes large file sets
 - Filters as normal containers run sequentially against staged input
 - Controller (not pods) ACKs messages and handles retries/DLQ
 - Scalable to thousands of files without per-file Job objects
-- Compact, informative `PipelineRun.status`
+- Compact, informative `PipelineInstance.status`
 
 ### Non-Goals
 
@@ -83,51 +84,71 @@ spec:
           cpu: "250m"
 ```
 
-### 3.2 PipelineRun (execution)
+### 3.2 PipelineSource (input configuration)
 
 ```yaml
 apiVersion: filter.plainsight.ai/v1alpha1
-kind: PipelineRun
+kind: PipelineSource
+metadata:
+  name: <source-name>
+spec:
+  # For Batch mode: bucket is required
+  bucket:
+    # name is the S3-compatible bucket name (required)
+    name: my-input-bucket
+
+    # prefix is an optional path prefix within the bucket (e.g., "input-data/")
+    prefix: "images/"
+
+    # endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
+    # Leave empty for AWS S3 (will use default AWS endpoints)
+    # Examples: "storage.googleapis.com", "http://minio.example.com:9000"
+    endpoint: "storage.googleapis.com"
+
+    # region is the bucket region (e.g., "us-east-1")
+    # Required for AWS S3, optional for other providers
+    region: "us-east-1"
+
+    # credentialsSecret references a Secret containing access credentials
+    # Expected keys: "accessKeyId" and "secretAccessKey"
+    credentialsSecret:
+      name: s3-credentials
+      namespace: default  # optional, defaults to PipelineSource namespace
+
+    # insecureSkipTLSVerify skips TLS certificate verification (useful for dev/test)
+    insecureSkipTLSVerify: false
+
+    # usePathStyle forces path-style addressing (endpoint.com/bucket vs bucket.endpoint.com)
+    # Required for MinIO and some S3-compatible services
+    usePathStyle: false
+
+  # For Stream mode: rtsp is required (instead of bucket)
+  # rtsp:
+  #   host: "camera.example.com"
+  #   port: 554
+  #   path: "/stream1"
+  #   credentialsSecret:
+  #     name: rtsp-credentials
+  #   idleTimeout: "5m"
+```
+
+### 3.3 PipelineInstance (execution)
+
+```yaml
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineInstance
 metadata:
   name: <pipeline-name>-<timestamp>
 spec:
   # pipelineRef references the Pipeline to execute
   pipelineRef:
     name: <pipeline-name>
-    namespace: default  # optional, defaults to PipelineRun namespace
+    namespace: default  # optional, defaults to PipelineInstance namespace
 
-  # source defines where to read input files from (moved from Pipeline for reusability)
-  # For Batch mode: source.bucket is required
-  # For Stream mode: source.rtsp is required
-  source:
-    bucket:
-      # name is the S3-compatible bucket name (required)
-      name: my-input-bucket
-
-      # prefix is an optional path prefix within the bucket (e.g., "input-data/")
-      prefix: "images/"
-
-      # endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
-      # Leave empty for AWS S3 (will use default AWS endpoints)
-      # Examples: "storage.googleapis.com", "http://minio.example.com:9000"
-      endpoint: "storage.googleapis.com"
-
-      # region is the bucket region (e.g., "us-east-1")
-      # Required for AWS S3, optional for other providers
-      region: "us-east-1"
-
-      # credentialsSecret references a Secret containing access credentials
-      # Expected keys: "accessKeyId" and "secretAccessKey"
-      credentialsSecret:
-        name: s3-credentials
-        namespace: default  # optional, defaults to PipelineRun namespace
-
-      # insecureSkipTLSVerify skips TLS certificate verification (useful for dev/test)
-      insecureSkipTLSVerify: false
-
-      # usePathStyle forces path-style addressing (endpoint.com/bucket vs bucket.endpoint.com)
-      # Required for MinIO and some S3-compatible services
-      usePathStyle: false
+  # sourceRef references the PipelineSource for input configuration
+  sourceRef:
+    name: <source-name>
+    namespace: default  # optional, defaults to PipelineInstance namespace
 
   # execution defines how the pipeline should be executed
   execution:
@@ -135,11 +156,10 @@ spec:
     maxAttempts: 3          # per-file retry limit (default: 3)
     pendingTimeout: "15m"   # Valkey re-claim time (default: 15m)
 
-  # queue defines the Valkey stream configuration
-  # The controller uses these keys to manage work distribution
-  queue:
-    stream: "pr:<runId>:work"  # format: pr:<runId>:work
-    group: "cg:<runId>"         # format: cg:<runId>
+  # queue is managed internally by the controller
+  # The controller uses these keys to manage work distribution:
+  #   stream: "pi:<instanceId>:work"
+  #   group: "cg:<instanceId>"
 
 # Status is managed by the controller
 status:
@@ -159,20 +179,21 @@ status:
 
 ### User Workflow
 
-1. Create a Pipeline CRD defining input source and filters
-2. Create a PipelineRun CRD referencing the Pipeline (with unique queue keys)
-3. Watch PipelineRun status for progress (queued/running/succeeded/failed counts)
-4. Inspect Valkey DLQ stream for failures: `pr:<runId>:dlq`
+1. Create a Pipeline CRD defining filters
+2. Create a PipelineSource CRD defining the input source (S3 bucket or RTSP stream)
+3. Create a PipelineInstance CRD referencing both the Pipeline and PipelineSource
+4. Watch PipelineInstance status for progress (queued/running/succeeded/failed counts)
+5. Inspect Valkey DLQ stream for failures: `pi:<instanceId>:dlq`
 
-### PipelineRun Controller Reconciliation Loop
+### PipelineInstance Controller Reconciliation Loop
 
 The controller implements the following steps on each reconciliation:
 
 **Phase 1: Initialization (first reconciliation only)**
-1. Validates Pipeline reference and fetches Pipeline spec
-2. Creates Valkey stream (`pr:<runId>:work`) and consumer group (`cg:<runId>`)
+1. Validates Pipeline and PipelineSource references, fetches their specs
+2. Creates Valkey stream (`pi:<instanceId>:work`) and consumer group (`cg:<instanceId>`)
 3. Lists S3 bucket files using `ListObjects` (streaming, non-buffered)
-4. Enqueues one `XADD` message per file: `{run, file, attempts=0}`
+4. Enqueues one `XADD` message per file: `{instance, file, attempts=0}`
 5. Sets `status.counts.totalFiles` and `status.startTime`
 
 **Phase 2: Job Management**
@@ -183,13 +204,13 @@ The controller implements the following steps on each reconciliation:
    - Main containers: filter containers from Pipeline spec
 
 **Phase 3: Pod Completion Handling**
-1. Lists pods with label `filter.plainsight.ai/run=<runId>`
+1. Lists pods with label `filter.plainsight.ai/instance=<instanceId>`
 2. For each completed pod (Succeeded/Failed):
    - Uses XPENDING with `consumer=<pod.name>` to find the pending entry, then XRANGE(mid,mid) to read `{file, attempts}`
    - **Succeeded**: ACKs message via `XACK`
    - **Failed**:
      - If `attempts+1 < maxAttempts`: re-enqueues with `XADD` (incremented attempts), then ACKs original
-     - Else: adds to DLQ (`pr:<runId>:dlq`) with reason, then ACKs original
+     - Else: adds to DLQ (`pi:<instanceId>:dlq`) with reason, then ACKs original
 
 **Phase 4: Reclaimer (stale message recovery)**
 1. Runs `XAUTOCLAIM(stream, group, "controller-reclaimer", pendingTimeout, 100)`
@@ -203,7 +224,7 @@ The controller implements the following steps on each reconciliation:
    - `running = GetPendingCount(stream, group)` (claimed but not ACKed)
    - `failed = GetStreamLength(dlq)` (DLQ entries)
    - `succeeded = totalFiles - queued - running - failed`
-2. Updates `PipelineRun.status.counts`
+2. Updates `PipelineInstance.status.counts`
 
 **Phase 6: Completion Detection**
 1. If `queued == 0 && running == 0` and Job has `Complete` condition:
@@ -227,10 +248,10 @@ The controller implements the following steps on each reconciliation:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ pipelineRunName }}-job
+  name: {{ pipelineInstanceName }}-job
   labels:
-    filter.plainsight.ai/run: "{{ runId }}"
-    filter.plainsight.ai/pipelinerun: "{{ pipelineRunName }}"
+    filter.plainsight.ai/instance: "{{ instanceId }}"
+    filter.plainsight.ai/pipelineinstance: "{{ pipelineInstanceName }}"
 spec:
   completionMode: NonIndexed
   completions: {{ status.counts.totalFiles }}
@@ -240,8 +261,8 @@ spec:
   template:
     metadata:
       labels:
-        filter.plainsight.ai/run: "{{ runId }}"
-        filter.plainsight.ai/pipelinerun: "{{ pipelineRunName }}"
+        filter.plainsight.ai/instance: "{{ instanceId }}"
+        filter.plainsight.ai/pipelineinstance: "{{ pipelineInstanceName }}"
     spec:
       restartPolicy: Never
       volumes:
@@ -272,25 +293,25 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: S3_BUCKET
-              value: "{{ pipelineRun.spec.source.bucket.name }}"
+              value: "{{ pipelineSource.spec.bucket.name }}"
             - name: S3_ENDPOINT
-              value: "{{ pipelineRun.spec.source.bucket.endpoint }}"
+              value: "{{ pipelineSource.spec.bucket.endpoint }}"
             - name: S3_REGION
-              value: "{{ pipelineRun.spec.source.bucket.region }}"
+              value: "{{ pipelineSource.spec.bucket.region }}"
             - name: S3_USE_PATH_STYLE
-              value: "{{ pipelineRun.spec.source.bucket.usePathStyle }}"
+              value: "{{ pipelineSource.spec.bucket.usePathStyle }}"
             - name: S3_INSECURE_SKIP_TLS_VERIFY
-              value: "{{ pipelineRun.spec.source.bucket.insecureSkipTLSVerify }}"
+              value: "{{ pipelineSource.spec.bucket.insecureSkipTLSVerify }}"
             # S3 credentials from secret (if configured)
             - name: S3_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: "{{ pipelineRun.spec.source.bucket.credentialsSecret.name }}"
+                  name: "{{ pipelineSource.spec.bucket.credentialsSecret.name }}"
                   key: accessKeyId
             - name: S3_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: "{{ pipelineRun.spec.source.bucket.credentialsSecret.name }}"
+                  name: "{{ pipelineSource.spec.bucket.credentialsSecret.name }}"
                   key: secretAccessKey
           volumeMounts:
             - name: workspace
@@ -351,25 +372,25 @@ The claimer is a standalone Go binary (`cmd/claimer/main.go`) that runs as an in
 
 ## 6. Controller Responsibilities
 
-The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is the orchestrator for all pipeline execution logic.
+The PipelineInstance controller (`internal/controller/pipelineinstance_controller.go`) is the orchestrator for all pipeline execution logic.
 
-### 6.1 Initialization (`initializePipelineRun`)
+### 6.1 Initialization (`initializePipelineInstance`)
 
 **Trigger**: First reconciliation (when `status.startTime == nil`)
 
 **Steps**:
-1. Fetch referenced Pipeline resource
+1. Fetch referenced Pipeline and PipelineSource resources
 2. Create Valkey stream and consumer group (idempotent via `XGROUP CREATE MKSTREAM`)
 3. Check stream length; if 0, proceed with file enumeration:
-   - Get S3 credentials from PipelineRun's source.bucket.credentialsSecret
+   - Get S3 credentials from PipelineSource's bucket.credentialsSecret
    - List bucket files using `minio.ListObjects` (streaming, non-buffered)
-   - For each file: `XADD <stream> * run <runId> file <filepath> attempts 0`
+   - For each file: `XADD <stream> * instance <instanceId> file <filepath> attempts 0`
 4. Set `status.counts.totalFiles` from final stream length
 5. Set `status.startTime`
 6. Update status with `Progressing` condition
 
 **Edge cases handled**:
-- Empty bucket (0 files) → marks PipelineRun as Degraded, skips Job creation
+- Empty bucket (0 files) → marks PipelineInstance as Degraded, skips Job creation
 - S3 credential errors → sets Degraded condition, returns error for retry
 - Valkey unavailable → sets Degraded condition, returns error for retry
 - Idempotent: safe to re-run if initialization partially failed
@@ -394,7 +415,7 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
 **Trigger**: Every reconciliation (every 30s)
 
 **Steps**:
-1. List pods with label `filter.plainsight.ai/run=<runId>`
+1. List pods with label `filter.plainsight.ai/instance=<instanceId>`
 2. For each pod in Succeeded/Failed phase:
    - Use XPENDING with `consumer=<pod.name>` to find the pending entry and XRANGE to fetch fields `{file, attempts}`
    - **If Succeeded**:
@@ -402,10 +423,10 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
    - **If Failed**:
      - Parse failure reason (container exit code, OOMKilled, ImagePullBackOff, etc.)
      - If `attempts+1 < maxAttempts`:
-       - `XADD <stream> * run <runId> file <file> attempts <attempts+1>`
+       - `XADD <stream> * instance <instanceId> file <file> attempts <attempts+1>`
        - `XACK <stream> <group> <mid>`
      - Else:
-       - `XADD <dlq> * run <runId> file <file> attempts <attempts> reason <reason>`
+       - `XADD <dlq> * instance <instanceId> file <file> attempts <attempts> reason <reason>`
        - `XACK <stream> <group> <mid>`
    - Mark pod processed: patch annotation `filter.plainsight.ai/processed=true`
 
@@ -423,9 +444,9 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
 2. For each reclaimed message:
    - Parse `file` and `attempts` from message fields
    - If `attempts+1 < maxAttempts`:
-     - Re-enqueue: `XADD <stream> * run <runId> file <file> attempts <attempts+1>`
+     - Re-enqueue: `XADD <stream> * instance <instanceId> file <file> attempts <attempts+1>`
    - Else:
-     - DLQ: `XADD <dlq> * run <runId> file <file> attempts <attempts> reason "Max attempts exceeded (reclaimed stale message)"`
+     - DLQ: `XADD <dlq> * instance <instanceId> file <file> attempts <attempts> reason "Max attempts exceeded (reclaimed stale message)"`
    - `XACK <stream> <group> <mid>`
 
 ### 6.5 Status Updater (`updateStatus`)
@@ -455,7 +476,7 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
 **Failure criteria** (`checkFailure`):
 - Job has `Failed` condition with status True
 - Triggers `flushOutstandingWork` to move remaining queue entries to DLQ
-- Sets `Degraded` condition on PipelineRun
+- Sets `Degraded` condition on PipelineInstance
 
 **Actions on completion/failure**:
 - Set `status.completionTime`
@@ -464,16 +485,16 @@ The PipelineRun controller (`internal/controller/pipelinerun_controller.go`) is 
 
 ## 7. Data Model & Naming
 
-### Valkey keys per run
+### Valkey keys per instance
 
-- **Work stream:** `pr:<runId>:work`
-- **Consumer group:** `cg:<runId>`
-- **DLQ:** `pr:<runId>:dlq`
-- **Results (optional):** `pr:<runId>:results`
+- **Work stream:** `pi:<instanceId>:work`
+- **Consumer group:** `cg:<instanceId>`
+- **DLQ:** `pi:<instanceId>:dlq`
+- **Results (optional):** `pi:<instanceId>:results`
 
 ### Message fields
 
-- `run`, `file`, `attempts`
+- `instance`, `file`, `attempts`
 
 ### Pod annotations
 
@@ -481,7 +502,7 @@ Not used; message identity is derived from the Valkey consumer mapping (consumer
 
 ### Labels
 
-- `pipelines.example.io/run=<runId>` on Job/Pods
+- `filter.plainsight.ai/instance=<instanceId>` on Job/Pods
 
 ## 8. Failure Modes & Recovery
 
@@ -537,7 +558,7 @@ This separation means the Job keeps the right number of workers running, while o
 
 ### What shows up in status
 
-`PipelineRun.status.counts` is kept compact and derives from Valkey:
+`PipelineInstance.status.counts` is kept compact and derives from Valkey:
 
 - `queued = XINFO STREAM <work>.length`
 - `running = XPENDING <work> <group>.count`
@@ -556,7 +577,7 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 ### Kubernetes RBAC
 
 - **Worker pods:** no Kubernetes API access required
-- **Controller:** CRUD on PipelineRun, Jobs; read/watch Pods; status updates
+- **Controller:** CRUD on PipelineInstance; read PipelineSource; read/watch Pods; status updates
 
 ### Valkey ACLs
 
@@ -642,7 +663,7 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 - **Maximum ~10-20 active pods** at any time (parallelism + completed/failed waiting for cleanup)
 - List call returns only active pods, not all 10k
 - Each pod object ~2-5KB → **50-100KB of data per list** (very manageable)
-- Informer cache memory: **<1MB** per PipelineRun
+- Informer cache memory: **<1MB** per PipelineInstance
 - **This is NOT a bottleneck**
 
 **Impact at higher parallelism** (e.g., parallelism=200):
@@ -656,7 +677,7 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 - Controller marks pods `processed=true` and skips them in subsequent reconciliations
 
 **Mitigations**:
-- Label selector reduces scope (`filter.plainsight.ai/run=<runId>`)
+- Label selector reduces scope (`filter.plainsight.ai/instance=<instanceId>`)
 - Skip already-processed pods (`filter.plainsight.ai/processed=true` annotation)
 - Parallelism naturally bounds active pod count
 - **Optional**: Aggressive TTL (e.g., 3600s) to clean up completed pods faster
@@ -749,7 +770,7 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 1. Pipeline XADD calls become more important (45s → 10s initialization)
 2. Dedicated Valkey cluster (separate from other workloads)
 3. Increase Valkey memory limits (100-500MB per run)
-4. Consider chunking: split large runs into multiple smaller PipelineRuns (e.g., 5 runs of 20k files)
+4. Consider chunking: split large runs into multiple smaller PipelineInstances (e.g., 5 instances of 20k files)
 5. May need horizontal controller scaling at very high concurrency (multiple large runs)
 
 ### Current Design Verdict
@@ -785,13 +806,13 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 
 ### Integration (kind/minio/valkey)
 
-- **Small run:** 100 files, parallelism=20, inject 5% failures → verify retries/DLQ
+- **Small instance:** 100 files, parallelism=20, inject 5% failures → verify retries/DLQ
 - **Crash resilience:** kill nodes mid-run → ensure XAUTOCLAIM recovery
 - **Scale:** 50k messages, observe stable API server usage and Job completion
 
 ### E2E
 
-- Happy path, DLQ path, idempotent reruns (same runId not reused)
+- Happy path, DLQ path, idempotent reruns (same instanceId not reused)
 
 ## 13. Rollout Plan
 

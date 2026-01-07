@@ -46,7 +46,8 @@ charts/
     ├── README.md                   # Chart documentation
     ├── crds/                       # Custom Resource Definitions
     │   ├── filter.plainsight.ai_pipelines.yaml
-    │   └── filter.plainsight.ai_pipelineruns.yaml
+    │   ├── filter.plainsight.ai_pipelinesources.yaml
+    │   └── filter.plainsight.ai_pipelineinstances.yaml
     ├── templates/                  # Kubernetes manifests
     │   ├── deployment.yaml         # Controller deployment
     │   ├── service.yaml            # Services

@@ -41,8 +41,9 @@ Valkey (Redis alternative) has been installed:
 
 Custom Resources:
   The following CRDs have been installed:
-  - filter.plainsight.ai
-  - pipelineruns.plainsight.ai
+  - pipelines.filter.plainsight.ai
+  - pipelinesources.filter.plainsight.ai
+  - pipelineinstances.filter.plainsight.ai
 
   Create a sample Pipeline:
   $ kubectl apply -f - <<EOF
@@ -56,5 +57,11 @@ Custom Resources:
 
   List Pipelines:
   $ kubectl get pipelines -A
+
+  List PipelineSources:
+  $ kubectl get pipelinesources -A
+
+  List PipelineInstances:
+  $ kubectl get pipelineinstances -A
 
 For more information, visit: https://github.com/PlainsightAI/openfilter-pipelines-controller

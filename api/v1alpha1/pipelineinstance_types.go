@@ -20,10 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// ExecutionConfig defines execution parameters for pipeline runs
+// ExecutionConfig defines execution parameters for pipeline instances
 type ExecutionConfig struct {
 	// parallelism defines the maximum number of parallel executions (max concurrent pods)
 	// +optional
@@ -44,26 +41,19 @@ type ExecutionConfig struct {
 	PendingTimeout *metav1.Duration `json:"pendingTimeout,omitempty"`
 }
 
-// PipelineRunSpec defines the desired state of PipelineRun
-type PipelineRunSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
+// PipelineInstanceSpec defines the desired state of PipelineInstance
+type PipelineInstanceSpec struct {
 	// pipelineRef references the Pipeline resource to execute
 	// +required
 	PipelineRef PipelineReference `json:"pipelineRef"`
 
+	// sourceRef references the PipelineSource resource for input configuration
+	// +required
+	SourceRef SourceReference `json:"sourceRef"`
+
 	// execution defines how the pipeline should be executed
 	// +optional
 	Execution *ExecutionConfig `json:"execution,omitempty"`
-
-	// source defines the input source for the pipeline run
-	// For Batch mode: source.bucket is required, source.rtsp is forbidden
-	// For Stream mode: source.rtsp is required, source.bucket is forbidden
-	// +kubebuilder:validation:Required
-	Source Source `json:"source"`
 }
 
 // PipelineReference defines a reference to a Pipeline resource
@@ -73,40 +63,46 @@ type PipelineReference struct {
 	Name string `json:"name"`
 
 	// namespace is the namespace of the Pipeline resource
-	// If not specified, the PipelineRun's namespace is used
+	// If not specified, the PipelineInstance's namespace is used
 	// +optional
 	Namespace *string `json:"namespace,omitempty"`
 }
 
-// PipelineRunStatus defines the observed state of PipelineRun.
-type PipelineRunStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+// SourceReference defines a reference to a PipelineSource resource
+type SourceReference struct {
+	// name is the name of the PipelineSource resource
+	// +required
+	Name string `json:"name"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// namespace is the namespace of the PipelineSource resource
+	// If not specified, the PipelineInstance's namespace is used
+	// +optional
+	Namespace *string `json:"namespace,omitempty"`
+}
 
+// PipelineInstanceStatus defines the observed state of PipelineInstance.
+type PipelineInstanceStatus struct {
 	// counts tracks the number of files in each state (Batch mode only)
 	// +optional
 	Counts *FileCounts `json:"counts,omitempty"`
 
-	// jobName is the name of the Kubernetes Job created for this run (Batch mode only)
+	// jobName is the name of the Kubernetes Job created for this instance (Batch mode only)
 	// +optional
 	JobName string `json:"jobName,omitempty"`
 
-	// streaming provides observability into streaming pipeline runs (Stream mode only)
+	// streaming provides observability into streaming pipeline instances (Stream mode only)
 	// +optional
 	Streaming *StreamingStatus `json:"streaming,omitempty"`
 
-	// startTime is when the pipeline run was started
+	// startTime is when the pipeline instance was started
 	// +optional
 	StartTime *metav1.Time `json:"startTime,omitempty"`
 
-	// completionTime is when the pipeline run completed
+	// completionTime is when the pipeline instance completed
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 
-	// conditions represent the current state of the PipelineRun resource.
+	// conditions represent the current state of the PipelineInstance resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
 	// Standard condition types include:
@@ -144,7 +140,7 @@ type FileCounts struct {
 	Failed int64 `json:"failed,omitempty"`
 }
 
-// StreamingStatus provides observability into streaming pipeline runs
+// StreamingStatus provides observability into streaming pipeline instances
 type StreamingStatus struct {
 	// readyReplicas is the number of ready replicas in the streaming deployment
 	// +optional
@@ -170,7 +166,7 @@ type StreamingStatus struct {
 	// +optional
 	LastFrameAt *metav1.Time `json:"lastFrameAt,omitempty"`
 
-	// deploymentName is the name of the Kubernetes Deployment created for this streaming run
+	// deploymentName is the name of the Kubernetes Deployment created for this streaming instance
 	// +optional
 	DeploymentName string `json:"deploymentName,omitempty"`
 }
@@ -178,49 +174,50 @@ type StreamingStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// PipelineRun is the Schema for the pipelineruns API
-type PipelineRun struct {
+// PipelineInstance is the Schema for the pipelineinstances API
+// It represents an execution of a Pipeline with a specific PipelineSource
+type PipelineInstance struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// spec defines the desired state of PipelineRun
+	// spec defines the desired state of PipelineInstance
 	// +required
-	Spec PipelineRunSpec `json:"spec"`
+	Spec PipelineInstanceSpec `json:"spec"`
 
-	// status defines the observed state of PipelineRun
+	// status defines the observed state of PipelineInstance
 	// +optional
-	Status PipelineRunStatus `json:"status,omitempty"`
+	Status PipelineInstanceStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// PipelineRunList contains a list of PipelineRun
-type PipelineRunList struct {
+// PipelineInstanceList contains a list of PipelineInstance
+type PipelineInstanceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []PipelineRun `json:"items"`
+	Items           []PipelineInstance `json:"items"`
 }
 
-// GetQueueStream returns the Valkey stream key for this PipelineRun
-// Format: pr:<uid>:work
-func (pr *PipelineRun) GetQueueStream() string {
-	return "pr:" + string(pr.UID) + ":work"
+// GetQueueStream returns the Valkey stream key for this PipelineInstance
+// Format: pi:<uid>:work
+func (pi *PipelineInstance) GetQueueStream() string {
+	return "pi:" + string(pi.UID) + ":work"
 }
 
-// GetQueueGroup returns the Valkey consumer group name for this PipelineRun
+// GetQueueGroup returns the Valkey consumer group name for this PipelineInstance
 // Format: cg:<uid>
-func (pr *PipelineRun) GetQueueGroup() string {
-	return "cg:" + string(pr.UID)
+func (pi *PipelineInstance) GetQueueGroup() string {
+	return "cg:" + string(pi.UID)
 }
 
-// GetRunID returns the run ID (UID) for this PipelineRun
-func (pr *PipelineRun) GetRunID() string {
-	return string(pr.UID)
+// GetInstanceID returns the instance ID (UID) for this PipelineInstance
+func (pi *PipelineInstance) GetInstanceID() string {
+	return string(pi.UID)
 }
 
 func init() {
-	SchemeBuilder.Register(&PipelineRun{}, &PipelineRunList{})
+	SchemeBuilder.Register(&PipelineInstance{}, &PipelineInstanceList{})
 }

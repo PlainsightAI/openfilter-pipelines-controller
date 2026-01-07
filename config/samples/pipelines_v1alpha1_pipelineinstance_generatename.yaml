@@ -1,0 +1,16 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineInstance
+metadata:
+  labels:
+    app.kubernetes.io/name: openfilter-pipelines-controller
+    app.kubernetes.io/managed-by: kustomize
+  generateName: pipelineinstance-
+spec:
+  pipelineRef:
+    name: pipeline-sample
+  sourceRef:
+    name: source-bucket-sample
+  execution:
+    parallelism: 1
+    maxAttempts: 3
+    pendingTimeout: "15m"

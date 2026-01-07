@@ -1,21 +1,17 @@
 apiVersion: filter.plainsight.ai/v1alpha1
-kind: PipelineRun
+kind: PipelineInstance
 metadata:
   labels:
     app.kubernetes.io/name: openfilter-pipelines-controller
     app.kubernetes.io/managed-by: kustomize
-  generateName: pipelinerun-
+  # name: pipelineinstance-sample
+  generateName: pipelineinstance-sample-
 spec:
   pipelineRef:
     name: pipeline-sample
-  source:
-    bucket:
-      name: cow-demo-development
-      prefix: videos
-      endpoint: storage.googleapis.com
-      credentialsSecret:
-        name: gcs-credentials
+  sourceRef:
+    name: source-bucket-sample
   execution:
     parallelism: 1
     maxAttempts: 3
-    pendingTimeout: "15m"
+    pendingTimeout: "5m"

@@ -217,7 +217,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Pipeline")
 		os.Exit(1)
 	}
-	if err := (&controller.PipelineRunReconciler{
+	if err := (&controller.PipelineInstanceReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		ValkeyClient:   valkeyClient,
@@ -225,7 +225,7 @@ func main() {
 		ValkeyPassword: valkeyPassword,
 		ClaimerImage:   claimerImage,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "PipelineRun")
+		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

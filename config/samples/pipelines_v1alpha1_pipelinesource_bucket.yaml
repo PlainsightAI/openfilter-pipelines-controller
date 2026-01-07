@@ -1,0 +1,15 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineSource
+metadata:
+  labels:
+    app.kubernetes.io/name: openfilter-pipelines-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: source-bucket-sample
+spec:
+  # S3-compatible bucket source for batch mode pipelines
+  bucket:
+    name: cow-demo-development
+    prefix: videos
+    endpoint: storage.googleapis.com
+    credentialsSecret:
+      name: gcs-credentials

@@ -67,7 +67,7 @@ rules:
 - apiGroups:
   - filter.plainsight.ai
   resources:
-  - pipelineruns
+  - pipelineinstances
   - pipelines
   verbs:
   - create
@@ -80,16 +80,24 @@ rules:
 - apiGroups:
   - filter.plainsight.ai
   resources:
-  - pipelineruns/finalizers
+  - pipelineinstances/finalizers
   - pipelines/finalizers
   verbs:
   - update
 - apiGroups:
   - filter.plainsight.ai
   resources:
-  - pipelineruns/status
+  - pipelineinstances/status
   - pipelines/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - filter.plainsight.ai
+  resources:
+  - pipelinesources
+  verbs:
+  - get
+  - list
+  - watch

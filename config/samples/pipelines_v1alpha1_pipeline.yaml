@@ -6,13 +6,6 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-sample
 spec:
-  source:
-    bucket:
-      name: cow-demo-development
-      prefix: videos
-      endpoint: storage.googleapis.com
-      credentialsSecret:
-        name: gcs-credentials
   videoInputPath: /ws/input.mp4
 
   filters:

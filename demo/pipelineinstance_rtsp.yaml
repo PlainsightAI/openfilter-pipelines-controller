@@ -1,7 +1,9 @@
 apiVersion: filter.plainsight.ai/v1alpha1
-kind: PipelineRun
+kind: PipelineInstance
 metadata:
-  name: pipelinerun-rtsp
+  name: pipelineinstance-rtsp
 spec:
   pipelineRef:
     name: pipeline-rtsp
+  sourceRef:
+    name: pipelinesource-rtsp

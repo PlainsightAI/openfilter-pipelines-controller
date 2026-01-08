@@ -1,10 +1,12 @@
 apiVersion: filter.plainsight.ai/v1alpha1
-kind: PipelineRun
+kind: PipelineInstance
 metadata:
-  generateName: pipelinerun-batch-
+  generateName: pipelineinstance-batch-
 spec:
   pipelineRef:
     name: pipeline-batch
+  sourceRef:
+    name: pipelinesource-batch
   execution:
     parallelism: 1
     maxAttempts: 3

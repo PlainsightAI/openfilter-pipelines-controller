@@ -38,17 +38,17 @@ import (
 )
 
 // reconcileBatch handles the batch (Job-based) reconciliation path
-func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (ctrl.Result, error) {
+func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Ensure counts object exists before initialization
-	if pipelineRun.Status.Counts == nil {
-		pipelineRun.Status.Counts = &pipelinesv1alpha1.FileCounts{}
+	if pipelineInstance.Status.Counts == nil {
+		pipelineInstance.Status.Counts = &pipelinesv1alpha1.FileCounts{}
 	}
 
-	initialized, err := r.initializePipelineRun(ctx, pipelineRun, pipeline)
+	initialized, err := r.initializePipelineInstance(ctx, pipelineInstance, pipelineSource)
 	if err != nil {
-		log.Error(err, "Failed to initialize PipelineRun")
+		log.Error(err, "Failed to initialize PipelineInstance")
 		return ctrl.Result{}, err
 	}
 	if !initialized {
@@ -58,32 +58,32 @@ func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun 
 	}
 
 	// Step 1: Ensure Job exists
-	if err := r.ensureJob(ctx, pipelineRun, pipeline); err != nil {
+	if err := r.ensureJob(ctx, pipelineInstance, pipeline, pipelineSource); err != nil {
 		log.Error(err, "Failed to ensure Job")
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "JobCreationFailed", err.Error())
-		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "JobCreationFailed", err.Error())
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
 		}
 		return ctrl.Result{}, err
 	}
 
 	// Step 2: Handle completed pods (ACK/retry/DLQ)
-	if err := r.handleCompletedPods(ctx, pipelineRun); err != nil {
+	if err := r.handleCompletedPods(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to handle completed pods")
 		// Don't fail reconciliation, just log and continue
 	}
 
 	// Step 3: Run reclaimer for stale pending messages
-	if err := r.runReclaimer(ctx, pipelineRun); err != nil {
+	if err := r.runReclaimer(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to run reclaimer")
 		// Don't fail reconciliation, just log and continue
 	}
 
 	// Step 4: Update status from Valkey metrics
-	r.updateStatus(ctx, pipelineRun)
+	r.updateStatus(ctx, pipelineInstance)
 
 	// Detect job failure and mark the run as degraded
-	if failedCond, err := r.checkFailure(ctx, pipelineRun); err != nil {
+	if failedCond, err := r.checkFailure(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to check job failure state")
 	} else if failedCond != nil {
 		failureReason := failedCond.Reason
@@ -93,24 +93,24 @@ func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun 
 
 		failureMessage := failedCond.Message
 		if failureMessage == "" {
-			failureMessage = fmt.Sprintf("Job %s failed", pipelineRun.Status.JobName)
+			failureMessage = fmt.Sprintf("Job %s failed", pipelineInstance.Status.JobName)
 		} else {
-			failureMessage = fmt.Sprintf("Job %s failed: %s", pipelineRun.Status.JobName, failureMessage)
+			failureMessage = fmt.Sprintf("Job %s failed: %s", pipelineInstance.Status.JobName, failureMessage)
 		}
 
-		r.flushOutstandingWork(ctx, pipelineRun, failureReason, failureMessage)
+		r.flushOutstandingWork(ctx, pipelineInstance, failureReason, failureMessage)
 
-		log.Info("PipelineRun marked as Degraded due to job failure", "job", pipelineRun.Status.JobName, "reason", failureReason)
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, failureReason, failureMessage)
-		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, failureReason, failureMessage)
-		r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionFalse, failureReason, failureMessage)
+		log.Info("PipelineInstance marked as Degraded due to job failure", "job", pipelineInstance.Status.JobName, "reason", failureReason)
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, failureReason, failureMessage)
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, failureReason, failureMessage)
+		r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionFalse, failureReason, failureMessage)
 
-		if pipelineRun.Status.CompletionTime == nil {
+		if pipelineInstance.Status.CompletionTime == nil {
 			now := metav1.Now()
-			pipelineRun.Status.CompletionTime = &now
+			pipelineInstance.Status.CompletionTime = &now
 		}
 
-		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status after marking run degraded")
 			return ctrl.Result{}, err
 		}
@@ -120,23 +120,23 @@ func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun 
 	}
 
 	// Step 5: Check for completion
-	isComplete, err := r.checkCompletion(ctx, pipelineRun)
+	isComplete, err := r.checkCompletion(ctx, pipelineInstance)
 	if err != nil {
 		log.Error(err, "Failed to check completion")
 		return ctrl.Result{RequeueAfter: StatusUpdateInterval}, nil
 	}
 
 	if isComplete {
-		log.Info("PipelineRun completed successfully")
-		r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionTrue, "Completed", "All files processed")
-		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "Completed", "Processing finished")
+		log.Info("PipelineInstance completed successfully")
+		r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionTrue, "Completed", "All files processed")
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "Completed", "Processing finished")
 
-		if pipelineRun.Status.CompletionTime == nil {
+		if pipelineInstance.Status.CompletionTime == nil {
 			now := metav1.Now()
-			pipelineRun.Status.CompletionTime = &now
+			pipelineInstance.Status.CompletionTime = &now
 		}
 
-		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
 			return ctrl.Result{}, err
 		}
@@ -144,9 +144,9 @@ func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun 
 	}
 
 	// Set Progressing condition
-	r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionTrue, "Processing", "Pipeline is processing files")
+	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Processing", "Pipeline is processing files")
 
-	if err := r.Status().Update(ctx, pipelineRun); err != nil {
+	if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to update status")
 		return ctrl.Result{}, err
 	}
@@ -155,17 +155,17 @@ func (r *PipelineRunReconciler) reconcileBatch(ctx context.Context, pipelineRun 
 	return ctrl.Result{RequeueAfter: StatusUpdateInterval}, nil
 }
 
-// initializePipelineRun performs one-time setup for new PipelineRun resources.
+// initializePipelineInstance performs one-time setup for new PipelineInstance resources.
 // It creates the Valkey stream and consumer group, enumerates source files, enqueues
 // work items, and seeds status counters. The logic is safe to call multiple times;
 // after successful initialization it becomes a no-op. On error it returns a
 // non-nil error so the reconciliation loop can retry.
-func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (bool, error) {
+func (r *PipelineInstanceReconciler) initializePipelineInstance(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipelineSource *pipelinesv1alpha1.PipelineSource) (bool, error) {
 	log := logf.FromContext(ctx)
 
 	// If StartTime is already set, initialization has completed previously.
-	if pipelineRun.Status.StartTime != nil {
-		if pipelineRun.Status.Counts != nil && pipelineRun.Status.Counts.TotalFiles == 0 {
+	if pipelineInstance.Status.StartTime != nil {
+		if pipelineInstance.Status.Counts != nil && pipelineInstance.Status.Counts.TotalFiles == 0 {
 			// Nothing to process. Skip further work.
 			return false, nil
 		}
@@ -174,52 +174,52 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 
 	if r.ValkeyClient == nil {
 		err := fmt.Errorf("valkey client is not configured")
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueUnavailable", err.Error())
-		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueUnavailable", "PipelineRun cannot start without queue connectivity")
-		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "QueueUnavailable", err.Error())
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "QueueUnavailable", "PipelineInstance cannot start without queue connectivity")
+		if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 			return false, statusErr
 		}
 		return false, err
 	}
 
 	// Ensure the stream and consumer group exist. This call is idempotent and safe on retries.
-	if err := r.ValkeyClient.CreateStreamAndGroup(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup()); err != nil {
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInitializationFailed", err.Error())
-		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInitializationFailed", "PipelineRun cannot initialize its queue")
-		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+	if err := r.ValkeyClient.CreateStreamAndGroup(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup()); err != nil {
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInitializationFailed", err.Error())
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInitializationFailed", "PipelineInstance cannot initialize its queue")
+		if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 			return false, statusErr
 		}
 		return false, fmt.Errorf("failed to create stream and group: %w", err)
 	}
 
-	currentLength, err := r.ValkeyClient.GetStreamLength(ctx, pipelineRun.GetQueueStream())
+	currentLength, err := r.ValkeyClient.GetStreamLength(ctx, pipelineInstance.GetQueueStream())
 	if err != nil {
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInspectionFailed", err.Error())
-		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInspectionFailed", "PipelineRun cannot inspect queue state")
-		if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInspectionFailed", err.Error())
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInspectionFailed", "PipelineInstance cannot inspect queue state")
+		if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 			return false, statusErr
 		}
 		return false, fmt.Errorf("failed to get stream length: %w", err)
 	}
 
-	runID := pipelineRun.GetRunID()
+	instanceID := pipelineInstance.GetInstanceID()
 
 	if currentLength == 0 {
-		accessKey, secretKey, credErr := r.getCredentials(ctx, pipeline)
+		accessKey, secretKey, credErr := r.getCredentials(ctx, pipelineInstance, pipelineSource)
 		if credErr != nil {
-			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "CredentialsError", credErr.Error())
-			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "CredentialsError", "PipelineRun cannot access object storage credentials")
-			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "CredentialsError", credErr.Error())
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "CredentialsError", "PipelineInstance cannot access object storage credentials")
+			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				return false, statusErr
 			}
 			return false, fmt.Errorf("failed to get S3 credentials: %w", credErr)
 		}
 
-		files, listErr := r.listBucketFiles(ctx, pipeline, accessKey, secretKey)
+		files, listErr := r.listBucketFiles(ctx, pipelineSource, accessKey, secretKey)
 		if listErr != nil {
-			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "ListingFailed", listErr.Error())
-			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "ListingFailed", "PipelineRun cannot enumerate input files")
-			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "ListingFailed", listErr.Error())
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "ListingFailed", "PipelineInstance cannot enumerate input files")
+			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				return false, statusErr
 			}
 			return false, fmt.Errorf("failed to list bucket files: %w", listErr)
@@ -227,29 +227,29 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 
 		if len(files) == 0 {
 			now := metav1.Now()
-			pipelineRun.Status.StartTime = &now
-			pipelineRun.Status.CompletionTime = &now
-			pipelineRun.Status.Counts.TotalFiles = 0
-			pipelineRun.Status.Counts.Queued = 0
-			pipelineRun.Status.Counts.Running = 0
-			pipelineRun.Status.Counts.Succeeded = 0
-			pipelineRun.Status.Counts.Failed = 0
+			pipelineInstance.Status.StartTime = &now
+			pipelineInstance.Status.CompletionTime = &now
+			pipelineInstance.Status.Counts.TotalFiles = 0
+			pipelineInstance.Status.Counts.Queued = 0
+			pipelineInstance.Status.Counts.Running = 0
+			pipelineInstance.Status.Counts.Succeeded = 0
+			pipelineInstance.Status.Counts.Failed = 0
 
-			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "NoFilesFound", "No files found in input bucket")
-			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "NoFilesFound", "PipelineRun cannot start without input files")
-			r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionFalse, "NoFilesFound", "PipelineRun did not process any files")
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "NoFilesFound", "No files found in input bucket")
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "NoFilesFound", "PipelineInstance cannot start without input files")
+			r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionFalse, "NoFilesFound", "PipelineInstance did not process any files")
 
-			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				return false, statusErr
 			}
 
-			log.Info("PipelineRun has no files to process; marking as degraded", "pipelineRun", pipelineRun.Name)
+			log.Info("PipelineInstance has no files to process; marking as degraded", "pipelineInstance", pipelineInstance.Name)
 			return false, nil
 		}
 
 		successful := int64(0)
 		for _, file := range files {
-			if _, enqueueErr := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.GetQueueStream(), runID, file, 0); enqueueErr != nil {
+			if _, enqueueErr := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, file, 0); enqueueErr != nil {
 				log.Error(enqueueErr, "Failed to enqueue file", "file", file)
 				continue
 			}
@@ -257,11 +257,11 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 		}
 
 		// Refresh the stream length to reflect any enqueued work items.
-		currentLength, err = r.ValkeyClient.GetStreamLength(ctx, pipelineRun.GetQueueStream())
+		currentLength, err = r.ValkeyClient.GetStreamLength(ctx, pipelineInstance.GetQueueStream())
 		if err != nil {
-			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInspectionFailed", err.Error())
-			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInspectionFailed", "PipelineRun cannot inspect queue state")
-			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "QueueInspectionFailed", err.Error())
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "QueueInspectionFailed", "PipelineInstance cannot inspect queue state")
+			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				return false, statusErr
 			}
 			return false, fmt.Errorf("failed to get stream length after enqueue: %w", err)
@@ -269,9 +269,9 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 
 		if currentLength == 0 || successful == 0 {
 			err := fmt.Errorf("no files were successfully enqueued for processing")
-			r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "EnqueueFailed", err.Error())
-			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "EnqueueFailed", "PipelineRun could not enqueue files for processing")
-			if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "EnqueueFailed", err.Error())
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "EnqueueFailed", "PipelineInstance could not enqueue files for processing")
+			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				return false, statusErr
 			}
 			return false, err
@@ -279,35 +279,35 @@ func (r *PipelineRunReconciler) initializePipelineRun(ctx context.Context, pipel
 	}
 
 	now := metav1.Now()
-	pipelineRun.Status.StartTime = &now
-	pipelineRun.Status.Counts.TotalFiles = currentLength
-	pipelineRun.Status.Counts.Queued = currentLength
-	pipelineRun.Status.Counts.Running = 0
-	pipelineRun.Status.Counts.Succeeded = 0
-	pipelineRun.Status.Counts.Failed = 0
+	pipelineInstance.Status.StartTime = &now
+	pipelineInstance.Status.Counts.TotalFiles = currentLength
+	pipelineInstance.Status.Counts.Queued = currentLength
+	pipelineInstance.Status.Counts.Running = 0
+	pipelineInstance.Status.Counts.Succeeded = 0
+	pipelineInstance.Status.Counts.Failed = 0
 
-	r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionFalse, "Initialized", "PipelineRun initialized successfully")
-	r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionTrue, "Initialized", "PipelineRun initialized and files queued")
-	r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionFalse, "Initialized", "PipelineRun is processing input files")
+	r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionFalse, "Initialized", "PipelineInstance initialized successfully")
+	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Initialized", "PipelineInstance initialized and files queued")
+	r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionFalse, "Initialized", "PipelineInstance is processing input files")
 
-	if statusErr := r.Status().Update(ctx, pipelineRun); statusErr != nil {
+	if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 		return false, statusErr
 	}
 
-	log.Info("PipelineRun initialized", "pipelineRun", pipelineRun.Name, "totalFiles", pipelineRun.Status.Counts.TotalFiles)
+	log.Info("PipelineInstance initialized", "pipelineInstance", pipelineInstance.Name, "totalFiles", pipelineInstance.Status.Counts.TotalFiles)
 	return true, nil
 }
 
-// ensureJob creates or updates the Job for the PipelineRun
-func (r *PipelineRunReconciler) ensureJob(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) error {
+// ensureJob creates or updates the Job for the PipelineInstance
+func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) error {
 	log := logf.FromContext(ctx)
 
 	// Check if Job already exists
-	if pipelineRun.Status.JobName != "" {
+	if pipelineInstance.Status.JobName != "" {
 		job := &batchv1.Job{}
 		err := r.Get(ctx, types.NamespacedName{
-			Name:      pipelineRun.Status.JobName,
-			Namespace: pipelineRun.Namespace,
+			Name:      pipelineInstance.Status.JobName,
+			Namespace: pipelineInstance.Namespace,
 		}, job)
 
 		if err == nil {
@@ -321,14 +321,14 @@ func (r *PipelineRunReconciler) ensureJob(ctx context.Context, pipelineRun *pipe
 		// Job was deleted, create a new one
 	}
 
-	// Generate Job name from PipelineRun name
-	jobName := fmt.Sprintf("%s-job", pipelineRun.Name)
+	// Generate Job name from PipelineInstance name
+	jobName := fmt.Sprintf("%s-job", pipelineInstance.Name)
 
 	// Build the Job spec
-	job := r.buildJob(ctx, pipelineRun, pipeline, jobName)
+	job := r.buildJob(ctx, pipelineInstance, pipeline, pipelineSource, jobName)
 
-	// Set PipelineRun as owner of the Job
-	if err := controllerutil.SetControllerReference(pipelineRun, job, r.Scheme); err != nil {
+	// Set PipelineInstance as owner of the Job
+	if err := controllerutil.SetControllerReference(pipelineInstance, job, r.Scheme); err != nil {
 		return fmt.Errorf("failed to set owner reference: %w", err)
 	}
 
@@ -337,44 +337,44 @@ func (r *PipelineRunReconciler) ensureJob(ctx context.Context, pipelineRun *pipe
 		return fmt.Errorf("failed to create job: %w", err)
 	}
 
-	log.Info("Created Job for PipelineRun", "job", jobName)
+	log.Info("Created Job for PipelineInstance", "job", jobName)
 
 	// Update status with Job name
-	pipelineRun.Status.JobName = jobName
+	pipelineInstance.Status.JobName = jobName
 	return nil
 }
 
-// buildJob constructs the Job specification for the PipelineRun
-func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline, jobName string) *batchv1.Job {
+// buildJob constructs the Job specification for the PipelineInstance
+func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, jobName string) *batchv1.Job {
 	log := logf.FromContext(ctx)
 
-	// Get run ID from the PipelineRun UID
-	runID := pipelineRun.GetRunID()
+	// Get instance ID from the PipelineInstance UID
+	instanceID := pipelineInstance.GetInstanceID()
 
 	// Get execution config with defaults
 	parallelism := int32(10)
-	if pipelineRun.Spec.Execution != nil && pipelineRun.Spec.Execution.Parallelism != nil {
-		parallelism = *pipelineRun.Spec.Execution.Parallelism
+	if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.Parallelism != nil {
+		parallelism = *pipelineInstance.Spec.Execution.Parallelism
 	}
 
 	// Get total files count, default to 0 if not set
 	totalFiles := int64(0)
-	if pipelineRun.Status.Counts != nil {
-		totalFiles = pipelineRun.Status.Counts.TotalFiles
+	if pipelineInstance.Status.Counts != nil {
+		totalFiles = pipelineInstance.Status.Counts.TotalFiles
 	}
 
 	log.V(1).Info("Building job", "totalFiles", totalFiles, "parallelism", parallelism)
 
-	// Get S3 credentials from Pipeline
+	// Get S3 credentials from PipelineSource
 	var s3SecretName string
-	if pipeline.Spec.Source.Bucket != nil && pipeline.Spec.Source.Bucket.CredentialsSecret != nil {
-		s3SecretName = pipeline.Spec.Source.Bucket.CredentialsSecret.Name
+	if pipelineSource.Spec.Bucket != nil && pipelineSource.Spec.Bucket.CredentialsSecret != nil {
+		s3SecretName = pipelineSource.Spec.Bucket.CredentialsSecret.Name
 	}
 
 	// Build claimer init container env vars
 	claimerEnv := []corev1.EnvVar{
-		{Name: "STREAM", Value: pipelineRun.GetQueueStream()},
-		{Name: "GROUP", Value: pipelineRun.GetQueueGroup()},
+		{Name: "STREAM", Value: pipelineInstance.GetQueueStream()},
+		{Name: "GROUP", Value: pipelineInstance.GetQueueGroup()},
 		{Name: "VALKEY_URL", Value: r.ValkeyAddr},
 		{Name: "CONSUMER_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
@@ -388,13 +388,13 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 	}
 
 	// Add S3 config if bucket source is configured
-	if pipeline.Spec.Source.Bucket != nil {
+	if pipelineSource.Spec.Bucket != nil {
 		claimerEnv = append(claimerEnv, []corev1.EnvVar{
-			{Name: "S3_BUCKET", Value: pipeline.Spec.Source.Bucket.Name},
-			{Name: "S3_ENDPOINT", Value: pipeline.Spec.Source.Bucket.Endpoint},
-			{Name: "S3_REGION", Value: pipeline.Spec.Source.Bucket.Region},
-			{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", pipeline.Spec.Source.Bucket.UsePathStyle)},
-			{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", pipeline.Spec.Source.Bucket.InsecureSkipTLSVerify)},
+			{Name: "S3_BUCKET", Value: pipelineSource.Spec.Bucket.Name},
+			{Name: "S3_ENDPOINT", Value: pipelineSource.Spec.Bucket.Endpoint},
+			{Name: "S3_REGION", Value: pipelineSource.Spec.Bucket.Region},
+			{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", pipelineSource.Spec.Bucket.UsePathStyle)},
+			{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", pipelineSource.Spec.Bucket.InsecureSkipTLSVerify)},
 		}...)
 	}
 
@@ -479,10 +479,10 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
-			Namespace: pipelineRun.Namespace,
+			Namespace: pipelineInstance.Namespace,
 			Labels: map[string]string{
-				"filter.plainsight.ai/run":         runID,
-				"filter.plainsight.ai/pipelinerun": pipelineRun.Name,
+				"filter.plainsight.ai/instance":         instanceID,
+				"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -494,8 +494,8 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"filter.plainsight.ai/run":         runID,
-						"filter.plainsight.ai/pipelinerun": pipelineRun.Name,
+						"filter.plainsight.ai/instance":         instanceID,
+						"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -530,21 +530,21 @@ func (r *PipelineRunReconciler) buildJob(ctx context.Context, pipelineRun *pipel
 }
 
 // handleCompletedPods processes pods that have completed (succeeded or failed)
-func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) error {
+func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) error {
 	log := logf.FromContext(ctx)
 
-	// List all pods for this PipelineRun
+	// List all pods for this PipelineInstance
 	podList := &corev1.PodList{}
-	runID := pipelineRun.GetRunID()
-	if err := r.List(ctx, podList, client.InNamespace(pipelineRun.Namespace), client.MatchingLabels{
-		"filter.plainsight.ai/run": runID,
+	instanceID := pipelineInstance.GetInstanceID()
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
+		"filter.plainsight.ai/instance": instanceID,
 	}); err != nil {
 		return fmt.Errorf("failed to list pods: %w", err)
 	}
 
 	maxAttempts := int32(3)
-	if pipelineRun.Spec.Execution != nil && pipelineRun.Spec.Execution.MaxAttempts != nil {
-		maxAttempts = *pipelineRun.Spec.Execution.MaxAttempts
+	if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.MaxAttempts != nil {
+		maxAttempts = *pipelineInstance.Spec.Execution.MaxAttempts
 	}
 
 	for _, pod := range podList.Items {
@@ -557,7 +557,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 
 		// Discover the message claimed by this pod's init container using the consumer name = pod.Name.
 		// There should be at most one pending entry for this consumer.
-		pendingIDs, err := r.ValkeyClient.GetPendingForConsumer(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), pod.Name, 1)
+		pendingIDs, err := r.ValkeyClient.GetPendingForConsumer(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), pod.Name, 1)
 		if err != nil {
 			log.Error(err, "Failed to get pending entries for consumer", "pod", pod.Name)
 			continue
@@ -571,11 +571,11 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 
 		messageID := pendingIDs[0]
 		// Fetch message fields
-		msgs, err := r.ValkeyClient.ReadRange(ctx, pipelineRun.GetQueueStream(), messageID, messageID, 1)
+		msgs, err := r.ValkeyClient.ReadRange(ctx, pipelineInstance.GetQueueStream(), messageID, messageID, 1)
 		if err != nil || len(msgs) == 0 {
 			log.Error(err, "Failed to read message for pending entry; attempting to ACK", "messageID", messageID)
 			// Best-effort ACK to prevent leaks
-			if ackErr := r.ValkeyClient.AckMessage(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), messageID); ackErr != nil {
+			if ackErr := r.ValkeyClient.AckMessage(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), messageID); ackErr != nil {
 				log.Error(ackErr, "Failed to ACK orphan pending entry", "messageID", messageID)
 			}
 			continue
@@ -585,11 +585,11 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 		attempts := parseAttempts(msgs[0].Values["attempts"], int(maxAttempts))
 
 		// Get DLQ key
-		dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
+		dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
 
 		if pod.Status.Phase == corev1.PodSucceeded {
 			// ACK the message
-			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), messageID); err != nil {
+			if err := r.ValkeyClient.AckMessage(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), messageID); err != nil {
 				log.Error(err, "Failed to ACK message", "messageID", messageID)
 				continue
 			}
@@ -611,14 +611,14 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 			attempts++
 			if attempts < int(maxAttempts) {
 				// Re-enqueue with incremented attempts
-				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.GetQueueStream(), runID, filepath, attempts); err != nil {
+				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, filepath, attempts); err != nil {
 					log.Error(err, "Failed to re-enqueue file", "file", filepath)
 				} else {
 					log.Info("Re-enqueued failed file", "file", filepath, "attempts", attempts)
 				}
 			} else {
 				// Add to DLQ
-				if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, runID, filepath, attempts, reason); err != nil {
+				if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, filepath, attempts, reason); err != nil {
 					log.Error(err, "Failed to add to DLQ", "file", filepath)
 				} else {
 					log.Info("Added file to DLQ", "file", filepath, "reason", reason)
@@ -626,7 +626,7 @@ func (r *PipelineRunReconciler) handleCompletedPods(ctx context.Context, pipelin
 			}
 
 			// ACK the original message
-			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), messageID); err != nil {
+			if err := r.ValkeyClient.AckMessage(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), messageID); err != nil {
 				log.Error(err, "Failed to ACK failed message", "messageID", messageID)
 				continue
 			}
@@ -697,19 +697,19 @@ func detectContainerStartFailure(statuses []corev1.ContainerStatus) string {
 }
 
 // runReclaimer runs XAUTOCLAIM to recover stale pending messages
-func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) error {
+func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) error {
 	log := logf.FromContext(ctx)
 
 	pendingTimeout := 15 * time.Minute
-	if pipelineRun.Spec.Execution != nil && pipelineRun.Spec.Execution.PendingTimeout != nil {
-		pendingTimeout = pipelineRun.Spec.Execution.PendingTimeout.Duration
+	if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.PendingTimeout != nil {
+		pendingTimeout = pipelineInstance.Spec.Execution.PendingTimeout.Duration
 	}
 
 	minIdleTime := pendingTimeout.Milliseconds()
 	consumerName := "controller-reclaimer"
 
 	// Run XAUTOCLAIM
-	messages, err := r.ValkeyClient.AutoClaim(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), consumerName, minIdleTime, 100)
+	messages, err := r.ValkeyClient.AutoClaim(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), consumerName, minIdleTime, 100)
 	if err != nil {
 		return fmt.Errorf("failed to auto-claim messages: %w", err)
 	}
@@ -717,13 +717,13 @@ func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *p
 	if len(messages) > 0 {
 		log.Info("Reclaimed stale messages", "count", len(messages))
 
-		runID := pipelineRun.GetRunID()
+		instanceID := pipelineInstance.GetInstanceID()
 		maxAttempts := int32(3)
-		if pipelineRun.Spec.Execution != nil && pipelineRun.Spec.Execution.MaxAttempts != nil {
-			maxAttempts = *pipelineRun.Spec.Execution.MaxAttempts
+		if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.MaxAttempts != nil {
+			maxAttempts = *pipelineInstance.Spec.Execution.MaxAttempts
 		}
 
-		dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
+		dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
 
 		// Process each reclaimed message
 		for _, msg := range messages {
@@ -734,19 +734,19 @@ func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *p
 
 			if attempts < int(maxAttempts) {
 				// Re-enqueue with incremented attempts
-				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineRun.GetQueueStream(), runID, filepath, attempts); err != nil {
+				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, filepath, attempts); err != nil {
 					log.Error(err, "Failed to re-enqueue reclaimed file", "file", filepath)
 				}
 			} else {
 				// Send to DLQ
 				reason := "Max attempts exceeded (reclaimed stale message)"
-				if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, runID, filepath, attempts, reason); err != nil {
+				if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, filepath, attempts, reason); err != nil {
 					log.Error(err, "Failed to add reclaimed file to DLQ", "file", filepath)
 				}
 			}
 
 			// ACK the reclaimed message
-			if err := r.ValkeyClient.AckMessage(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup(), msg.ID); err != nil {
+			if err := r.ValkeyClient.AckMessage(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), msg.ID); err != nil {
 				log.Error(err, "Failed to ACK reclaimed message", "messageID", msg.ID)
 			}
 		}
@@ -755,67 +755,67 @@ func (r *PipelineRunReconciler) runReclaimer(ctx context.Context, pipelineRun *p
 	return nil
 }
 
-// updateStatus updates the PipelineRun status from Valkey metrics
-func (r *PipelineRunReconciler) updateStatus(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) {
+// updateStatus updates the PipelineInstance status from Valkey metrics
+func (r *PipelineInstanceReconciler) updateStatus(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) {
 	log := logf.FromContext(ctx)
 
-	if pipelineRun.Status.Counts == nil {
-		pipelineRun.Status.Counts = &pipelinesv1alpha1.FileCounts{}
+	if pipelineInstance.Status.Counts == nil {
+		pipelineInstance.Status.Counts = &pipelinesv1alpha1.FileCounts{}
 	}
 
 	// Get queued count (consumer group lag - messages not yet read)
-	queued, err := r.ValkeyClient.GetConsumerGroupLag(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup())
+	queued, err := r.ValkeyClient.GetConsumerGroupLag(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup())
 	if err != nil {
 		log.Error(err, "Failed to get consumer group lag")
 		queued = 0
 	}
 
 	// Get running count (pending messages - read but not acknowledged)
-	running, err := r.ValkeyClient.GetPendingCount(ctx, pipelineRun.GetQueueStream(), pipelineRun.GetQueueGroup())
+	running, err := r.ValkeyClient.GetPendingCount(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup())
 	if err != nil {
 		log.Error(err, "Failed to get pending count")
 		running = 0
 	}
 
 	// Get failed count (DLQ length)
-	runID := pipelineRun.GetRunID()
-	dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
+	instanceID := pipelineInstance.GetInstanceID()
+	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
 	failed, err := r.ValkeyClient.GetStreamLength(ctx, dlqKey)
 	if err != nil {
 		failed = 0
 	}
 
 	// Calculate succeeded count
-	totalFiles := pipelineRun.Status.Counts.TotalFiles
+	totalFiles := pipelineInstance.Status.Counts.TotalFiles
 	succeeded := totalFiles - queued - running - failed
 	if succeeded < 0 {
 		succeeded = 0
 	}
 
 	// Update counts
-	pipelineRun.Status.Counts.Queued = queued
-	pipelineRun.Status.Counts.Running = running
-	pipelineRun.Status.Counts.Succeeded = succeeded
-	pipelineRun.Status.Counts.Failed = failed
+	pipelineInstance.Status.Counts.Queued = queued
+	pipelineInstance.Status.Counts.Running = running
+	pipelineInstance.Status.Counts.Succeeded = succeeded
+	pipelineInstance.Status.Counts.Failed = failed
 
 	log.V(1).Info("Updated status counts", "queued", queued, "running", running, "succeeded", succeeded, "failed", failed)
 }
 
-// checkCompletion determines if the PipelineRun has completed
-func (r *PipelineRunReconciler) checkCompletion(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) (bool, error) {
-	if pipelineRun.Status.Counts == nil {
+// checkCompletion determines if the PipelineInstance has completed
+func (r *PipelineInstanceReconciler) checkCompletion(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (bool, error) {
+	if pipelineInstance.Status.Counts == nil {
 		return false, nil
 	}
 
-	queued := pipelineRun.Status.Counts.Queued
-	running := pipelineRun.Status.Counts.Running
+	queued := pipelineInstance.Status.Counts.Queued
+	running := pipelineInstance.Status.Counts.Running
 
 	if queued == 0 && running == 0 {
-		if pipelineRun.Status.JobName != "" {
+		if pipelineInstance.Status.JobName != "" {
 			job := &batchv1.Job{}
 			err := r.Get(ctx, types.NamespacedName{
-				Name:      pipelineRun.Status.JobName,
-				Namespace: pipelineRun.Namespace,
+				Name:      pipelineInstance.Status.JobName,
+				Namespace: pipelineInstance.Namespace,
 			}, job)
 
 			if err != nil {
@@ -834,15 +834,15 @@ func (r *PipelineRunReconciler) checkCompletion(ctx context.Context, pipelineRun
 }
 
 // checkFailure inspects the backing Job for failure conditions.
-func (r *PipelineRunReconciler) checkFailure(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) (*batchv1.JobCondition, error) {
-	if pipelineRun.Status.JobName == "" {
+func (r *PipelineInstanceReconciler) checkFailure(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (*batchv1.JobCondition, error) {
+	if pipelineInstance.Status.JobName == "" {
 		return nil, nil
 	}
 
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name:      pipelineRun.Status.JobName,
-		Namespace: pipelineRun.Namespace,
+		Name:      pipelineInstance.Status.JobName,
+		Namespace: pipelineInstance.Namespace,
 	}, job)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -863,17 +863,17 @@ func (r *PipelineRunReconciler) checkFailure(ctx context.Context, pipelineRun *p
 }
 
 // flushOutstandingWork moves any remaining stream entries to the DLQ when a run can no longer progress.
-func (r *PipelineRunReconciler) flushOutstandingWork(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, reason, message string) {
+func (r *PipelineInstanceReconciler) flushOutstandingWork(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, reason, message string) {
 	log := logf.FromContext(ctx)
 
-	streamKey := pipelineRun.GetQueueStream()
-	groupName := pipelineRun.GetQueueGroup()
-	runID := pipelineRun.GetRunID()
-	dlqKey := fmt.Sprintf("pr:%s:dlq", runID)
+	streamKey := pipelineInstance.GetQueueStream()
+	groupName := pipelineInstance.GetQueueGroup()
+	instanceID := pipelineInstance.GetInstanceID()
+	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
 
 	maxAttempts := int32(3)
-	if pipelineRun.Spec.Execution != nil && pipelineRun.Spec.Execution.MaxAttempts != nil {
-		maxAttempts = *pipelineRun.Spec.Execution.MaxAttempts
+	if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.MaxAttempts != nil {
+		maxAttempts = *pipelineInstance.Spec.Execution.MaxAttempts
 	}
 
 	fileAttempts := make(map[string]int)
@@ -974,7 +974,7 @@ func (r *PipelineRunReconciler) flushOutstandingWork(ctx context.Context, pipeli
 			}
 		}
 
-		if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, runID, file, attempts, message); err != nil {
+		if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, file, attempts, message); err != nil {
 			log.Error(err, "Failed to add message to DLQ during flush", "file", file)
 			continue
 		}

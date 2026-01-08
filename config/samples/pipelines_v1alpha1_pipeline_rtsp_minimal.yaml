@@ -3,22 +3,7 @@ kind: Pipeline
 metadata:
   name: pipeline-rtsp-minimal
 spec:
-  mode: Stream
-
-  source:
-    rtsp:
-      # Minimal RTSP configuration
-      # Only host is required, port defaults to 554, path is optional
-      host: rtsp-video-stream.default
-      # This will create RTSP_URL=rtsp://192.168.1.100:554
-
-      # If you specify path:
-      path: /stream
-      # This will create RTSP_URL=rtsp://192.168.1.100:554/live/main
-
-      # If you specify a custom port:
-      port: 8554
-      # This will create RTSP_URL=rtsp://192.168.1.100:8554
+  mode: stream
 
   filters:
     - name: video-in

@@ -3,21 +3,23 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
-  name: pipelineruns.filter.plainsight.ai
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: pipelineinstances.filter.plainsight.ai
 spec:
   group: filter.plainsight.ai
   names:
-    kind: PipelineRun
-    listKind: PipelineRunList
-    plural: pipelineruns
-    singular: pipelinerun
+    kind: PipelineInstance
+    listKind: PipelineInstanceList
+    plural: pipelineinstances
+    singular: pipelineinstance
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: PipelineRun is the Schema for the pipelineruns API
+        description: |-
+          PipelineInstance is the Schema for the pipelineinstances API
+          It represents an execution of a Pipeline with a specific PipelineSource
         properties:
           apiVersion:
             description: |-
@@ -37,7 +39,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of PipelineRun
+            description: spec defines the desired state of PipelineInstance
             properties:
               execution:
                 description: execution defines how the pipeline should be executed
@@ -72,24 +74,40 @@ spec:
                   namespace:
                     description: |-
                       namespace is the namespace of the Pipeline resource
-                      If not specified, the PipelineRun's namespace is used
+                      If not specified, the PipelineInstance's namespace is used
+                    type: string
+                required:
+                - name
+                type: object
+              sourceRef:
+                description: sourceRef references the PipelineSource resource for
+                  input configuration
+                properties:
+                  name:
+                    description: name is the name of the PipelineSource resource
+                    type: string
+                  namespace:
+                    description: |-
+                      namespace is the namespace of the PipelineSource resource
+                      If not specified, the PipelineInstance's namespace is used
                     type: string
                 required:
                 - name
                 type: object
             required:
             - pipelineRef
+            - sourceRef
             type: object
           status:
-            description: status defines the observed state of PipelineRun
+            description: status defines the observed state of PipelineInstance
             properties:
               completionTime:
-                description: completionTime is when the pipeline run completed
+                description: completionTime is when the pipeline instance completed
                 format: date-time
                 type: string
               conditions:
                 description: |-
-                  conditions represent the current state of the PipelineRun resource.
+                  conditions represent the current state of the PipelineInstance resource.
                   Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
                   Standard condition types include:
@@ -183,15 +201,15 @@ spec:
                 type: object
               jobName:
                 description: jobName is the name of the Kubernetes Job created for
-                  this run (Batch mode only)
+                  this instance (Batch mode only)
                 type: string
               startTime:
-                description: startTime is when the pipeline run was started
+                description: startTime is when the pipeline instance was started
                 format: date-time
                 type: string
               streaming:
                 description: streaming provides observability into streaming pipeline
-                  runs (Stream mode only)
+                  instances (Stream mode only)
                 properties:
                   availableReplicas:
                     description: availableReplicas is the number of available replicas
@@ -205,7 +223,7 @@ spec:
                     type: integer
                   deploymentName:
                     description: deploymentName is the name of the Kubernetes Deployment
-                      created for this streaming run
+                      created for this streaming instance
                     type: string
                   lastFrameAt:
                     description: lastFrameAt is the timestamp of the last processed

@@ -1,0 +1,11 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineSource
+metadata:
+  name: pipelinesource-batch
+spec:
+  bucket:
+    name: cow-demo-development
+    prefix: videos
+    endpoint: storage.googleapis.com
+    credentialsSecret:
+      name: gcs-credentials

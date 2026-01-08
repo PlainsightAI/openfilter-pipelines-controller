@@ -37,19 +37,19 @@ import (
 )
 
 // reconcileStreaming handles the streaming (Deployment-based) reconciliation path
-func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (ctrl.Result, error) {
+func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Initialize streaming status if not already set
-	if pipelineRun.Status.Streaming == nil {
-		pipelineRun.Status.Streaming = &pipelinesv1alpha1.StreamingStatus{}
+	if pipelineInstance.Status.Streaming == nil {
+		pipelineInstance.Status.Streaming = &pipelinesv1alpha1.StreamingStatus{}
 	}
 
 	// Set start time if not already set
-	if pipelineRun.Status.StartTime == nil {
+	if pipelineInstance.Status.StartTime == nil {
 		now := metav1.Now()
-		pipelineRun.Status.StartTime = &now
-		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+		pipelineInstance.Status.StartTime = &now
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to set start time")
 			return ctrl.Result{}, err
 		}
@@ -57,23 +57,23 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 
 	// Handle deletion (finalizer cleanup)
 	const finalizerName = "filter.plainsight.ai/streaming-cleanup"
-	if !pipelineRun.DeletionTimestamp.IsZero() {
-		if controllerutil.ContainsFinalizer(pipelineRun, finalizerName) {
+	if !pipelineInstance.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(pipelineInstance, finalizerName) {
 			// Delete the Deployment
-			if err := r.deleteStreamingDeployment(ctx, pipelineRun); err != nil {
+			if err := r.deleteStreamingDeployment(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to delete streaming deployment")
 				return ctrl.Result{}, err
 			}
 
 			// Delete the Services (pipeline can be nil during deletion)
-			if err := r.deleteFilterServices(ctx, pipelineRun); err != nil {
+			if err := r.deleteFilterServices(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to delete filter services")
 				return ctrl.Result{}, err
 			}
 
 			// Remove finalizer
-			controllerutil.RemoveFinalizer(pipelineRun, finalizerName)
-			if err := r.Update(ctx, pipelineRun); err != nil {
+			controllerutil.RemoveFinalizer(pipelineInstance, finalizerName)
+			if err := r.Update(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to remove finalizer")
 				return ctrl.Result{}, err
 			}
@@ -88,61 +88,61 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 	}
 
 	// Add finalizer if not present
-	if !controllerutil.ContainsFinalizer(pipelineRun, finalizerName) {
-		controllerutil.AddFinalizer(pipelineRun, finalizerName)
-		if err := r.Update(ctx, pipelineRun); err != nil {
+	if !controllerutil.ContainsFinalizer(pipelineInstance, finalizerName) {
+		controllerutil.AddFinalizer(pipelineInstance, finalizerName)
+		if err := r.Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
 	}
 
 	// Step 1: Ensure Deployment exists
-	if err := r.ensureStreamingDeployment(ctx, pipelineRun, pipeline); err != nil {
+	if err := r.ensureStreamingDeployment(ctx, pipelineInstance, pipeline, pipelineSource); err != nil {
 		log.Error(err, "Failed to ensure streaming deployment")
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "DeploymentCreationFailed", err.Error())
-		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "DeploymentCreationFailed", err.Error())
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
 		}
 		return ctrl.Result{}, err
 	}
 
 	// Step 1.5: Ensure Services exist for filters with exposed ports
-	if err := r.ensureFilterServices(ctx, pipelineRun, pipeline); err != nil {
+	if err := r.ensureFilterServices(ctx, pipelineInstance, pipeline); err != nil {
 		log.Error(err, "Failed to ensure filter services")
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "ServiceCreationFailed", err.Error())
-		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "ServiceCreationFailed", err.Error())
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
 		}
 		return ctrl.Result{}, err
 	}
 
 	// Step 2: Update streaming status from Deployment
-	if err := r.updateStreamingStatus(ctx, pipelineRun); err != nil {
+	if err := r.updateStreamingStatus(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to update streaming status")
 		// Don't fail reconciliation, just log and continue
 	}
 
 	// Step 3: Check for idle timeout
-	if pipeline.Spec.Source.RTSP != nil && pipeline.Spec.Source.RTSP.IdleTimeout != nil {
-		if shouldComplete, reason := r.checkIdleTimeout(pipelineRun, pipeline); shouldComplete {
+	if pipelineSource != nil && pipelineSource.Spec.RTSP != nil && pipelineSource.Spec.RTSP.IdleTimeout != nil {
+		if shouldComplete, reason := r.checkIdleTimeout(pipelineInstance, pipelineSource); shouldComplete {
 			log.Info("Streaming run idle timeout reached, marking as complete", "reason", reason)
-			r.setCondition(pipelineRun, ConditionTypeSucceeded, metav1.ConditionTrue, "IdleTimeout", reason)
-			r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionFalse, "IdleTimeout", reason)
+			r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionTrue, "IdleTimeout", reason)
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "IdleTimeout", reason)
 
 			now := metav1.Now()
-			pipelineRun.Status.CompletionTime = &now
+			pipelineInstance.Status.CompletionTime = &now
 
 			// Delete the Deployment
-			if err := r.deleteStreamingDeployment(ctx, pipelineRun); err != nil {
+			if err := r.deleteStreamingDeployment(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to delete deployment after idle timeout")
 			}
 
 			// Delete the Services
-			if err := r.deleteFilterServices(ctx, pipelineRun); err != nil {
+			if err := r.deleteFilterServices(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to delete services after idle timeout")
 			}
 
-			if err := r.Status().Update(ctx, pipelineRun); err != nil {
+			if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to update status after idle timeout")
 				return ctrl.Result{}, err
 			}
@@ -151,14 +151,14 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 	}
 
 	// Step 4: Update conditions based on deployment status
-	if pipelineRun.Status.Streaming.ReadyReplicas > 0 {
-		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionTrue, "Running", "Stream is processing")
+	if pipelineInstance.Status.Streaming.ReadyReplicas > 0 {
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Running", "Stream is processing")
 		// Note: We don't set Available=True for streaming runs as they run indefinitely
 	} else {
-		r.setCondition(pipelineRun, ConditionTypeProgressing, metav1.ConditionTrue, "Starting", "Waiting for stream to become ready")
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Starting", "Waiting for stream to become ready")
 	}
 
-	if err := r.Status().Update(ctx, pipelineRun); err != nil {
+	if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to update status")
 		return ctrl.Result{}, err
 	}
@@ -168,30 +168,30 @@ func (r *PipelineRunReconciler) reconcileStreaming(ctx context.Context, pipeline
 }
 
 // ensureStreamingDeployment creates or updates the Deployment for streaming mode
-func (r *PipelineRunReconciler) ensureStreamingDeployment(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) error {
+func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) error {
 	log := logf.FromContext(ctx)
 
-	deploymentName := pipelineRun.Name + "-deploy"
+	deploymentName := pipelineInstance.Name + "-deploy"
 	deployment := &appsv1.Deployment{}
-	err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: pipelineRun.Namespace}, deployment)
+	err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: pipelineInstance.Namespace}, deployment)
 
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get deployment: %w", err)
 	}
 
 	// Build the desired Deployment spec
-	desiredDeployment := r.buildStreamingDeployment(pipelineRun, pipeline, deploymentName)
+	desiredDeployment := r.buildStreamingDeployment(pipelineInstance, pipeline, pipelineSource, deploymentName)
 
 	if apierrors.IsNotFound(err) {
 		// Create the Deployment
 		log.Info("Creating streaming deployment", "deployment", deploymentName)
-		if err := controllerutil.SetControllerReference(pipelineRun, desiredDeployment, r.Scheme); err != nil {
+		if err := controllerutil.SetControllerReference(pipelineInstance, desiredDeployment, r.Scheme); err != nil {
 			return fmt.Errorf("failed to set controller reference: %w", err)
 		}
 		if err := r.Create(ctx, desiredDeployment); err != nil {
 			return fmt.Errorf("failed to create deployment: %w", err)
 		}
-		pipelineRun.Status.Streaming.DeploymentName = deploymentName
+		pipelineInstance.Status.Streaming.DeploymentName = deploymentName
 		return nil
 	}
 
@@ -202,13 +202,13 @@ func (r *PipelineRunReconciler) ensureStreamingDeployment(ctx context.Context, p
 	if err := r.Patch(ctx, deployment, patchBase); err != nil {
 		return fmt.Errorf("failed to update deployment: %w", err)
 	}
-	pipelineRun.Status.Streaming.DeploymentName = deploymentName
+	pipelineInstance.Status.Streaming.DeploymentName = deploymentName
 
 	return nil
 }
 
 // buildStreamingDeployment constructs a Deployment for streaming mode
-func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline, deploymentName string) *appsv1.Deployment {
+func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, deploymentName string) *appsv1.Deployment {
 	replicas := int32(1)
 	maxUnavailable := intstr.FromInt32(0)
 	maxSurge := intstr.FromInt32(1)
@@ -231,11 +231,11 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 
 		// Inject RTSP environment variables first so they can be referenced in filter config
 		var envVars []corev1.EnvVar
-		if pipeline.Spec.Source.RTSP != nil {
+		if pipelineSource != nil && pipelineSource.Spec.RTSP != nil {
 			// If credentials are provided, inject internal env vars for username/password
 			// and build URL with embedded credentials
-			if pipeline.Spec.Source.RTSP.CredentialsSecret != nil {
-				secretName := pipeline.Spec.Source.RTSP.CredentialsSecret.Name
+			if pipelineSource.Spec.RTSP.CredentialsSecret != nil {
+				secretName := pipelineSource.Spec.RTSP.CredentialsSecret.Name
 				// Internal env vars for credential substitution
 				envVars = append(envVars,
 					corev1.EnvVar{
@@ -258,14 +258,14 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 					},
 				)
 				// Build URL with credential placeholders
-				rtspURL := buildRTSPURLWithCredentials(pipeline.Spec.Source.RTSP)
+				rtspURL := buildRTSPURLWithCredentials(pipelineSource.Spec.RTSP)
 				envVars = append(envVars, corev1.EnvVar{
 					Name:  "RTSP_URL",
 					Value: rtspURL,
 				})
 			} else {
 				// No credentials, build simple URL
-				rtspURL := buildRTSPURL(pipeline.Spec.Source.RTSP)
+				rtspURL := buildRTSPURL(pipelineSource.Spec.RTSP)
 				envVars = append(envVars, corev1.EnvVar{
 					Name:  "RTSP_URL",
 					Value: rtspURL,
@@ -297,10 +297,10 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deploymentName,
-			Namespace: pipelineRun.Namespace,
+			Namespace: pipelineInstance.Namespace,
 			Labels: map[string]string{
-				"app":         "pipeline-stream",
-				"pipelinerun": pipelineRun.Name,
+				"app":              "pipeline-stream",
+				"pipelineinstance": pipelineInstance.Name,
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -314,15 +314,15 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 			},
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"app":         "pipeline-stream",
-					"pipelinerun": pipelineRun.Name,
+					"app":              "pipeline-stream",
+					"pipelineinstance": pipelineInstance.Name,
 				},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app":         "pipeline-stream",
-						"pipelinerun": pipelineRun.Name,
+						"app":              "pipeline-stream",
+						"pipelineinstance": pipelineInstance.Name,
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -338,31 +338,31 @@ func (r *PipelineRunReconciler) buildStreamingDeployment(pipelineRun *pipelinesv
 }
 
 // updateStreamingStatus updates the streaming status from the Deployment and Pods
-func (r *PipelineRunReconciler) updateStreamingStatus(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) error {
-	if pipelineRun.Status.Streaming == nil || pipelineRun.Status.Streaming.DeploymentName == "" {
+func (r *PipelineInstanceReconciler) updateStreamingStatus(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) error {
+	if pipelineInstance.Status.Streaming == nil || pipelineInstance.Status.Streaming.DeploymentName == "" {
 		return nil
 	}
 
 	deployment := &appsv1.Deployment{}
-	err := r.Get(ctx, types.NamespacedName{Name: pipelineRun.Status.Streaming.DeploymentName, Namespace: pipelineRun.Namespace}, deployment)
+	err := r.Get(ctx, types.NamespacedName{Name: pipelineInstance.Status.Streaming.DeploymentName, Namespace: pipelineInstance.Namespace}, deployment)
 	if err != nil {
 		return fmt.Errorf("failed to get deployment: %w", err)
 	}
 
 	// Update replica counts
-	pipelineRun.Status.Streaming.ReadyReplicas = deployment.Status.ReadyReplicas
-	pipelineRun.Status.Streaming.UpdatedReplicas = deployment.Status.UpdatedReplicas
-	pipelineRun.Status.Streaming.AvailableReplicas = deployment.Status.AvailableReplicas
+	pipelineInstance.Status.Streaming.ReadyReplicas = deployment.Status.ReadyReplicas
+	pipelineInstance.Status.Streaming.UpdatedReplicas = deployment.Status.UpdatedReplicas
+	pipelineInstance.Status.Streaming.AvailableReplicas = deployment.Status.AvailableReplicas
 
 	// Track if deployment just became ready
-	if deployment.Status.ReadyReplicas > 0 && pipelineRun.Status.Streaming.LastReadyTime == nil {
+	if deployment.Status.ReadyReplicas > 0 && pipelineInstance.Status.Streaming.LastReadyTime == nil {
 		now := metav1.Now()
-		pipelineRun.Status.Streaming.LastReadyTime = &now
+		pipelineInstance.Status.Streaming.LastReadyTime = &now
 	}
 
 	// Count container restarts from pods
 	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(pipelineRun.Namespace), client.MatchingLabels{"pipelinerun": pipelineRun.Name}); err != nil {
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{"pipelineinstance": pipelineInstance.Name}); err != nil {
 		return fmt.Errorf("failed to list pods: %w", err)
 	}
 
@@ -372,39 +372,39 @@ func (r *PipelineRunReconciler) updateStreamingStatus(ctx context.Context, pipel
 			totalRestarts += containerStatus.RestartCount
 		}
 	}
-	pipelineRun.Status.Streaming.ContainerRestarts = totalRestarts
+	pipelineInstance.Status.Streaming.ContainerRestarts = totalRestarts
 
 	return nil
 }
 
 // checkIdleTimeout checks if the streaming run should complete due to idle timeout
-func (r *PipelineRunReconciler) checkIdleTimeout(pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) (bool, string) {
-	if pipeline.Spec.Source.RTSP == nil || pipeline.Spec.Source.RTSP.IdleTimeout == nil {
+func (r *PipelineInstanceReconciler) checkIdleTimeout(pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipelineSource *pipelinesv1alpha1.PipelineSource) (bool, string) {
+	if pipelineSource == nil || pipelineSource.Spec.RTSP == nil || pipelineSource.Spec.RTSP.IdleTimeout == nil {
 		return false, ""
 	}
 
 	// Ensure streaming status exists
-	if pipelineRun.Status.Streaming == nil {
+	if pipelineInstance.Status.Streaming == nil {
 		return false, ""
 	}
 
-	idleTimeout := pipeline.Spec.Source.RTSP.IdleTimeout.Duration
+	idleTimeout := pipelineSource.Spec.RTSP.IdleTimeout.Duration
 
 	// Check if all replicas are unready
-	if pipelineRun.Status.Streaming.ReadyReplicas > 0 {
+	if pipelineInstance.Status.Streaming.ReadyReplicas > 0 {
 		// Stream is ready, reset idle tracking
 		return false, ""
 	}
 
 	// If LastReadyTime is set, check how long it's been unready
-	if pipelineRun.Status.Streaming.LastReadyTime != nil {
-		unreadyDuration := time.Since(pipelineRun.Status.Streaming.LastReadyTime.Time)
+	if pipelineInstance.Status.Streaming.LastReadyTime != nil {
+		unreadyDuration := time.Since(pipelineInstance.Status.Streaming.LastReadyTime.Time)
 		if unreadyDuration >= idleTimeout {
 			return true, fmt.Sprintf("Stream has been unready for %v (idle timeout: %v)", unreadyDuration, idleTimeout)
 		}
-	} else if pipelineRun.Status.StartTime != nil {
+	} else if pipelineInstance.Status.StartTime != nil {
 		// Never became ready, check time since start
-		unreadyDuration := time.Since(pipelineRun.Status.StartTime.Time)
+		unreadyDuration := time.Since(pipelineInstance.Status.StartTime.Time)
 		if unreadyDuration >= idleTimeout {
 			return true, fmt.Sprintf("Stream never became ready after %v (idle timeout: %v)", unreadyDuration, idleTimeout)
 		}
@@ -413,16 +413,16 @@ func (r *PipelineRunReconciler) checkIdleTimeout(pipelineRun *pipelinesv1alpha1.
 	return false, ""
 }
 
-// deleteStreamingDeployment deletes the Deployment for a streaming PipelineRun
-func (r *PipelineRunReconciler) deleteStreamingDeployment(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) error {
-	if pipelineRun.Status.Streaming == nil || pipelineRun.Status.Streaming.DeploymentName == "" {
+// deleteStreamingDeployment deletes the Deployment for a streaming PipelineInstance
+func (r *PipelineInstanceReconciler) deleteStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) error {
+	if pipelineInstance.Status.Streaming == nil || pipelineInstance.Status.Streaming.DeploymentName == "" {
 		return nil
 	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      pipelineRun.Status.Streaming.DeploymentName,
-			Namespace: pipelineRun.Namespace,
+			Name:      pipelineInstance.Status.Streaming.DeploymentName,
+			Namespace: pipelineInstance.Namespace,
 		},
 	}
 
@@ -477,7 +477,7 @@ func buildRTSPURLWithCredentials(rtspSource *pipelinesv1alpha1.RTSPSource) strin
 }
 
 // ensureFilterServices creates or updates Kubernetes Services for filters with exposed ports
-func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun, pipeline *pipelinesv1alpha1.Pipeline) error {
+func (r *PipelineInstanceReconciler) ensureFilterServices(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline) error {
 	log := logf.FromContext(ctx)
 
 	if len(pipeline.Spec.Services) == 0 {
@@ -493,10 +493,10 @@ func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipeli
 	// Create or update each service
 	for filterName, services := range servicesByFilter {
 		for idx, svcPort := range services {
-			serviceName := fmt.Sprintf("%s-%s-%d", pipelineRun.Name, filterName, idx)
+			serviceName := fmt.Sprintf("%s-%s-%d", pipelineInstance.Name, filterName, idx)
 
 			service := &corev1.Service{}
-			err := r.Get(ctx, types.NamespacedName{Name: serviceName, Namespace: pipelineRun.Namespace}, service)
+			err := r.Get(ctx, types.NamespacedName{Name: serviceName, Namespace: pipelineInstance.Namespace}, service)
 
 			targetPort := svcPort.Port
 			if svcPort.TargetPort != nil {
@@ -511,17 +511,17 @@ func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipeli
 			desiredService := &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      serviceName,
-					Namespace: pipelineRun.Namespace,
+					Namespace: pipelineInstance.Namespace,
 					Labels: map[string]string{
-						"app":         "pipeline-stream",
-						"pipelinerun": pipelineRun.Name,
-						"filter":      filterName,
+						"app":              "pipeline-stream",
+						"pipelineinstance": pipelineInstance.Name,
+						"filter":           filterName,
 					},
 				},
 				Spec: corev1.ServiceSpec{
 					Selector: map[string]string{
-						"app":         "pipeline-stream",
-						"pipelinerun": pipelineRun.Name,
+						"app":              "pipeline-stream",
+						"pipelineinstance": pipelineInstance.Name,
 					},
 					Ports: []corev1.ServicePort{
 						{
@@ -538,7 +538,7 @@ func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipeli
 			if apierrors.IsNotFound(err) {
 				// Create the Service
 				log.Info("Creating filter service", "service", serviceName, "filter", filterName, "port", svcPort.Port)
-				if err := controllerutil.SetControllerReference(pipelineRun, desiredService, r.Scheme); err != nil {
+				if err := controllerutil.SetControllerReference(pipelineInstance, desiredService, r.Scheme); err != nil {
 					return fmt.Errorf("failed to set controller reference on service %s: %w", serviceName, err)
 				}
 				if err := r.Create(ctx, desiredService); err != nil {
@@ -561,16 +561,16 @@ func (r *PipelineRunReconciler) ensureFilterServices(ctx context.Context, pipeli
 	return nil
 }
 
-// deleteFilterServices deletes all Services created for this PipelineRun's filters
+// deleteFilterServices deletes all Services created for this PipelineInstance's filters
 // Uses label selectors to find services, so it works even if the Pipeline is deleted
-func (r *PipelineRunReconciler) deleteFilterServices(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) error {
+func (r *PipelineInstanceReconciler) deleteFilterServices(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) error {
 	log := logf.FromContext(ctx)
 
-	// List all services with the pipelinerun label
+	// List all services with the pipelineinstance label
 	serviceList := &corev1.ServiceList{}
 	if err := r.List(ctx, serviceList,
-		client.InNamespace(pipelineRun.Namespace),
-		client.MatchingLabels{"pipelinerun": pipelineRun.Name}); err != nil {
+		client.InNamespace(pipelineInstance.Namespace),
+		client.MatchingLabels{"pipelineinstance": pipelineInstance.Name}); err != nil {
 		return fmt.Errorf("failed to list services: %w", err)
 	}
 

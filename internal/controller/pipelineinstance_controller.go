@@ -77,8 +77,8 @@ type ValkeyClientInterface interface {
 	DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error
 }
 
-// PipelineRunReconciler reconciles a PipelineRun object
-type PipelineRunReconciler struct {
+// PipelineInstanceReconciler reconciles a PipelineInstance object
+type PipelineInstanceReconciler struct {
 	client.Client
 	Scheme         *runtime.Scheme
 	ValkeyClient   ValkeyClientInterface
@@ -87,10 +87,11 @@ type PipelineRunReconciler struct {
 	ClaimerImage   string // Image for the claimer init container
 }
 
-// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineruns,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineruns/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineruns/finalizers,verbs=update
+// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances/finalizers,verbs=update
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelines,verbs=get;list;watch
+// +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelinesources,verbs=get;list;watch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -106,37 +107,48 @@ type PipelineRunReconciler struct {
 //
 // The reconciler branches on Pipeline mode (Batch or Stream) and delegates to
 // mode-specific reconciliation functions defined in:
-// - pipelinerun_controller_batch.go: Batch mode reconciliation
-// - pipelinerun_controller_streaming.go: Streaming mode reconciliation
-func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// - pipelineinstance_controller_batch.go: Batch mode reconciliation
+// - pipelineinstance_controller_streaming.go: Streaming mode reconciliation
+func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	// Fetch the PipelineRun
-	pipelineRun := &pipelinesv1alpha1.PipelineRun{}
-	if err := r.Get(ctx, req.NamespacedName, pipelineRun); err != nil {
+	// Fetch the PipelineInstance
+	pipelineInstance := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(ctx, req.NamespacedName, pipelineInstance); err != nil {
 		if apierrors.IsNotFound(err) {
-			log.Info("PipelineRun resource not found, ignoring")
+			log.Info("PipelineInstance resource not found, ignoring")
 			return ctrl.Result{}, nil
 		}
-		log.Error(err, "Failed to get PipelineRun")
+		log.Error(err, "Failed to get PipelineInstance")
 		return ctrl.Result{}, err
 	}
 
 	// Get the Pipeline resource
-	pipeline, err := r.getPipeline(ctx, pipelineRun)
+	pipeline, err := r.getPipeline(ctx, pipelineInstance)
 	if err != nil {
-		// If the PipelineRun is being deleted, we need to proceed with cleanup even if Pipeline is missing
-		if !pipelineRun.DeletionTimestamp.IsZero() {
-			log.Info("Pipeline not found but PipelineRun is being deleted, proceeding with cleanup")
+		// If the PipelineInstance is being deleted, we need to proceed with cleanup even if Pipeline is missing
+		if !pipelineInstance.DeletionTimestamp.IsZero() {
+			log.Info("Pipeline not found but PipelineInstance is being deleted, proceeding with cleanup")
 			// Attempt cleanup for both modes since we don't know which mode it was
 			// Streaming mode uses finalizers, batch mode uses owner references
 			// Try streaming cleanup first (it will no-op if no finalizer is present)
-			return r.reconcileStreaming(ctx, pipelineRun, nil)
+			return r.reconcileStreaming(ctx, pipelineInstance, nil, nil)
 		}
 
 		log.Error(err, "Failed to get Pipeline")
-		r.setCondition(pipelineRun, ConditionTypeDegraded, metav1.ConditionTrue, "PipelineNotFound", err.Error())
-		if err := r.Status().Update(ctx, pipelineRun); err != nil {
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "PipelineNotFound", err.Error())
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
+			log.Error(err, "Failed to update status")
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Get the PipelineSource resource
+	pipelineSource, err := r.getPipelineSource(ctx, pipelineInstance)
+	if err != nil {
+		log.Error(err, "Failed to get PipelineSource")
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "PipelineSourceNotFound", err.Error())
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
 		}
 		return ctrl.Result{}, err
@@ -149,32 +161,50 @@ func (r *PipelineRunReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	if mode == pipelinesv1alpha1.PipelineModeStream {
-		return r.reconcileStreaming(ctx, pipelineRun, pipeline)
+		return r.reconcileStreaming(ctx, pipelineInstance, pipeline, pipelineSource)
 	}
 
 	// Default: Batch mode
-	return r.reconcileBatch(ctx, pipelineRun, pipeline)
+	return r.reconcileBatch(ctx, pipelineInstance, pipeline, pipelineSource)
 }
 
 // Helper functions shared between batch and streaming modes are defined below.
 // Mode-specific reconciliation logic is in:
-// - pipelinerun_controller_batch.go
-// - pipelinerun_controller_streaming.go
+// - pipelineinstance_controller_batch.go
+// - pipelineinstance_controller_streaming.go
 
-// getCredentials retrieves S3 credentials for the pipeline source secret, if configured.
-func (r *PipelineRunReconciler) getCredentials(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline) (string, string, error) {
-	if pipeline.Spec.Source.Bucket == nil {
+// getPipelineSource retrieves the PipelineSource resource referenced by the PipelineInstance
+func (r *PipelineInstanceReconciler) getPipelineSource(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (*pipelinesv1alpha1.PipelineSource, error) {
+	namespace := pipelineInstance.Namespace
+	if pipelineInstance.Spec.SourceRef.Namespace != nil {
+		namespace = *pipelineInstance.Spec.SourceRef.Namespace
+	}
+
+	pipelineSource := &pipelinesv1alpha1.PipelineSource{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      pipelineInstance.Spec.SourceRef.Name,
+		Namespace: namespace,
+	}, pipelineSource); err != nil {
+		return nil, fmt.Errorf("failed to get pipeline source: %w", err)
+	}
+
+	return pipelineSource, nil
+}
+
+// getCredentials retrieves S3 credentials for the pipelineSource bucket secret, if configured.
+func (r *PipelineInstanceReconciler) getCredentials(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipelineSource *pipelinesv1alpha1.PipelineSource) (string, string, error) {
+	if pipelineSource.Spec.Bucket == nil {
 		return "", "", nil
 	}
 
-	secretRef := pipeline.Spec.Source.Bucket.CredentialsSecret
+	secretRef := pipelineSource.Spec.Bucket.CredentialsSecret
 	if secretRef == nil {
 		return "", "", nil
 	}
 
 	namespace := secretRef.Namespace
 	if namespace == "" {
-		namespace = pipeline.Namespace
+		namespace = pipelineInstance.Namespace
 	}
 
 	secret := &corev1.Secret{}
@@ -192,13 +222,13 @@ func (r *PipelineRunReconciler) getCredentials(ctx context.Context, pipeline *pi
 	return accessKey, secretKey, nil
 }
 
-// listBucketFiles lists objects available to process for the pipeline source configuration.
-func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *pipelinesv1alpha1.Pipeline, accessKey, secretKey string) ([]string, error) {
-	if pipeline.Spec.Source.Bucket == nil {
-		return nil, fmt.Errorf("pipeline has no bucket source configured")
+// listBucketFiles lists objects available to process for the pipelineSource configuration.
+func (r *PipelineInstanceReconciler) listBucketFiles(ctx context.Context, pipelineSource *pipelinesv1alpha1.PipelineSource, accessKey, secretKey string) ([]string, error) {
+	if pipelineSource.Spec.Bucket == nil {
+		return nil, fmt.Errorf("pipelineSource has no bucket source configured")
 	}
 
-	bucket := pipeline.Spec.Source.Bucket
+	bucket := pipelineSource.Spec.Bucket
 
 	endpoint := bucket.Endpoint
 	useSSL := true
@@ -251,16 +281,16 @@ func (r *PipelineRunReconciler) listBucketFiles(ctx context.Context, pipeline *p
 	return files, nil
 }
 
-// getPipeline retrieves the Pipeline resource referenced by the PipelineRun
-func (r *PipelineRunReconciler) getPipeline(ctx context.Context, pipelineRun *pipelinesv1alpha1.PipelineRun) (*pipelinesv1alpha1.Pipeline, error) {
-	namespace := pipelineRun.Namespace
-	if pipelineRun.Spec.PipelineRef.Namespace != nil {
-		namespace = *pipelineRun.Spec.PipelineRef.Namespace
+// getPipeline retrieves the Pipeline resource referenced by the PipelineInstance
+func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (*pipelinesv1alpha1.Pipeline, error) {
+	namespace := pipelineInstance.Namespace
+	if pipelineInstance.Spec.PipelineRef.Namespace != nil {
+		namespace = *pipelineInstance.Spec.PipelineRef.Namespace
 	}
 
 	pipeline := &pipelinesv1alpha1.Pipeline{}
 	if err := r.Get(ctx, types.NamespacedName{
-		Name:      pipelineRun.Spec.PipelineRef.Name,
+		Name:      pipelineInstance.Spec.PipelineRef.Name,
 		Namespace: namespace,
 	}, pipeline); err != nil {
 		return nil, fmt.Errorf("failed to get pipeline: %w", err)
@@ -269,26 +299,26 @@ func (r *PipelineRunReconciler) getPipeline(ctx context.Context, pipelineRun *pi
 	return pipeline, nil
 }
 
-// setCondition sets or updates a condition in the PipelineRun status
-func (r *PipelineRunReconciler) setCondition(pipelineRun *pipelinesv1alpha1.PipelineRun, conditionType string, status metav1.ConditionStatus, reason, message string) {
+// setCondition sets or updates a condition in the PipelineInstance status
+func (r *PipelineInstanceReconciler) setCondition(pipelineInstance *pipelinesv1alpha1.PipelineInstance, conditionType string, status metav1.ConditionStatus, reason, message string) {
 	condition := metav1.Condition{
 		Type:               conditionType,
 		Status:             status,
-		ObservedGeneration: pipelineRun.Generation,
+		ObservedGeneration: pipelineInstance.Generation,
 		LastTransitionTime: metav1.Now(),
 		Reason:             reason,
 		Message:            message,
 	}
 
-	meta.SetStatusCondition(&pipelineRun.Status.Conditions, condition)
+	meta.SetStatusCondition(&pipelineInstance.Status.Conditions, condition)
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *PipelineRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *PipelineInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&pipelinesv1alpha1.PipelineRun{}).
+		For(&pipelinesv1alpha1.PipelineInstance{}).
 		Owns(&batchv1.Job{}).
 		Owns(&appsv1.Deployment{}).
-		Named("pipelinerun").
+		Named("pipelineinstance").
 		Complete(r)
 }

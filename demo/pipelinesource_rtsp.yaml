@@ -1,0 +1,11 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineSource
+metadata:
+  name: pipelinesource-rtsp
+spec:
+  rtsp:
+    host: rtsp-video-stream
+    port: 8554
+    path: /stream
+    # credentialsSecret:
+    #   name: axis-rtsp-credentials

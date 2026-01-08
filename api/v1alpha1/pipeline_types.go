@@ -102,25 +102,10 @@ type RTSPSource struct {
 	CredentialsSecret *SecretReference `json:"credentialsSecret,omitempty"`
 
 	// idleTimeout defines the duration after which a continuously unready stream
-	// will cause the PipelineRun to complete and the Deployment to be deleted.
+	// will cause the PipelineInstance to complete and the Deployment to be deleted.
 	// If not set, the stream will run indefinitely.
 	// +optional
 	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
-}
-
-// Source defines the input source for the pipeline
-// Supports bucket (S3-compatible object storage) or rtsp (streaming video)
-// Exactly one source type must be specified based on the pipeline mode
-type Source struct {
-	// bucket defines an S3-compatible object storage source
-	// Required when mode is Batch, forbidden when mode is Stream
-	// +optional
-	Bucket *BucketSource `json:"bucket,omitempty"`
-
-	// rtsp defines an RTSP stream source
-	// Required when mode is Stream, forbidden when mode is Batch
-	// +optional
-	RTSP *RTSPSource `json:"rtsp,omitempty"`
 }
 
 // ConfigVar defines a configuration key-value pair that will be injected
@@ -232,12 +217,6 @@ type PipelineSpec struct {
 	// +kubebuilder:default=batch
 	Mode PipelineMode `json:"mode,omitempty"`
 
-	// source defines the input source for the pipeline
-	// For Batch mode: source.bucket is required, source.rtsp is forbidden
-	// For Stream mode: source.rtsp is required, source.bucket is forbidden
-	// +kubebuilder:validation:Required
-	Source Source `json:"source"`
-
 	// filters is an ordered list of processing steps to apply to the input data
 	// Filters are executed sequentially in the order they are defined
 	// +optional
@@ -246,7 +225,7 @@ type PipelineSpec struct {
 
 	// services defines Kubernetes Services to expose filter ports
 	// Only applies to Stream mode. Multiple services can expose different ports for the same filter.
-	// Service naming: <pipelinerun-name>-<filter-name>-<index>
+	// Service naming: <pipelineinstance-name>-<filter-name>-<index>
 	// +optional
 	Services []ServicePort `json:"services,omitempty"`
 

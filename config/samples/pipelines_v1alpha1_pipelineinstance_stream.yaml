@@ -1,11 +1,15 @@
 apiVersion: filter.plainsight.ai/v1alpha1
-kind: PipelineRun
+kind: PipelineInstance
 metadata:
-  name: pipelinerun-stream-example
+  name: pipelineinstance-stream-example
 spec:
   # Reference to the streaming Pipeline
   pipelineRef:
     name: pipeline-rtsp-example
+
+  # Reference to RTSP source configuration
+  sourceRef:
+    name: source-rtsp-sample
 
   # Note: execution config (parallelism, maxAttempts, pendingTimeout)
   # is only applicable to Batch mode pipelines

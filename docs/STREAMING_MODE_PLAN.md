@@ -4,10 +4,10 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
 
 ## Summary
 - Mode is defined on `Pipeline.spec.mode` (`Batch` default, `Stream` alternative).
-- `Stream` mode uses a `Deployment` per `PipelineRun` with `replicas: 1`.
-- RTSP source configuration lives in `Pipeline.spec.source.rtsp`.
+- `Stream` mode uses a `Deployment` per `PipelineInstance` with `replicas: 1`.
+- RTSP source configuration lives in `PipelineSource.spec.rtsp` (allows reusing the same Pipeline with different sources).
 - The controller injects `RTSP_URL` and (optional) credentials as env vars for filters to consume directly (e.g., the `video-in` filter sets `sources=$(RTSP_URL)` or a full `rtsp://username:password@host:port/path`). No ingest sidecar is required.
-- Optional `idleTimeout` can complete and clean up a streaming run when the stream is idle for a configured duration.
+- Optional `idleTimeout` can complete and clean up a streaming instance when the stream is idle for a configured duration.
 
 ## API Changes
 
@@ -15,31 +15,36 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
 - Add `spec.mode`:
   - Enum: `Batch | Stream`.
   - Default: `Batch`.
-- Add `spec.source.rtsp` (mutually exclusive with `spec.source.bucket`):
-  - `url` (string, required)
-  - `credentialsSecret` (optional; keys: `username`, `password`)
-  - `transport` (optional; enum: `tcp|udp|auto`, default `tcp`)
-  - `idleTimeout` (optional `metav1.Duration`): continuous Unready ≥ idleTimeout → controller completes the run and deletes the Deployment.
-- Validation (controller-level with CRD hints):
-  - If `mode=Batch`: require `source.bucket`, forbid `source.rtsp`.
-  - If `mode=Stream`: require `source.rtsp`, forbid `source.bucket`.
+- No `source` field (moved to PipelineSource for reusability).
 
-### PipelineRun (api/v1alpha1/pipelinerun_types.go)
-- No new spec fields (no `replicas` knob).
+### PipelineSource (api/v1alpha1/pipelinesource_types.go)
+- Define `spec.bucket` for Batch mode sources:
+  - `name`, `prefix`, `endpoint`, `region`, `credentialsSecret`, etc.
+- Define `spec.rtsp` for Stream mode sources:
+  - `host` (string, required), `port` (int, default 554), `path` (string, required)
+  - `credentialsSecret` (optional; keys: `username`, `password`)
+  - `idleTimeout` (optional `metav1.Duration`): continuous Unready ≥ idleTimeout → controller completes the instance and deletes the Deployment.
+
+### PipelineInstance (api/v1alpha1/pipelineinstance_types.go)
+- `spec.pipelineRef` references the Pipeline.
+- `spec.sourceRef` references the PipelineSource.
+- Validation (controller-level):
+  - If Pipeline `mode=Batch`: require source with `bucket`, forbid `rtsp`.
+  - If Pipeline `mode=Stream`: require source with `rtsp`, forbid `bucket`.
 - Optional `status.streaming` block for observability:
   - `readyReplicas`, `updatedReplicas`, `availableReplicas`
   - `containerRestarts` (aggregate), `lastReadyTime`, `lastFrameAt` (best-effort)
 
-## Controller Changes (internal/controller/pipelinerun_controller.go)
+## Controller Changes (internal/controller/pipelineinstance_controller.go)
 
 ### Mode Branching
-- Fetch referenced Pipeline and branch by `pipeline.spec.mode`:
+- Fetch referenced Pipeline and PipelineSource, then branch by `pipeline.spec.mode`:
   - `Batch` → existing path (S3 list → Valkey XADD → Job). Unchanged.
   - `Stream` → streaming path below (no Valkey, no Job).
 
 ### Streaming Path
-- `ensureDeployment(ctx, pr, pipeline)`:
-  - Create/Update `apps/v1.Deployment` named `<pipelinerun-name>-deploy`.
+- `ensureDeployment(ctx, pi, pipeline, source)`:
+  - Create/Update `apps/v1.Deployment` named `<pipelineinstance-name>-deploy`.
   - `replicas: 1`, `strategy: RollingUpdate (maxUnavailable=0, maxSurge=1)`.
   - Pod template:
     - No dedicated ServiceAccount required; pods run with the namespace default. `restartPolicy: Always`.
@@ -49,9 +54,9 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
   - `Progressing=True` until desired replicas ready; `Available=True` when `readyReplicas == 1`.
   - Aggregate pod/container restarts; populate `status.streaming`.
 - Idle handling:
-  - If `rtsp.idleTimeout` set and the streaming pod remains Unready (no ready containers) for ≥ idleTimeout, mark run Succeeded, set `completionTime`, and delete the Deployment.
+  - If `rtsp.idleTimeout` set and the streaming pod remains Unready (no ready containers) for ≥ idleTimeout, mark instance Succeeded, set `completionTime`, and delete the Deployment.
 - Finalizers and cleanup:
-  - On `PipelineRun` deletion, delete owned Deployment and remove finalizer when gone.
+  - On `PipelineInstance` deletion, delete owned Deployment and remove finalizer when gone.
 - Watches/Ownership:
   - Own `Deployments`; watch their `ReplicaSets`/`Pods` for status updates (in addition to existing Jobs/Pods).
 
@@ -59,6 +64,7 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
 - Add apps/v1 permissions to controller role:
   - `deployments;replicasets: get, list, watch, create, update, patch, delete`.
 - Keep existing `jobs`, `pods`, `pods/status`, `secrets` permissions.
+- Add `pipelinesources: get, list, watch` for reading source configuration.
 
 ## Manifests & Charts
 - Regenerate CRDs and DeepCopy: `make manifests generate`.
@@ -66,12 +72,14 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
 - No feature flags; Valkey stays mandatory for batch mode.
 
 ## Samples
-- `config/samples/pipeline_rtsp.yaml` (mode: Stream):
+- `config/samples/pipelines_v1alpha1_pipeline_rtsp.yaml` (mode: Stream):
   - `spec.mode: Stream`
-  - `spec.source.rtsp.url: rtsp://...`
-  - Optional `credentialsSecret`
   - Filters set the `video-in` source to RTSP, e.g. `config: - name: sources value: $(RTSP_URL)` (or a full `rtsp://username:password@host:port/path`).
-- `config/samples/pipelinerun_stream.yaml`: minimal `PipelineRun` referencing the Pipeline.
+- `config/samples/pipelines_v1alpha1_pipelinesource_rtsp.yaml`:
+  - `spec.rtsp` with `host`, `port`, `path`
+  - Optional `credentialsSecret`
+- `config/samples/pipelines_v1alpha1_pipelineinstance_stream.yaml`:
+  - References the Pipeline and PipelineSource
 
 ## Testing
 - Unit tests:
@@ -81,21 +89,21 @@ This plan introduces a "streaming" execution mode where a Pipeline processes an 
   - Idle timeout completion path.
 - E2E (Kind):
   - Deploy MediaMTX RTSP server; publish short test stream via ffmpeg.
-  - Apply RTSP Pipeline + PipelineRun, assert Deployment ready and stable.
-  - If `idleTimeout` set, stop source and verify run completes and Deployment is removed.
+  - Apply RTSP Pipeline + PipelineSource + PipelineInstance, assert Deployment ready and stable.
+  - If `idleTimeout` set, stop source and verify instance completes and Deployment is removed.
 
 ## Observability
 - Controller metrics (optional additions):
-  - `stream_ready_replicas`, `stream_container_restarts`, `stream_run_status` gauge.
+  - `stream_ready_replicas`, `stream_container_restarts`, `stream_instance_status` gauge.
 - Logging: stream connectivity (ready/unready), disconnects/reconnects, idle completions.
 
 ## Open Items To Confirm
-- `idleTimeout` semantics: continuous Unready ≥ `idleTimeout` → complete run and delete Deployment — acceptable?
-- No ingest sidecar (filters read RTSP directly). 
+- `idleTimeout` semantics: continuous Unready ≥ `idleTimeout` → complete instance and delete Deployment — acceptable?
+- No ingest sidecar (filters read RTSP directly).
 - RTSP credentials: separate `username`/`password` keys in Secret (preferred), not embedded in URL.
 
 ## Next Steps
-1. Implement CRD changes (Pipeline.mode, Source.rtsp with optional idleTimeout).
+1. Implement CRD changes (Pipeline.mode, PipelineSource with rtsp/bucket, PipelineInstance with sourceRef).
 2. `make manifests generate` and commit updated CRDs.
 3. Update controller: streaming branch (ensureDeployment, status, idle handling, finalizer).
 4. Add apps RBAC, run `make manifests` again.

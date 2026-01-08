@@ -6,26 +6,6 @@ spec:
   # Stream mode: processes RTSP streams using a Deployment
   mode: stream
 
-  source:
-    # RTSP source configuration
-    rtsp:
-      # RTSP server host (hostname or IP)
-      host: rtsp-video-stream.default
-
-      # RTSP server port (default: 554)
-      port: 8554
-
-      # RTSP stream path
-      path: /stream
-
-      # Optional: credentials for authenticated streams
-      # credentialsSecret:
-      #   name: rtsp-credentials
-      #   # Expected keys in secret: username, password
-
-      # Optional: idle timeout - complete the run if stream is unready for this duration
-      # If not set, the stream will run indefinitely
-      # idleTimeout: 5m
   services:
     - name: webvis
       port: 8080

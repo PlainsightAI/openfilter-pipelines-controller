@@ -7,13 +7,6 @@ metadata:
   name: pipeline-advanced-sample
 spec:
   videoInputPath: /ws/input.mp4
-  source:
-    bucket:
-      name: video-processing-input
-      prefix: raw-videos/
-      region: us-east-1
-      credentialsSecret:
-        name: s3-credentials
 
   filters:
     # First filter: Extract metadata

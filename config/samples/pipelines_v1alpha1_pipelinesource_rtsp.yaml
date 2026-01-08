@@ -1,0 +1,27 @@
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineSource
+metadata:
+  labels:
+    app.kubernetes.io/name: openfilter-pipelines-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: source-rtsp-sample
+spec:
+  # RTSP stream source for streaming mode pipelines
+  rtsp:
+    # RTSP server host (hostname or IP)
+    host: rtsp-video-stream.default
+
+    # RTSP server port (default: 554)
+    port: 8554
+
+    # RTSP stream path
+    path: /stream
+
+    # Optional: credentials for authenticated streams
+    # credentialsSecret:
+    #   name: rtsp-credentials
+    #   # Expected keys in secret: username, password
+
+    # Optional: idle timeout - complete the instance if stream is unready for this duration
+    # If not set, the stream will run indefinitely
+    # idleTimeout: 5m

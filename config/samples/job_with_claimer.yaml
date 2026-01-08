@@ -2,7 +2,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: example-pipeline-run
+  name: example-pipeline-instance
   namespace: default
 spec:
   completionMode: NonIndexed
@@ -13,7 +13,7 @@ spec:
   template:
     metadata:
       labels:
-        filter.plainsight.ai/run: "example-run-abc123"
+        filter.plainsight.ai/instance: "example-instance-abc123"
     spec:
       # No special ServiceAccount required
       restartPolicy: Never
@@ -31,11 +31,11 @@ spec:
             - name: VALKEY_URL
               value: "valkey:6379"
 
-            # Stream and consumer group from PipelineRun
+            # Stream and consumer group from PipelineInstance
             - name: STREAM
-              value: "pr:example-run-abc123:work"
+              value: "pi:example-instance-abc123:work"
             - name: GROUP
-              value: "cg:example-run-abc123"
+              value: "cg:example-instance-abc123"
 
             # Pod identity (auto-injected by Kubernetes)
             - name: POD_NAME

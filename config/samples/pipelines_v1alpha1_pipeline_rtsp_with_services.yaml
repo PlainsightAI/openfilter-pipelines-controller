@@ -6,13 +6,6 @@ spec:
   # Stream mode: processes RTSP streams using a Deployment
   mode: Stream
 
-  source:
-    # RTSP source configuration
-    rtsp:
-      host: camera.example.com
-      port: 554
-      path: /stream1
-
   # Filters process the RTSP stream
   filters:
     - name: video-in
@@ -88,8 +81,8 @@ spec:
       targetPort: 8080
       protocol: TCP
 
-  # Service naming convention: <pipelinerun-name>-<filter-name>-<index>
-  # For a PipelineRun named "my-stream-run", this creates:
-  #   - my-stream-run-video-out-0 (port 8554)
-  #   - my-stream-run-detection-0 (port 9090)
-  #   - my-stream-run-video-out-1 (port 8080)
+  # Service naming convention: <pipelineinstance-name>-<filter-name>-<index>
+  # For a PipelineInstance named "my-stream-instance", this creates:
+  #   - my-stream-instance-video-out-0 (port 8554)
+  #   - my-stream-instance-detection-0 (port 9090)
+  #   - my-stream-instance-video-out-1 (port 8080)

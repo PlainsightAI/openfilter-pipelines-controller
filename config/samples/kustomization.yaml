@@ -2,5 +2,7 @@
 resources:
 - pipelines_v1alpha1_pipeline.yaml
 - pipelines_v1alpha1_pipeline_failure.yaml
-- pipelines_v1alpha1_pipelinerun.yaml
+- pipelines_v1alpha1_pipelinesource_bucket.yaml
+- pipelines_v1alpha1_pipelinesource_rtsp.yaml
+- pipelines_v1alpha1_pipelineinstance.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

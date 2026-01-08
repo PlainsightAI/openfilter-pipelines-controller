@@ -5,13 +5,6 @@ metadata:
 spec:
   # Stream mode: processes RTSP streams using a Deployment
   mode: stream
-  source:
-    rtsp:
-      host: rtsp-video-stream
-      port: 8554
-      path: /stream
-      # credentialsSecret:
-      #   name: axis-rtsp-credentials
   services:
     - name: webvis
       port: 8080

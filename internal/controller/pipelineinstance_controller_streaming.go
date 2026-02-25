@@ -434,46 +434,38 @@ func (r *PipelineInstanceReconciler) deleteStreamingDeployment(ctx context.Conte
 	return nil
 }
 
-// buildRTSPURL constructs an RTSP URL from RTSPSource components without credentials
-// Format: rtsp://host:port/path
-func buildRTSPURL(rtspSource *pipelinesv1alpha1.RTSPSource) string {
-	host := rtspSource.Host
+// normalizeRTSPComponents extracts and normalizes host, port, and path from an RTSPSource.
+// Defaults port to 554 if unset and ensures path starts with "/" if non-empty.
+func normalizeRTSPComponents(rtspSource *pipelinesv1alpha1.RTSPSource) (host string, port int32, path string) {
+	host = rtspSource.Host
 
-	// Default port is 554 if not specified
-	port := rtspSource.Port
+	port = rtspSource.Port
 	if port == 0 {
 		port = 554
 	}
 
-	path := rtspSource.Path
-	// Ensure path starts with / if it's not empty
+	path = rtspSource.Path
 	if path != "" && !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 
+	return host, port, path
+}
+
+// buildRTSPURL constructs an RTSP URL from RTSPSource components without credentials
+// Format: rtsp://host:port/path
+func buildRTSPURL(rtspSource *pipelinesv1alpha1.RTSPSource) string {
+	host, port, path := normalizeRTSPComponents(rtspSource)
 	return fmt.Sprintf("rtsp://%s:%d%s", host, port, path)
 }
 
 // buildRTSPURLWithCredentials constructs an RTSP URL with embedded credentials
-// Format: rtsp://$_RTSP_USERNAME:$_RTSP_PASSWORD@host:port/path
-// The credential env vars will be substituted at runtime by the container
+// Format: rtsp://$(_RTSP_USERNAME):$(_RTSP_PASSWORD)@host:port/path
+// The credential env vars will be substituted at runtime by Kubernetes.
+// K8s only expands $(VAR) syntax, not $VAR or ${VAR}.
 func buildRTSPURLWithCredentials(rtspSource *pipelinesv1alpha1.RTSPSource) string {
-	host := rtspSource.Host
-
-	// Default port is 554 if not specified
-	port := rtspSource.Port
-	if port == 0 {
-		port = 554
-	}
-
-	path := rtspSource.Path
-	// Ensure path starts with / if it's not empty
-	if path != "" && !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-
-	// Use environment variable references that will be expanded at runtime
-	return fmt.Sprintf("rtsp://$_RTSP_USERNAME:$_RTSP_PASSWORD@%s:%d%s", host, port, path)
+	host, port, path := normalizeRTSPComponents(rtspSource)
+	return fmt.Sprintf("rtsp://$(_RTSP_USERNAME):$(_RTSP_PASSWORD)@%s:%d%s", host, port, path)
 }
 
 // ensureFilterServices creates or updates Kubernetes Services for filters with exposed ports

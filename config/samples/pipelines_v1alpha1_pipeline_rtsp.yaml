@@ -13,7 +13,7 @@ spec:
   # Filters process the RTSP stream
   # The controller constructs and injects RTSP_URL from host/port/path
   # Without credentials: rtsp://host:port/path (e.g., rtsp://camera.example.com:554/stream1)
-  # With credentials: rtsp://$_RTSP_USERNAME:$_RTSP_PASSWORD@host:port/path
+  # With credentials: rtsp://$(_RTSP_USERNAME):$(_RTSP_PASSWORD)@host:port/path
   #   (credentials are auto-substituted at runtime from the Secret)
   filters:
     - name: video-in

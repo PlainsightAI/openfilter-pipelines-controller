@@ -11,8 +11,8 @@ spec:
       imagePullPolicy: Always
       config:
         # The controller automatically embeds credentials in RTSP_URL
-        # Format: rtsp://$_RTSP_USERNAME:$_RTSP_PASSWORD@camera.example.com:554/stream1
-        # The $_RTSP_USERNAME and $_RTSP_PASSWORD are substituted at runtime from the Secret
+        # Format: rtsp://$(_RTSP_USERNAME):$(_RTSP_PASSWORD)@camera.example.com:554/stream1
+        # The $(_RTSP_USERNAME) and $(_RTSP_PASSWORD) are substituted at runtime by Kubernetes from the Secret
         - name: sources
           value: "$(RTSP_URL)"
         - name: sinks

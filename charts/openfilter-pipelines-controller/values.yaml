@@ -15,7 +15,8 @@ image:
 # Defaults to the same registry/org as the controller image
 claimerImage:
   repository: plainsightai/openfilter-claimer
-  tag: latest
+  # Overrides the image tag whose default is the chart appVersion (same as the controller)
+  tag: ""
 
 imagePullSecrets: []
 nameOverride: ""

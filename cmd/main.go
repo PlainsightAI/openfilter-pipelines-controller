@@ -81,7 +81,7 @@ func main() {
 	flag.StringVar(&valkeyPassword, "valkey-password", os.Getenv("VALKEY_PASSWORD"),
 		"The Valkey server password. Can also be set via VALKEY_PASSWORD env var.")
 	flag.StringVar(&claimerImage, "claimer-image",
-		getEnvOrDefault("CLAIMER_IMAGE", "plainsightai/openfilter-claimer:latest"),
+		getEnvOrDefault("CLAIMER_IMAGE", "plainsightai/openfilter-claimer:latest"), // overridden by Helm via CLAIMER_IMAGE env var
 		"The container image for the claimer init container. Can also be set via CLAIMER_IMAGE env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,

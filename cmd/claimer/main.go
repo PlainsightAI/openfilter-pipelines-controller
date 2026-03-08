@@ -40,20 +40,21 @@ import (
 
 const (
 	// Environment variables
-	EnvValkeyURL    = "VALKEY_URL"
-	EnvStream       = "STREAM"
-	EnvGroup        = "GROUP"
-	EnvConsumerName = "CONSUMER_NAME"
-	EnvPodName      = "POD_NAME"
-	EnvPodNamespace = "POD_NAMESPACE"
-	EnvS3Bucket     = "S3_BUCKET"
-	EnvS3Endpoint   = "S3_ENDPOINT"
-	EnvS3Region     = "S3_REGION"
-	EnvS3AccessKey  = "S3_ACCESS_KEY_ID"
-	EnvS3SecretKey  = "S3_SECRET_ACCESS_KEY"
-	EnvS3PathStyle  = "S3_USE_PATH_STYLE"
-	EnvS3SkipTLS    = "S3_INSECURE_SKIP_TLS_VERIFY"
-	EnvVideoInput   = "VIDEO_INPUT_PATH"
+	EnvValkeyURL      = "VALKEY_URL"
+	EnvValkeyPassword = "VALKEY_PASSWORD"
+	EnvStream         = "STREAM"
+	EnvGroup          = "GROUP"
+	EnvConsumerName   = "CONSUMER_NAME"
+	EnvPodName        = "POD_NAME"
+	EnvPodNamespace   = "POD_NAMESPACE"
+	EnvS3Bucket       = "S3_BUCKET"
+	EnvS3Endpoint     = "S3_ENDPOINT"
+	EnvS3Region       = "S3_REGION"
+	EnvS3AccessKey    = "S3_ACCESS_KEY_ID"
+	EnvS3SecretKey    = "S3_SECRET_ACCESS_KEY"
+	EnvS3PathStyle    = "S3_USE_PATH_STYLE"
+	EnvS3SkipTLS      = "S3_INSECURE_SKIP_TLS_VERIFY"
+	EnvVideoInput     = "VIDEO_INPUT_PATH"
 
 	// Volume mount paths
 	defaultInputPath = "/ws/input.mp4"
@@ -146,6 +147,7 @@ func run() error {
 
 type Config struct {
 	ValkeyURL      string
+	ValkeyPassword string
 	Stream         string
 	Group          string
 	ConsumerName   string
@@ -163,17 +165,18 @@ type Config struct {
 
 func loadConfig() (*Config, error) {
 	cfg := &Config{
-		ValkeyURL:    getEnvOrDefault(EnvValkeyURL, "localhost:6379"),
-		Stream:       os.Getenv(EnvStream),
-		Group:        os.Getenv(EnvGroup),
-		ConsumerName: getEnvOrDefault(EnvConsumerName, "claimer"),
-		PodName:      os.Getenv(EnvPodName),
-		PodNamespace: os.Getenv(EnvPodNamespace),
-		S3Bucket:     os.Getenv(EnvS3Bucket),
-		S3Endpoint:   os.Getenv(EnvS3Endpoint),
-		S3Region:     getEnvOrDefault(EnvS3Region, "us-east-1"),
-		S3AccessKey:  os.Getenv(EnvS3AccessKey),
-		S3SecretKey:  os.Getenv(EnvS3SecretKey),
+		ValkeyURL:      getEnvOrDefault(EnvValkeyURL, "localhost:6379"),
+		ValkeyPassword: os.Getenv(EnvValkeyPassword),
+		Stream:         os.Getenv(EnvStream),
+		Group:          os.Getenv(EnvGroup),
+		ConsumerName:   getEnvOrDefault(EnvConsumerName, "claimer"),
+		PodName:        os.Getenv(EnvPodName),
+		PodNamespace:   os.Getenv(EnvPodNamespace),
+		S3Bucket:       os.Getenv(EnvS3Bucket),
+		S3Endpoint:     os.Getenv(EnvS3Endpoint),
+		S3Region:       os.Getenv(EnvS3Region),
+		S3AccessKey:    os.Getenv(EnvS3AccessKey),
+		S3SecretKey:    os.Getenv(EnvS3SecretKey),
 		VideoInputPath: func() string {
 			if value := os.Getenv(EnvVideoInput); value != "" {
 				return value
@@ -214,6 +217,9 @@ func getEnvOrDefault(key, defaultValue string) string {
 func createValkeyClient(cfg *Config) (valkey.Client, error) {
 	clientOpts := valkey.ClientOption{
 		InitAddress: []string{cfg.ValkeyURL},
+	}
+	if cfg.ValkeyPassword != "" {
+		clientOpts.Password = cfg.ValkeyPassword
 	}
 
 	client, err := valkey.NewClient(clientOpts)

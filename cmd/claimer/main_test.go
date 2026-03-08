@@ -55,6 +55,33 @@ func TestExponentialBackoff(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_ValkeyPassword(t *testing.T) {
+	t.Setenv("STREAM", "test-stream")
+	t.Setenv("GROUP", "test-group")
+	t.Setenv("S3_BUCKET", "test-bucket")
+
+	t.Run("reads VALKEY_PASSWORD when set", func(t *testing.T) {
+		t.Setenv("VALKEY_PASSWORD", "secret123")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ValkeyPassword != "secret123" {
+			t.Fatalf("expected ValkeyPassword='secret123', got '%s'", cfg.ValkeyPassword)
+		}
+	})
+
+	t.Run("ValkeyPassword is empty when not set", func(t *testing.T) {
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ValkeyPassword != "" {
+			t.Fatalf("expected empty ValkeyPassword, got '%s'", cfg.ValkeyPassword)
+		}
+	})
+}
+
 func TestIsRetryableValkeyError(t *testing.T) {
 	t.Parallel()
 

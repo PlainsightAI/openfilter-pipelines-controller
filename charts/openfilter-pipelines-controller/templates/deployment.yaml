@@ -97,7 +97,7 @@ spec:
           env:
             {{- if .Values.valkey.enabled }}
             - name: VALKEY_ADDR
-              value: {{ include "openfilter-pipelines-controller.fullname" . }}-valkey-primary:6379
+              value: {{ include "openfilter-pipelines-controller.fullname" . }}-valkey-primary.{{ .Release.Namespace }}.svc.cluster.local:6379
             {{- if .Values.valkey.auth.enabled }}
             - name: VALKEY_PASSWORD
               valueFrom:

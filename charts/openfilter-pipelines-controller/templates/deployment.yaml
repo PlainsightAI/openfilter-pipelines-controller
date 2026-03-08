@@ -117,6 +117,8 @@ spec:
                   key: {{ .Values.valkey.externalValkey.existingSecretPasswordKey }}
             {{- end }}
             {{- end }}
+            - name: CLAIMER_IMAGE
+              value: "{{ .Values.claimerImage.repository }}:{{ .Values.claimerImage.tag | default .Chart.AppVersion }}"
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

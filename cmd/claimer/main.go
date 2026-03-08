@@ -174,7 +174,7 @@ func loadConfig() (*Config, error) {
 		PodNamespace:   os.Getenv(EnvPodNamespace),
 		S3Bucket:       os.Getenv(EnvS3Bucket),
 		S3Endpoint:     os.Getenv(EnvS3Endpoint),
-		S3Region:       getEnvOrDefault(EnvS3Region, "us-east-1"),
+		S3Region:       os.Getenv(EnvS3Region),
 		S3AccessKey:    os.Getenv(EnvS3AccessKey),
 		S3SecretKey:    os.Getenv(EnvS3SecretKey),
 		VideoInputPath: func() string {

@@ -11,6 +11,12 @@ image:
   # Overrides the image tag whose default is the chart appVersion
   tag: ""
 
+# Claimer init container image (used by the controller for batch pipeline jobs)
+# Defaults to the same registry/org as the controller image
+claimerImage:
+  repository: plainsightai/openfilter-claimer
+  tag: latest
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""

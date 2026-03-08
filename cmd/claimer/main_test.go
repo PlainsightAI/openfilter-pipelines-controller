@@ -82,6 +82,33 @@ func TestLoadConfig_ValkeyPassword(t *testing.T) {
 	})
 }
 
+func TestLoadConfig_S3Region(t *testing.T) {
+	t.Setenv("STREAM", "test-stream")
+	t.Setenv("GROUP", "test-group")
+	t.Setenv("S3_BUCKET", "test-bucket")
+
+	t.Run("reads S3_REGION when set", func(t *testing.T) {
+		t.Setenv("S3_REGION", "eu-west-1")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.S3Region != "eu-west-1" {
+			t.Fatalf("expected S3Region='eu-west-1', got '%s'", cfg.S3Region)
+		}
+	})
+
+	t.Run("S3Region defaults to empty when not set", func(t *testing.T) {
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.S3Region != "" {
+			t.Fatalf("expected empty S3Region, got '%s'", cfg.S3Region)
+		}
+	})
+}
+
 func TestIsRetryableValkeyError(t *testing.T) {
 	t.Parallel()
 

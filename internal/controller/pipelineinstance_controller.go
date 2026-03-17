@@ -69,10 +69,12 @@ type ValkeyClientInterface interface {
 	GetConsumerGroupLag(ctx context.Context, streamKey, groupName string) (int64, error)
 	GetPendingCount(ctx context.Context, streamKey, groupName string) (int64, error)
 	GetPendingForConsumer(ctx context.Context, streamKey, groupName, consumer string, count int64) ([]string, error)
+	GetPendingEntryDetails(ctx context.Context, streamKey, groupName string, minIdleTime int64, count int64) ([]queue.PendingEntry, error)
 	AckMessage(ctx context.Context, streamKey, groupName, messageID string) error
 	EnqueueFileWithAttempts(ctx context.Context, streamKey, runID, filepath string, attempts int) (string, error)
 	AddToDLQ(ctx context.Context, dlqKey, runID, filepath string, attempts int, reason string) error
 	AutoClaim(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, count int64) ([]queue.XMessage, error)
+	ClaimMessages(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, messageIDs ...string) ([]queue.XMessage, error)
 	ReadRange(ctx context.Context, streamKey, start, end string, count int64) ([]queue.XMessage, error)
 	DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error
 }

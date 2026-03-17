@@ -53,6 +53,10 @@ type MockValkeyClient struct {
 	DeletedMessageIDs  []string
 	// PendingByConsumer simulates XPENDING for a specific consumer
 	PendingByConsumer map[string][]string
+	// PendingEntryDetails simulates XPENDING with range (returns consumer + idle info)
+	PendingEntryDetails []queue.PendingEntry
+	// ClaimedMessages tracks which message IDs were claimed via XCLAIM
+	ClaimedMessages []string
 }
 
 type mockMessage struct {
@@ -150,6 +154,29 @@ func (m *MockValkeyClient) AutoClaim(ctx context.Context, streamKey, groupName, 
 	return messages, nil
 }
 
+func (m *MockValkeyClient) GetPendingEntryDetails(ctx context.Context, streamKey, groupName string, minIdleTime int64, count int64) ([]queue.PendingEntry, error) {
+	return m.PendingEntryDetails, nil
+}
+
+func (m *MockValkeyClient) ClaimMessages(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, messageIDs ...string) ([]queue.XMessage, error) {
+	m.ClaimedMessages = append(m.ClaimedMessages, messageIDs...)
+	// Return messages from AutoClaimMessages that match the requested IDs
+	idSet := make(map[string]bool, len(messageIDs))
+	for _, id := range messageIDs {
+		idSet[id] = true
+	}
+	var result []queue.XMessage
+	for _, msg := range m.AutoClaimMessages {
+		if idSet[msg.ID] {
+			result = append(result, queue.XMessage{
+				ID:     msg.ID,
+				Values: msg.Values,
+			})
+		}
+	}
+	return result, nil
+}
+
 func (m *MockValkeyClient) ReadRange(ctx context.Context, streamKey, start, end string, count int64) ([]queue.XMessage, error) {
 	result := make([]queue.XMessage, len(m.Messages))
 	for i, msg := range m.Messages {
@@ -245,14 +272,16 @@ var _ = Describe("PipelineInstance Controller", func() {
 
 			// Initialize mock Valkey client with default values
 			mockValkey = &MockValkeyClient{
-				StreamLength:      100,
-				ConsumerGroupLag:  50,
-				PendingCount:      0,
-				DLQLength:         0,
-				AckedMessages:     []string{},
-				EnqueuedFiles:     []mockEnqueuedFile{},
-				DLQEntries:        []mockDLQEntry{},
-				AutoClaimMessages: []mockMessage{},
+				StreamLength:        100,
+				ConsumerGroupLag:    50,
+				PendingCount:        0,
+				DLQLength:           0,
+				AckedMessages:       []string{},
+				EnqueuedFiles:       []mockEnqueuedFile{},
+				DLQEntries:          []mockDLQEntry{},
+				AutoClaimMessages:   []mockMessage{},
+				PendingEntryDetails: []queue.PendingEntry{},
+				ClaimedMessages:     []string{},
 			}
 
 			// Create reconciler with mock
@@ -809,6 +838,214 @@ var _ = Describe("PipelineInstance Controller", func() {
 
 			// Verify CompletionTime is set
 			Expect(pipelineInstance.Status.CompletionTime).NotTo(BeNil())
+		})
+
+		It("should not reclaim messages from pods that are still running", func() {
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			// Initialize to get instanceID
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)
+				return err == nil && pipelineInstance.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			instanceID := pipelineInstance.GetInstanceID()
+
+			// First reconcile to initialize
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a running pod (simulating long-running video processing)
+			runningPodName := fmt.Sprintf("test-running-pod-%d", testCounter)
+			runningPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      runningPodName,
+					Namespace: namespace,
+					Labels: map[string]string{
+						"filter.plainsight.ai/instance": instanceID,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "test", Image: "test:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, runningPod)).To(Succeed())
+			setPodStatus(runningPodName, corev1.PodRunning, nil)
+
+			// Create a completed pod whose message should be reclaimable
+			deadPodName := fmt.Sprintf("test-dead-pod-%d", testCounter)
+			deadPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deadPodName,
+					Namespace: namespace,
+					Labels: map[string]string{
+						"filter.plainsight.ai/instance": instanceID,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "test", Image: "test:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deadPod)).To(Succeed())
+			setPodStatus(deadPodName, corev1.PodFailed, nil)
+
+			// Set up pending entries: one from a running pod, one from a dead pod
+			mockValkey.PendingEntryDetails = []queue.PendingEntry{
+				{ID: "msg-running", Consumer: runningPodName, IdleMs: 900001},
+				{ID: "msg-dead", Consumer: deadPodName, IdleMs: 900001},
+			}
+			// AutoClaimMessages provides the message bodies for XCLAIM results
+			mockValkey.AutoClaimMessages = []mockMessage{
+				{ID: "msg-dead", Values: map[string]string{"file": "dead-file.mp4", "attempts": "0"}},
+			}
+
+			// Reconcile (will trigger runReclaimer)
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify only the dead pod's message was claimed, not the running pod's
+			Expect(mockValkey.ClaimedMessages).To(ContainElement("msg-dead"))
+			Expect(mockValkey.ClaimedMessages).NotTo(ContainElement("msg-running"))
+
+			// Verify dead pod's message was ACKed and re-enqueued
+			Expect(mockValkey.AckedMessages).To(ContainElement("msg-dead"))
+			Expect(mockValkey.EnqueuedFiles).To(ContainElement(mockEnqueuedFile{
+				Stream:     pipelineInstance.GetQueueStream(),
+				InstanceID: instanceID,
+				Filepath:   "dead-file.mp4",
+				Attempts:   1,
+			}))
+
+			// Cleanup test pods
+			_ = k8sClient.Delete(ctx, runningPod)
+			_ = k8sClient.Delete(ctx, deadPod)
+		})
+
+		It("should reclaim messages from consumers whose pods no longer exist", func() {
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			// Initialize
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)
+				return err == nil && pipelineInstance.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			instanceID := pipelineInstance.GetInstanceID()
+
+			// First reconcile to initialize
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Set up pending entry from a pod that no longer exists
+			mockValkey.PendingEntryDetails = []queue.PendingEntry{
+				{ID: "msg-orphan", Consumer: "deleted-pod", IdleMs: 900001},
+			}
+			mockValkey.AutoClaimMessages = []mockMessage{
+				{ID: "msg-orphan", Values: map[string]string{"file": "orphan-file.mp4", "attempts": "0"}},
+			}
+
+			// Reconcile
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify orphan message was claimed, ACKed, and re-enqueued
+			Expect(mockValkey.ClaimedMessages).To(ContainElement("msg-orphan"))
+			Expect(mockValkey.AckedMessages).To(ContainElement("msg-orphan"))
+			Expect(mockValkey.EnqueuedFiles).To(ContainElement(mockEnqueuedFile{
+				Stream:     pipelineInstance.GetQueueStream(),
+				InstanceID: instanceID,
+				Filepath:   "orphan-file.mp4",
+				Attempts:   1,
+			}))
+		})
+
+		It("should send reclaimed message to DLQ when max attempts exceeded", func() {
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+					Execution: &pipelinesv1alpha1.ExecutionConfig{
+						MaxAttempts: ptr.To(int32(2)),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)
+				return err == nil && pipelineInstance.UID != ""
+			}, timeout, interval).Should(BeTrue())
+
+			// First reconcile to initialize
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Pending entry from a gone pod, already at max attempts
+			mockValkey.PendingEntryDetails = []queue.PendingEntry{
+				{ID: "msg-maxed", Consumer: "gone-pod", IdleMs: 900001},
+			}
+			mockValkey.AutoClaimMessages = []mockMessage{
+				{ID: "msg-maxed", Values: map[string]string{"file": "maxed-file.mp4", "attempts": "1"}},
+			}
+
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should go to DLQ, not re-enqueue
+			Expect(mockValkey.DLQEntries).To(HaveLen(1))
+			Expect(mockValkey.DLQEntries[0].Filepath).To(Equal("maxed-file.mp4"))
+			Expect(mockValkey.DLQEntries[0].Attempts).To(Equal(2))
+			Expect(mockValkey.EnqueuedFiles).To(BeEmpty())
 		})
 	})
 })

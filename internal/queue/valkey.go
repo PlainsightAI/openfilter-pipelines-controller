@@ -172,6 +172,13 @@ type XMessage struct {
 	Values map[string]string
 }
 
+// PendingEntry represents a pending message with its consumer and idle time.
+type PendingEntry struct {
+	ID       string
+	Consumer string
+	IdleMs   int64
+}
+
 // AutoClaim reclaims pending messages that have been idle for too long
 // Returns the reclaimed messages
 func (v *ValkeyClient) AutoClaim(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, count int64) ([]XMessage, error) {
@@ -317,6 +324,96 @@ func (v *ValkeyClient) GetPendingForConsumer(ctx context.Context, streamKey, gro
 	}
 
 	return ids, nil
+}
+
+// GetPendingEntryDetails returns pending entries with consumer names and idle times.
+// It uses XPENDING with a range to get details about pending entries whose idle time
+// exceeds minIdleTime milliseconds.
+func (v *ValkeyClient) GetPendingEntryDetails(ctx context.Context, streamKey, groupName string, minIdleTime int64, count int64) ([]PendingEntry, error) {
+	if count <= 0 {
+		count = 100
+	}
+
+	cmd := v.client.B().Xpending().
+		Key(streamKey).
+		Group(groupName).
+		Idle(minIdleTime).
+		Start("-").
+		End("+").
+		Count(count).
+		Build()
+
+	result := v.client.Do(ctx, cmd)
+	if result.Error() != nil {
+		return nil, fmt.Errorf("failed to get pending entry details: %w", result.Error())
+	}
+
+	arr, err := result.ToArray()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse XPENDING range entries: %w", err)
+	}
+
+	entries := make([]PendingEntry, 0, len(arr))
+	for _, entry := range arr {
+		fields, err := entry.ToArray()
+		if err != nil || len(fields) < 3 {
+			continue
+		}
+		id, err := fields[0].ToString()
+		if err != nil {
+			continue
+		}
+		consumer, err := fields[1].ToString()
+		if err != nil {
+			continue
+		}
+		idleMs, err := fields[2].AsInt64()
+		if err != nil {
+			continue
+		}
+		entries = append(entries, PendingEntry{
+			ID:       id,
+			Consumer: consumer,
+			IdleMs:   idleMs,
+		})
+	}
+
+	return entries, nil
+}
+
+// ClaimMessages transfers ownership of specific messages to a new consumer using XCLAIM.
+func (v *ValkeyClient) ClaimMessages(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, messageIDs ...string) ([]XMessage, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
+	}
+
+	cmd := v.client.B().Xclaim().
+		Key(streamKey).
+		Group(groupName).
+		Consumer(consumerName).
+		MinIdleTime(strconv.FormatInt(minIdleTime, 10)).
+		Id(messageIDs...).
+		Build()
+
+	result := v.client.Do(ctx, cmd)
+	if result.Error() != nil {
+		return nil, fmt.Errorf("failed to claim messages: %w", result.Error())
+	}
+
+	xrange, err := result.AsXRange()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse XCLAIM result: %w", err)
+	}
+
+	messages := make([]XMessage, 0, len(xrange))
+	for _, entry := range xrange {
+		messages = append(messages, XMessage{
+			ID:     entry.ID,
+			Values: entry.FieldValues,
+		})
+	}
+
+	return messages, nil
 }
 
 // DeleteMessages removes messages from a stream.

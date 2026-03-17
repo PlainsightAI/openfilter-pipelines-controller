@@ -564,17 +564,28 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 		}
 
 		if len(pendingIDs) == 0 {
-			// Nothing pending for this consumer; already processed or never claimed.
-			log.V(1).Info("No pending entries for consumer", "pod", pod.Name)
+			if pod.Status.Phase == corev1.PodSucceeded {
+				// The pod completed successfully but its pending entry is gone. This happens
+				// when the reclaimer transferred the message before the pod finished. The
+				// reclaimer would have re-enqueued the file, so a duplicate run will occur.
+				// Log at a visible level so operators can detect this race condition.
+				log.Info("Succeeded pod has no pending entry; message was likely reclaimed while pod was still running", "pod", pod.Name)
+			} else {
+				log.V(1).Info("No pending entries for consumer", "pod", pod.Name)
+			}
 			continue
 		}
 
 		messageID := pendingIDs[0]
 		// Fetch message fields
 		msgs, err := r.ValkeyClient.ReadRange(ctx, pipelineInstance.GetQueueStream(), messageID, messageID, 1)
-		if err != nil || len(msgs) == 0 {
-			log.Error(err, "Failed to read message for pending entry; attempting to ACK", "messageID", messageID)
-			// Best-effort ACK to prevent leaks
+		if err != nil {
+			log.Error(err, "Failed to read message for pending entry", "messageID", messageID)
+			continue
+		}
+		if len(msgs) == 0 {
+			// Message was deleted from the stream but the pending entry remains; ACK to clean up.
+			log.Info("Message no longer exists in stream; ACKing orphan pending entry", "messageID", messageID)
 			if ackErr := r.ValkeyClient.AckMessage(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), messageID); ackErr != nil {
 				log.Error(ackErr, "Failed to ACK orphan pending entry", "messageID", messageID)
 			}
@@ -696,7 +707,10 @@ func detectContainerStartFailure(statuses []corev1.ContainerStatus) string {
 	return ""
 }
 
-// runReclaimer runs XAUTOCLAIM to recover stale pending messages
+// runReclaimer recovers stale pending messages from consumers whose pods are no longer running.
+// It uses XPENDING to discover idle entries and their owning consumers, then checks whether
+// each consumer's pod is still alive before reclaiming. This prevents stealing messages from
+// pods that are still actively processing long-running work.
 func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) error {
 	log := logf.FromContext(ctx)
 
@@ -707,48 +721,92 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 
 	minIdleTime := pendingTimeout.Milliseconds()
 	consumerName := "controller-reclaimer"
+	streamKey := pipelineInstance.GetQueueStream()
+	groupName := pipelineInstance.GetQueueGroup()
 
-	// Run XAUTOCLAIM
-	messages, err := r.ValkeyClient.AutoClaim(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), consumerName, minIdleTime, 100)
+	// Get pending entries that have been idle longer than the timeout, along with their consumer names.
+	pendingEntries, err := r.ValkeyClient.GetPendingEntryDetails(ctx, streamKey, groupName, minIdleTime, 100)
 	if err != nil {
-		return fmt.Errorf("failed to auto-claim messages: %w", err)
+		return fmt.Errorf("failed to get pending entry details: %w", err)
 	}
 
-	if len(messages) > 0 {
-		log.Info("Reclaimed stale messages", "count", len(messages))
+	if len(pendingEntries) == 0 {
+		return nil
+	}
 
-		instanceID := pipelineInstance.GetInstanceID()
-		maxAttempts := int32(3)
-		if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.MaxAttempts != nil {
-			maxAttempts = *pipelineInstance.Spec.Execution.MaxAttempts
+	// Build a set of running pod names for this instance to avoid reclaiming from live pods.
+	// If the pod list fails, abort entirely — proceeding without pod-awareness would
+	// reproduce the exact race condition this function is designed to prevent.
+	runningPods := make(map[string]bool)
+	podList := &corev1.PodList{}
+	instanceID := pipelineInstance.GetInstanceID()
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
+		"filter.plainsight.ai/instance": instanceID,
+	}); err != nil {
+		return fmt.Errorf("failed to list pods for reclaimer: %w", err)
+	}
+	for _, pod := range podList.Items {
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			runningPods[pod.Name] = true
+		}
+	}
+
+	// Filter entries: only reclaim from consumers whose pods are not running.
+	reclaimIDs := make([]string, 0, len(pendingEntries))
+	for _, entry := range pendingEntries {
+		if runningPods[entry.Consumer] {
+			log.V(1).Info("Skipping reclaim for message owned by running pod", "messageID", entry.ID, "consumer", entry.Consumer, "idleMs", entry.IdleMs)
+			continue
+		}
+		reclaimIDs = append(reclaimIDs, entry.ID)
+	}
+
+	if len(reclaimIDs) == 0 {
+		return nil
+	}
+
+	// Use XCLAIM to transfer only the filtered messages to the reclaimer consumer.
+	messages, err := r.ValkeyClient.ClaimMessages(ctx, streamKey, groupName, consumerName, minIdleTime, reclaimIDs...)
+	if err != nil {
+		return fmt.Errorf("failed to claim messages: %w", err)
+	}
+
+	log.Info("Reclaimed stale messages", "claimed", len(messages), "attempted", len(reclaimIDs))
+
+	maxAttempts := int32(3)
+	if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.MaxAttempts != nil {
+		maxAttempts = *pipelineInstance.Spec.Execution.MaxAttempts
+	}
+
+	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+
+	for _, msg := range messages {
+		filepath := msg.Values["file"]
+		// Use 0 as fallback for unparseable attempts so reclaimed messages get a fresh retry
+		// budget rather than being sent to DLQ immediately.
+		attempts := parseAttempts(msg.Values["attempts"], 0)
+		attempts++
+
+		var processingErr error
+		if attempts < int(maxAttempts) {
+			if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, streamKey, instanceID, filepath, attempts); err != nil {
+				log.Error(err, "Failed to re-enqueue reclaimed file; will retry on next cycle", "file", filepath)
+				processingErr = err
+			}
+		} else {
+			reason := "Max attempts exceeded (reclaimed stale message)"
+			if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, filepath, attempts, reason); err != nil {
+				log.Error(err, "Failed to add reclaimed file to DLQ; will retry on next cycle", "file", filepath)
+				processingErr = err
+			}
 		}
 
-		dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+		if processingErr != nil {
+			continue // Do not ACK — message stays pending for next reconciliation cycle
+		}
 
-		// Process each reclaimed message
-		for _, msg := range messages {
-			filepath := msg.Values["file"]
-			attemptsStr := msg.Values["attempts"]
-			attempts, _ := strconv.Atoi(attemptsStr)
-			attempts++
-
-			if attempts < int(maxAttempts) {
-				// Re-enqueue with incremented attempts
-				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, filepath, attempts); err != nil {
-					log.Error(err, "Failed to re-enqueue reclaimed file", "file", filepath)
-				}
-			} else {
-				// Send to DLQ
-				reason := "Max attempts exceeded (reclaimed stale message)"
-				if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, filepath, attempts, reason); err != nil {
-					log.Error(err, "Failed to add reclaimed file to DLQ", "file", filepath)
-				}
-			}
-
-			// ACK the reclaimed message
-			if err := r.ValkeyClient.AckMessage(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), msg.ID); err != nil {
-				log.Error(err, "Failed to ACK reclaimed message", "messageID", msg.ID)
-			}
+		if err := r.ValkeyClient.AckMessage(ctx, streamKey, groupName, msg.ID); err != nil {
+			log.Error(err, "Failed to ACK reclaimed message", "messageID", msg.ID)
 		}
 	}
 

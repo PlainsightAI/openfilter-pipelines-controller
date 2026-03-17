@@ -734,10 +734,13 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 		return nil
 	}
 
-	// Build a set of running pod names for this instance to avoid reclaiming from live pods.
+	// Build sets of running and succeeded pod names for this instance.
+	// Running/Pending pods are skipped entirely (message still being processed).
+	// Succeeded pods get their messages ACKed without re-enqueueing (work already done).
 	// If the pod list fails, abort entirely — proceeding without pod-awareness would
 	// reproduce the exact race condition this function is designed to prevent.
 	runningPods := make(map[string]bool)
+	succeededPods := make(map[string]bool)
 	podList := &corev1.PodList{}
 	instanceID := pipelineInstance.GetInstanceID()
 	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
@@ -746,19 +749,25 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 		return fmt.Errorf("failed to list pods for reclaimer: %w", err)
 	}
 	for _, pod := range podList.Items {
-		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+		switch pod.Status.Phase {
+		case corev1.PodRunning, corev1.PodPending:
 			runningPods[pod.Name] = true
+		case corev1.PodSucceeded:
+			succeededPods[pod.Name] = true
 		}
 	}
 
 	// Filter entries: only reclaim from consumers whose pods are not running.
+	// Track which consumer owns each message so we can handle succeeded pods specially.
 	reclaimIDs := make([]string, 0, len(pendingEntries))
+	reclaimConsumers := make(map[string]string, len(pendingEntries)) // messageID -> consumer
 	for _, entry := range pendingEntries {
 		if runningPods[entry.Consumer] {
 			log.V(1).Info("Skipping reclaim for message owned by running pod", "messageID", entry.ID, "consumer", entry.Consumer, "idleMs", entry.IdleMs)
 			continue
 		}
 		reclaimIDs = append(reclaimIDs, entry.ID)
+		reclaimConsumers[entry.ID] = entry.Consumer
 	}
 
 	if len(reclaimIDs) == 0 {
@@ -782,6 +791,22 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 
 	for _, msg := range messages {
 		filepath := msg.Values["file"]
+		entryConsumer := reclaimConsumers[msg.ID]
+
+		// If the consumer's pod succeeded, the work is already done.
+		// Just ACK+XDEL without re-enqueueing to avoid creating orphan duplicates.
+		if succeededPods[entryConsumer] {
+			if err := r.ValkeyClient.AckMessage(ctx, streamKey, groupName, msg.ID); err != nil {
+				log.Error(err, "Failed to ACK message for succeeded pod", "messageID", msg.ID)
+				continue
+			}
+			if err := r.ValkeyClient.DeleteMessages(ctx, streamKey, msg.ID); err != nil {
+				log.Error(err, "Failed to delete message for succeeded pod from stream", "messageID", msg.ID)
+			}
+			log.Info("Cleaned up stale message for succeeded pod", "consumer", entryConsumer, "file", filepath)
+			continue
+		}
+
 		// Use 0 as fallback for unparseable attempts so reclaimed messages get a fresh retry
 		// budget rather than being sent to DLQ immediately.
 		attempts := parseAttempts(msg.Values["attempts"], 0)
@@ -807,6 +832,10 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 
 		if err := r.ValkeyClient.AckMessage(ctx, streamKey, groupName, msg.ID); err != nil {
 			log.Error(err, "Failed to ACK reclaimed message", "messageID", msg.ID)
+			continue
+		}
+		if err := r.ValkeyClient.DeleteMessages(ctx, streamKey, msg.ID); err != nil {
+			log.Error(err, "Failed to delete reclaimed message from stream", "messageID", msg.ID)
 		}
 	}
 

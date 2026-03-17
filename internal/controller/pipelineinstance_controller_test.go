@@ -928,7 +928,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(mockValkey.ClaimedMessages).To(ContainElement("msg-dead"))
 			Expect(mockValkey.ClaimedMessages).NotTo(ContainElement("msg-running"))
 
-			// Verify dead pod's message was ACKed and re-enqueued
+			// Verify dead pod's message was ACKed, re-enqueued, and deleted from stream
 			Expect(mockValkey.AckedMessages).To(ContainElement("msg-dead"))
 			Expect(mockValkey.EnqueuedFiles).To(ContainElement(mockEnqueuedFile{
 				Stream:     pipelineInstance.GetQueueStream(),
@@ -936,6 +936,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				Filepath:   "dead-file.mp4",
 				Attempts:   1,
 			}))
+			Expect(mockValkey.DeletedMessageIDs).To(ContainElement("msg-dead"))
 
 			// Cleanup test pods
 			_ = k8sClient.Delete(ctx, runningPod)
@@ -986,7 +987,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify orphan message was claimed, ACKed, and re-enqueued
+			// Verify orphan message was claimed, ACKed, re-enqueued, and deleted from stream
 			Expect(mockValkey.ClaimedMessages).To(ContainElement("msg-orphan"))
 			Expect(mockValkey.AckedMessages).To(ContainElement("msg-orphan"))
 			Expect(mockValkey.EnqueuedFiles).To(ContainElement(mockEnqueuedFile{
@@ -995,6 +996,83 @@ var _ = Describe("PipelineInstance Controller", func() {
 				Filepath:   "orphan-file.mp4",
 				Attempts:   1,
 			}))
+			Expect(mockValkey.DeletedMessageIDs).To(ContainElement("msg-orphan"))
+		})
+
+		It("should ACK without re-enqueueing messages from succeeded pods", func() {
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			// Initialize
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)
+				return err == nil && pipelineInstance.UID != ""
+			}, timeout, interval).Should(BeTrue())
+
+			// First reconcile to initialize
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a succeeded pod whose message should be ACKed but NOT re-enqueued
+			succeededPodName := fmt.Sprintf("test-succeeded-pod-%d", testCounter)
+			succeededPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      succeededPodName,
+					Namespace: namespace,
+					Labels: map[string]string{
+						"filter.plainsight.ai/instance": pipelineInstance.GetInstanceID(),
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "test", Image: "test:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, succeededPod)).To(Succeed())
+			setPodStatus(succeededPodName, corev1.PodSucceeded, nil)
+
+			// Set up pending entry from the succeeded pod
+			mockValkey.PendingEntryDetails = []queue.PendingEntry{
+				{ID: "msg-succeeded", Consumer: succeededPodName, IdleMs: 900001},
+			}
+			mockValkey.AutoClaimMessages = []mockMessage{
+				{ID: "msg-succeeded", Values: map[string]string{"file": "done-file.mp4", "attempts": "0"}},
+			}
+
+			// Reconcile
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify the message was claimed and ACKed
+			Expect(mockValkey.ClaimedMessages).To(ContainElement("msg-succeeded"))
+			Expect(mockValkey.AckedMessages).To(ContainElement("msg-succeeded"))
+			// Verify the message was deleted from the stream
+			Expect(mockValkey.DeletedMessageIDs).To(ContainElement("msg-succeeded"))
+			// Verify the message was NOT re-enqueued (work already done)
+			for _, f := range mockValkey.EnqueuedFiles {
+				Expect(f.Filepath).NotTo(Equal("done-file.mp4"))
+			}
+
+			// Cleanup
+			_ = k8sClient.Delete(ctx, succeededPod)
 		})
 
 		It("should send reclaimed message to DLQ when max attempts exceeded", func() {
@@ -1046,6 +1124,9 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(mockValkey.DLQEntries[0].Filepath).To(Equal("maxed-file.mp4"))
 			Expect(mockValkey.DLQEntries[0].Attempts).To(Equal(2))
 			Expect(mockValkey.EnqueuedFiles).To(BeEmpty())
+			// Message should be ACKed and deleted from stream after DLQ
+			Expect(mockValkey.AckedMessages).To(ContainElement("msg-maxed"))
+			Expect(mockValkey.DeletedMessageIDs).To(ContainElement("msg-maxed"))
 		})
 	})
 })

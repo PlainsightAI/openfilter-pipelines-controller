@@ -565,10 +565,11 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 
 		if len(pendingIDs) == 0 {
 			if pod.Status.Phase == corev1.PodSucceeded {
-				// The pod completed successfully but its pending entry is gone. This happens
-				// when the reclaimer transferred the message before the pod finished. The
-				// reclaimer would have re-enqueued the file, so a duplicate run will occur.
-				// Log at a visible level so operators can detect this race condition.
+				// The pod completed successfully but its pending entry is gone. This can happen
+				// in a narrow window where the pod transitions to Succeeded after runReclaimer
+				// already built its pod-state snapshot but before processing this message.
+				// In that case the reclaimer may have re-enqueued the file; otherwise it cleaned
+				// up via the succeeded-pod path with no duplicate run.
 				log.Info("Succeeded pod has no pending entry; message was likely reclaimed while pod was still running", "pod", pod.Name)
 			} else {
 				log.V(1).Info("No pending entries for consumer", "pod", pod.Name)

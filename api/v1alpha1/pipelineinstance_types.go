@@ -25,7 +25,7 @@ type ExecutionConfig struct {
 	// parallelism defines the maximum number of parallel executions (max concurrent pods)
 	// +optional
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=10
+	// +kubebuilder:default=1
 	Parallelism *int32 `json:"parallelism,omitempty"`
 
 	// maxAttempts defines the maximum number of retry attempts per file

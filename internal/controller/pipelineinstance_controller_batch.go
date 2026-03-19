@@ -352,7 +352,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	instanceID := pipelineInstance.GetInstanceID()
 
 	// Get execution config with defaults
-	parallelism := int32(10)
+	parallelism := int32(1)
 	if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.Parallelism != nil {
 		parallelism = *pipelineInstance.Spec.Execution.Parallelism
 	}

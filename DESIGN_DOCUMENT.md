@@ -709,7 +709,7 @@ Conditions move Running → Succeeded only when `queued == 0` and `running == 0`
 - For most workloads, current design is adequate
 
 #### 5. **Job Parallelism vs Cluster Autoscaler**
-**Current behavior**: Job parallelism defaults to 10, max user-configurable.
+**Current behavior**: Job parallelism defaults to 1, max user-configurable.
 
 **Impact at high parallelism** (e.g., 200):
 - 200 pods request resources simultaneously

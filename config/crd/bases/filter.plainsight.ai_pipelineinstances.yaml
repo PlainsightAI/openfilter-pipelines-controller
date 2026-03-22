@@ -52,7 +52,7 @@ spec:
                     minimum: 1
                     type: integer
                   parallelism:
-                    default: 10
+                    default: 1
                     description: parallelism defines the maximum number of parallel
                       executions (max concurrent pods)
                     format: int32

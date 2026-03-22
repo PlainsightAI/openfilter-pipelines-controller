@@ -68,7 +68,7 @@ These fields come from the CRD types in `api/v1alpha1/` and the controller code 
     - Optional: `prefix` (string), `endpoint` (URL; use for MinIO/GCS/Azure S3-compat), `region`, `insecureSkipTLSVerify` (bool), `usePathStyle` (bool).
     - Optional `credentialsSecret`: Secret reference with keys `accessKeyId` and `secretAccessKey` (S3-compatible credentials).
 - PipelineInstance execution controls:
-  - `spec.execution.parallelism` (default 10)
+  - `spec.execution.parallelism` (default 1)
   - `spec.execution.maxAttempts` (default 3)
   - `spec.execution.pendingTimeout` (default 15m; reclaim stale work)
 

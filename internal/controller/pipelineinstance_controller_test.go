@@ -1996,6 +1996,261 @@ var _ = Describe("PipelineInstance Controller", func() {
 			_ = k8sClient.Delete(ctx, succeededPod)
 		})
 
+		It("should detect crashed container in a Running pod and treat as failure", func() {
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)
+				return err == nil && pipelineInstance.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			instanceID := pipelineInstance.GetInstanceID()
+
+			// First reconcile to initialize
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a Running pod where one container has crashed
+			crashPodName := fmt.Sprintf("test-crash-detect-%d", testCounter)
+			crashPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      crashPodName,
+					Namespace: namespace,
+					Labels: map[string]string{
+						"filter.plainsight.ai/instance": instanceID,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "video-in", Image: "video-in:latest"},
+						{Name: "huggingface-vision", Image: "hf-vision:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, crashPod)).To(Succeed())
+
+			// Pod phase stays Running but huggingface-vision has terminated with exit code 1
+			setPodStatus(crashPodName, corev1.PodRunning, []corev1.ContainerStatus{
+				{
+					Name: "video-in",
+					State: corev1.ContainerState{
+						Running: &corev1.ContainerStateRunning{},
+					},
+				},
+				{
+					Name: "huggingface-vision",
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							ExitCode: 1,
+						},
+					},
+				},
+			})
+
+			// Pod has a pending message
+			mockValkey.PendingByConsumer = map[string][]string{
+				crashPodName: {"msg-crash-1"},
+			}
+			mockValkey.Messages = []mockMessage{
+				{ID: "msg-crash-1", Values: map[string]string{"file": "video1.mp4", "attempts": "0"}},
+			}
+
+			err = reconciler.handleCompletedPods(ctx, pipelineInstance)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Message should be re-enqueued (first attempt)
+			Expect(mockValkey.EnqueuedFiles).To(HaveLen(1))
+			Expect(mockValkey.EnqueuedFiles[0].Filepath).To(Equal("video1.mp4"))
+			Expect(mockValkey.EnqueuedFiles[0].Attempts).To(Equal(1))
+
+			// Original message should be ACKed
+			Expect(mockValkey.AckedMessages).To(ContainElement("msg-crash-1"))
+
+			// Pod should be deleted so Job controller can replace it
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: crashPodName, Namespace: namespace}, &corev1.Pod{})
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should not treat Running pod with all containers running as crashed", func() {
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)
+				return err == nil && pipelineInstance.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			instanceID := pipelineInstance.GetInstanceID()
+
+			// First reconcile to initialize
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a healthy Running pod
+			healthyPodName := fmt.Sprintf("test-healthy-running-%d", testCounter)
+			healthyPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      healthyPodName,
+					Namespace: namespace,
+					Labels: map[string]string{
+						"filter.plainsight.ai/instance": instanceID,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "video-in", Image: "video-in:latest"},
+						{Name: "huggingface-vision", Image: "hf-vision:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, healthyPod)).To(Succeed())
+
+			// All containers running — no crash
+			setPodStatus(healthyPodName, corev1.PodRunning, []corev1.ContainerStatus{
+				{
+					Name: "video-in",
+					State: corev1.ContainerState{
+						Running: &corev1.ContainerStateRunning{},
+					},
+				},
+				{
+					Name: "huggingface-vision",
+					State: corev1.ContainerState{
+						Running: &corev1.ContainerStateRunning{},
+					},
+				},
+			})
+
+			mockValkey.PendingByConsumer = map[string][]string{}
+
+			err = reconciler.handleCompletedPods(ctx, pipelineInstance)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Nothing should happen — pod is healthy and running
+			Expect(mockValkey.AckedMessages).To(BeEmpty())
+			Expect(mockValkey.EnqueuedFiles).To(BeEmpty())
+
+			// Cleanup
+			_ = k8sClient.Delete(ctx, healthyPod)
+		})
+
+		It("should not protect crashed Running pod's message in reclaimer", func() {
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)
+				return err == nil && pipelineInstance.UID != ""
+			}, timeout, interval).Should(BeTrue())
+			instanceID := pipelineInstance.GetInstanceID()
+
+			// First reconcile to initialize
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Create a Running pod with a crashed container
+			crashReclaimPodName := fmt.Sprintf("test-crash-reclaim-%d", testCounter)
+			crashReclaimPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      crashReclaimPodName,
+					Namespace: namespace,
+					Labels: map[string]string{
+						"filter.plainsight.ai/instance": instanceID,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "video-in", Image: "video-in:latest"},
+						{Name: "huggingface-vision", Image: "hf-vision:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, crashReclaimPod)).To(Succeed())
+
+			setPodStatus(crashReclaimPodName, corev1.PodRunning, []corev1.ContainerStatus{
+				{
+					Name: "video-in",
+					State: corev1.ContainerState{
+						Running: &corev1.ContainerStateRunning{},
+					},
+				},
+				{
+					Name: "huggingface-vision",
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							ExitCode: 137,
+						},
+					},
+				},
+			})
+
+			// Pending entry owned by the crashed pod
+			mockValkey.PendingEntryDetails = []queue.PendingEntry{
+				{ID: "msg-crash-reclaim", Consumer: crashReclaimPodName, IdleMs: 900001},
+			}
+			mockValkey.AutoClaimMessages = []mockMessage{
+				{ID: "msg-crash-reclaim", Values: map[string]string{"file": "crash-file.mp4", "attempts": "0"}},
+			}
+
+			err = reconciler.runReclaimer(ctx, pipelineInstance)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Message should be claimed (not protected as "running")
+			Expect(mockValkey.ClaimedMessages).To(ContainElement("msg-crash-reclaim"))
+			// And re-enqueued
+			Expect(mockValkey.EnqueuedFiles).To(HaveLen(1))
+			Expect(mockValkey.EnqueuedFiles[0].Filepath).To(Equal("crash-file.mp4"))
+
+			// Cleanup
+			_ = k8sClient.Delete(ctx, crashReclaimPod)
+		})
+
 		It("should send reclaimed message to DLQ when max attempts exceeded", func() {
 			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
 				ObjectMeta: metav1.ObjectMeta{
@@ -2048,6 +2303,92 @@ var _ = Describe("PipelineInstance Controller", func() {
 			// Message should be ACKed and deleted from stream after DLQ
 			Expect(mockValkey.AckedMessages).To(ContainElement("msg-maxed"))
 			Expect(mockValkey.DeletedMessageIDs).To(ContainElement("msg-maxed"))
+		})
+	})
+
+	Context("detectContainerCrash unit tests", func() {
+		It("should detect a crashed container in a Running pod", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name:  "video-in",
+							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+						},
+						{
+							Name: "huggingface-vision",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{ExitCode: 1},
+							},
+						},
+					},
+				},
+			}
+			reason, crashed := detectContainerCrash(pod)
+			Expect(crashed).To(BeTrue())
+			Expect(reason).To(ContainSubstring("huggingface-vision"))
+			Expect(reason).To(ContainSubstring("exit code 1"))
+		})
+
+		It("should not flag a Running pod where all containers are running", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name:  "video-in",
+							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+						},
+						{
+							Name:  "huggingface-vision",
+							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+						},
+					},
+				},
+			}
+			_, crashed := detectContainerCrash(pod)
+			Expect(crashed).To(BeFalse())
+		})
+
+		It("should not flag a non-Running pod", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodFailed,
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "test",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{ExitCode: 1},
+							},
+						},
+					},
+				},
+			}
+			_, crashed := detectContainerCrash(pod)
+			Expect(crashed).To(BeFalse())
+		})
+
+		It("should ignore containers that terminated with exit code 0", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name:  "video-in",
+							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+						},
+						{
+							Name: "event-sink",
+							State: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{ExitCode: 0},
+							},
+						},
+					},
+				},
+			}
+			_, crashed := detectContainerCrash(pod)
+			Expect(crashed).To(BeFalse())
 		})
 	})
 })

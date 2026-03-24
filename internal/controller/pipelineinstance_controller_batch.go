@@ -557,9 +557,10 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 	}
 
 	for _, pod := range podList.Items {
-		// Only process completed pods
+		// Only process completed pods or pods with crashed containers
 		startFailureReason, hasStartFailure := detectPodStartFailure(&pod)
-		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed && !hasStartFailure {
+		crashReason, hasCrash := detectContainerCrash(&pod)
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed && !hasStartFailure && !hasCrash {
 			log.V(1).Info("Skipping pod that is not complete", "pod", pod.Name, "phase", pod.Status.Phase)
 			continue
 		}
@@ -616,9 +617,12 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 			}
 			log.Info("ACKed successful message", "pod", pod.Name, "file", filepath)
 
-		} else if pod.Status.Phase == corev1.PodFailed || hasStartFailure {
+		} else if pod.Status.Phase == corev1.PodFailed || hasStartFailure || hasCrash {
 			// Determine reason for failure
 			reason := startFailureReason
+			if reason == "" && crashReason != "" {
+				reason = crashReason
+			}
 			if reason == "" {
 				reason = "Unknown"
 				for _, containerStatus := range pod.Status.ContainerStatuses {
@@ -652,12 +656,12 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 				continue
 			}
 
-			if hasStartFailure {
+			if hasStartFailure || hasCrash {
 				// Delete the pod to allow the Job controller to create a replacement
 				if err := r.Delete(ctx, &pod); err != nil {
-					log.Error(err, "Failed to delete pod after start failure", "pod", pod.Name)
+					log.Error(err, "Failed to delete pod after failure", "pod", pod.Name)
 				} else {
-					log.Info("Deleted pod after start failure", "pod", pod.Name)
+					log.Info("Deleted pod after failure", "pod", pod.Name, "reason", reason)
 				}
 				// Skip marking processed because the pod is gone
 				continue
@@ -717,6 +721,22 @@ func detectContainerStartFailure(statuses []corev1.ContainerStatus) string {
 	return ""
 }
 
+// detectContainerCrash checks whether any non-init container in a Running pod has terminated
+// with a non-zero exit code. This catches the case where one container (e.g. huggingface-vision)
+// crashes but the pod phase stays "Running" because another container (e.g. video-in) is still alive.
+func detectContainerCrash(pod *corev1.Pod) (string, bool) {
+	if pod.Status.Phase != corev1.PodRunning {
+		return "", false
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+			return fmt.Sprintf("Container %s crashed with exit code %d while pod still running",
+				cs.Name, cs.State.Terminated.ExitCode), true
+		}
+	}
+	return "", false
+}
+
 // runReclaimer recovers stale pending messages from consumers whose pods are no longer running.
 // It uses XPENDING to discover idle entries and their owning consumers, then checks whether
 // each consumer's pod is still alive before reclaiming. This prevents stealing messages from
@@ -761,7 +781,11 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 	for _, pod := range podList.Items {
 		switch pod.Status.Phase {
 		case corev1.PodRunning, corev1.PodPending:
-			runningPods[pod.Name] = true
+			// A Running pod with a crashed container is effectively dead — don't
+			// protect its message from reclamation.
+			if _, crashed := detectContainerCrash(&pod); !crashed {
+				runningPods[pod.Name] = true
+			}
 		case corev1.PodSucceeded:
 			succeededPods[pod.Name] = true
 		}

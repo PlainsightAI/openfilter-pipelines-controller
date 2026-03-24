@@ -604,7 +604,7 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 		}
 
 		filepath := msgs[0].Values["file"]
-		attempts := parseAttempts(msgs[0].Values["attempts"], int(maxAttempts))
+		attempts := parseAttempts(msgs[0].Values["attempts"], 0)
 
 		// Get DLQ key
 		dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
@@ -634,12 +634,14 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 			}
 
 			attempts++
+			requeueOK := false
 			if attempts < int(maxAttempts) {
 				// Re-enqueue with incremented attempts
 				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, filepath, attempts); err != nil {
 					log.Error(err, "Failed to re-enqueue file", "file", filepath)
 				} else {
 					log.Info("Re-enqueued failed file", "file", filepath, "attempts", attempts)
+					requeueOK = true
 				}
 			} else {
 				// Add to DLQ
@@ -647,7 +649,15 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 					log.Error(err, "Failed to add to DLQ", "file", filepath)
 				} else {
 					log.Info("Added file to DLQ", "file", filepath, "reason", reason)
+					requeueOK = true
 				}
+			}
+
+			// Only ACK the original message if the re-enqueue or DLQ write succeeded.
+			// Skipping ACK on failure keeps the message pending so it can be retried on the next reconcile.
+			if !requeueOK {
+				log.Error(nil, "Skipping ACK — re-enqueue/DLQ write failed; message will be retried on next reconcile", "file", filepath, "messageID", messageID)
+				continue
 			}
 
 			// ACK the original message
@@ -708,14 +718,15 @@ func detectContainerStartFailure(statuses []corev1.ContainerStatus) string {
 			}
 			return fmt.Sprintf("Container %s configuration error: %s", status.Name, message)
 		case "CrashLoopBackOff":
-			message := waiting.Message
 			if status.LastTerminationState.Terminated != nil {
 				terminated := status.LastTerminationState.Terminated
-				message = fmt.Sprintf("Container %s crashlooped with exit code %d: %s", status.Name, terminated.ExitCode, terminated.Reason)
-			} else if message == "" {
+				return fmt.Sprintf("Container %s crashlooped with exit code %d: %s", status.Name, terminated.ExitCode, terminated.Reason)
+			}
+			message := waiting.Message
+			if message == "" {
 				message = waiting.Reason
 			}
-			return message
+			return fmt.Sprintf("Container %s crashlooped: %s", status.Name, message)
 		}
 	}
 	return ""
@@ -903,6 +914,7 @@ func (r *PipelineInstanceReconciler) updateStatus(ctx context.Context, pipelineI
 	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
 	failed, err := r.ValkeyClient.GetStreamLength(ctx, dlqKey)
 	if err != nil {
+		log.Error(err, "Failed to get DLQ length")
 		failed = 0
 	}
 
@@ -1111,7 +1123,7 @@ func parseAttempts(value string, fallback int) int {
 	if err != nil {
 		return fallback
 	}
-	if parsed <= 0 {
+	if parsed < 0 {
 		return fallback
 	}
 	return parsed

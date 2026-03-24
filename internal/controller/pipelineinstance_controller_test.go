@@ -2391,4 +2391,188 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(crashed).To(BeFalse())
 		})
 	})
+
+	Context("detectPodStartFailure unit tests", func() {
+		It("should detect ImagePullBackOff in a main container", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "huggingface-vision",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason:  "ImagePullBackOff",
+									Message: "Back-off pulling image \"ghcr.io/example/model:latest\"",
+								},
+							},
+						},
+					},
+				},
+			}
+			reason, failed := detectPodStartFailure(pod)
+			Expect(failed).To(BeTrue())
+			Expect(reason).To(ContainSubstring("huggingface-vision"))
+			Expect(reason).To(ContainSubstring("image pull failed"))
+		})
+
+		It("should detect ErrImagePull with empty message using reason as fallback", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "video-in",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason:  "ErrImagePull",
+									Message: "",
+								},
+							},
+						},
+					},
+				},
+			}
+			reason, failed := detectPodStartFailure(pod)
+			Expect(failed).To(BeTrue())
+			Expect(reason).To(ContainSubstring("video-in"))
+			Expect(reason).To(ContainSubstring("ErrImagePull"))
+		})
+
+		It("should detect CreateContainerConfigError", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "model-runner",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason:  "CreateContainerConfigError",
+									Message: "secret \"model-credentials\" not found",
+								},
+							},
+						},
+					},
+				},
+			}
+			reason, failed := detectPodStartFailure(pod)
+			Expect(failed).To(BeTrue())
+			Expect(reason).To(ContainSubstring("model-runner"))
+			Expect(reason).To(ContainSubstring("configuration error"))
+		})
+
+		It("should detect CrashLoopBackOff with LastTerminationState including container name", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "huggingface-vision",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason: "CrashLoopBackOff",
+								},
+							},
+							LastTerminationState: corev1.ContainerState{
+								Terminated: &corev1.ContainerStateTerminated{
+									ExitCode: 137,
+									Reason:   "OOMKilled",
+								},
+							},
+						},
+					},
+				},
+			}
+			reason, failed := detectPodStartFailure(pod)
+			Expect(failed).To(BeTrue())
+			Expect(reason).To(ContainSubstring("huggingface-vision"))
+			Expect(reason).To(ContainSubstring("exit code 137"))
+			Expect(reason).To(ContainSubstring("OOMKilled"))
+		})
+
+		It("should detect CrashLoopBackOff without LastTerminationState including container name", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "video-in",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason:  "CrashLoopBackOff",
+									Message: "back-off 5m0s restarting failed container",
+								},
+							},
+						},
+					},
+				},
+			}
+			reason, failed := detectPodStartFailure(pod)
+			Expect(failed).To(BeTrue())
+			Expect(reason).To(ContainSubstring("video-in"))
+			Expect(reason).To(ContainSubstring("crashlooped"))
+		})
+
+		It("should detect start failure in an init container", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name:  "video-in",
+							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+						},
+					},
+					InitContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "claimer",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason:  "ImagePullBackOff",
+									Message: "Back-off pulling image \"ghcr.io/example/claimer:latest\"",
+								},
+							},
+						},
+					},
+				},
+			}
+			reason, failed := detectPodStartFailure(pod)
+			Expect(failed).To(BeTrue())
+			Expect(reason).To(ContainSubstring("claimer"))
+			Expect(reason).To(ContainSubstring("image pull failed"))
+		})
+
+		It("should return false when all containers are running normally", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name:  "video-in",
+							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+						},
+						{
+							Name:  "huggingface-vision",
+							State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+						},
+					},
+				},
+			}
+			_, failed := detectPodStartFailure(pod)
+			Expect(failed).To(BeFalse())
+		})
+
+		It("should return false for unrecognized Waiting reason", func() {
+			pod := &corev1.Pod{
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							Name: "video-in",
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason: "ContainerCreating",
+								},
+							},
+						},
+					},
+				},
+			}
+			_, failed := detectPodStartFailure(pod)
+			Expect(failed).To(BeFalse())
+		})
+	})
 })

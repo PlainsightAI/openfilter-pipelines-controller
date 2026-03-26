@@ -484,22 +484,6 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		filterContainers = append(filterContainers, container)
 	}
 
-	// Detect if any filter container requires GPU resources and set NodeSelector accordingly
-	var nodeSelector map[string]string
-	for _, c := range filterContainers {
-		if _, ok := c.Resources.Limits["nvidia.com/gpu"]; ok {
-			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "LATEST"}
-			break
-		}
-		if _, ok := c.Resources.Requests["nvidia.com/gpu"]; ok {
-			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "LATEST"}
-			break
-		}
-	}
-	if nodeSelector != nil {
-		log.V(1).Info("GPU resources detected, requesting latest GPU driver", "pipelineInstance", pipelineInstance.Name)
-	}
-
 	// Build Job spec
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -526,7 +510,6 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 				Spec: corev1.PodSpec{
 					// No special ServiceAccount required; default SA is sufficient
 					RestartPolicy: corev1.RestartPolicyNever,
-					NodeSelector:  nodeSelector,
 					Volumes: []corev1.Volume{
 						{
 							Name: "workspace",
@@ -632,13 +615,26 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 			log.Info("ACKed successful message", "pod", pod.Name, "file", filepath)
 
 		} else if pod.Status.Phase == corev1.PodFailed || hasStartFailure || hasCrash {
-			r.handleFailedPodMessage(ctx, pipelineInstance, &pod, messageID, filepath, attempts, maxAttempts, startFailureReason, crashReason, hasStartFailure, hasCrash)
+			r.handleFailedPodMessage(ctx, pipelineInstance, &pod, messageID, filepath, attempts, maxAttempts, podFailureInfo{
+				startFailureReason: startFailureReason,
+				crashReason:        crashReason,
+				hasStartFailure:    hasStartFailure,
+				hasCrash:           hasCrash,
+			})
 		}
 
 		// No need to mark pod as processed; we rely on queue state to avoid reprocessing.
 	}
 
 	return nil
+}
+
+// podFailureInfo groups crash and start-failure detection results for a pod.
+type podFailureInfo struct {
+	startFailureReason string
+	crashReason        string
+	hasStartFailure    bool
+	hasCrash           bool
 }
 
 // handleFailedPodMessage handles a pod that has failed, crashed, or had a start failure.
@@ -651,14 +647,13 @@ func (r *PipelineInstanceReconciler) handleFailedPodMessage(
 	messageID, filepath string,
 	attempts int,
 	maxAttempts int32,
-	startFailureReason, crashReason string,
-	hasStartFailure, hasCrash bool,
+	info podFailureInfo,
 ) {
 	log := logf.FromContext(ctx)
 	instanceID := pipelineInstance.GetInstanceID()
 	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
 
-	reason := resolveFailureReason(pod, startFailureReason, crashReason)
+	reason := resolveFailureReason(pod, info.startFailureReason, info.crashReason)
 	attempts++
 
 	requeueOK := false
@@ -693,8 +688,12 @@ func (r *PipelineInstanceReconciler) handleFailedPodMessage(
 		return
 	}
 
-	if hasStartFailure || hasCrash {
-		// Delete the pod to allow the Job controller to create a replacement
+	if info.hasStartFailure || info.hasCrash {
+		// Delete the pod to allow the Job controller to schedule a replacement.
+		// This relies on RestartPolicy: Never — with that policy Kubernetes will not
+		// restart the pod automatically, so deletion is required to trigger a new pod.
+		// If the policy were OnFailure, the kubelet would handle restarts and deleting
+		// the pod would be counterproductive.
 		if err := r.Delete(ctx, pod); err != nil {
 			log.Error(err, "Failed to delete pod after failure", "pod", pod.Name)
 		} else {

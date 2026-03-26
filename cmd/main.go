@@ -72,6 +72,8 @@ func main() {
 	var enableHTTP2 bool
 	var valkeyAddr string
 	var valkeyPassword string
+	var valkeyPasswordSecret string
+	var valkeyPasswordSecretKey string
 	var claimerImage string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -80,6 +82,16 @@ func main() {
 		"The Valkey server address (e.g., localhost:6379). Can also be set via VALKEY_ADDR env var.")
 	flag.StringVar(&valkeyPassword, "valkey-password", os.Getenv("VALKEY_PASSWORD"),
 		"The Valkey server password. Can also be set via VALKEY_PASSWORD env var.")
+	flag.StringVar(&valkeyPasswordSecret, "valkey-password-secret",
+		os.Getenv("VALKEY_PASSWORD_SECRET"),
+		"Secret name containing the Valkey password, "+
+			"injected into claimer pods via secretKeyRef. "+
+			"Can also be set via VALKEY_PASSWORD_SECRET env var.")
+	flag.StringVar(&valkeyPasswordSecretKey, "valkey-password-secret-key",
+		os.Getenv("VALKEY_PASSWORD_SECRET_KEY"),
+		"Key within the Valkey password Secret. "+
+			"Defaults to 'valkey-password'. "+
+			"Can also be set via VALKEY_PASSWORD_SECRET_KEY env var.")
 	flag.StringVar(&claimerImage, "claimer-image",
 		getEnvOrDefault("CLAIMER_IMAGE", "plainsightai/openfilter-pipelines-claimer:latest"),
 		"The container image for the claimer init container. Can also be set via CLAIMER_IMAGE env var.")
@@ -218,12 +230,13 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.PipelineInstanceReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		ValkeyClient:   valkeyClient,
-		ValkeyAddr:     valkeyAddr,
-		ValkeyPassword: valkeyPassword,
-		ClaimerImage:   claimerImage,
+		Client:                  mgr.GetClient(),
+		Scheme:                  mgr.GetScheme(),
+		ValkeyClient:            valkeyClient,
+		ValkeyAddr:              valkeyAddr,
+		ValkeyPasswordSecret:    valkeyPasswordSecret,
+		ValkeyPasswordSecretKey: valkeyPasswordSecretKey,
+		ClaimerImage:            claimerImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")
 		os.Exit(1)

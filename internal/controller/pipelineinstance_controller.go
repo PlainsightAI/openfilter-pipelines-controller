@@ -82,11 +82,12 @@ type ValkeyClientInterface interface {
 // PipelineInstanceReconciler reconciles a PipelineInstance object
 type PipelineInstanceReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	ValkeyClient   ValkeyClientInterface
-	ValkeyAddr     string
-	ValkeyPassword string
-	ClaimerImage   string // Image for the claimer init container
+	Scheme                  *runtime.Scheme
+	ValkeyClient            ValkeyClientInterface
+	ValkeyAddr              string
+	ValkeyPasswordSecret    string // Secret name containing the Valkey password
+	ValkeyPasswordSecretKey string // Key within the secret for the Valkey password
+	ClaimerImage            string // Image for the claimer init container
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete

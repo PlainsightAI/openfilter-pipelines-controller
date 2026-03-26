@@ -416,11 +416,20 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		}...)
 	}
 
-	// Add Valkey password if set
-	if r.ValkeyPassword != "" {
+	// Add Valkey password from secret reference if configured
+	if r.ValkeyPasswordSecret != "" {
+		secretKey := r.ValkeyPasswordSecretKey
+		if secretKey == "" {
+			secretKey = "valkey-password"
+		}
 		claimerEnv = append(claimerEnv, corev1.EnvVar{
-			Name:  "VALKEY_PASSWORD",
-			Value: r.ValkeyPassword,
+			Name: "VALKEY_PASSWORD",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: r.ValkeyPasswordSecret},
+					Key:                  secretKey,
+				},
+			},
 		})
 	}
 

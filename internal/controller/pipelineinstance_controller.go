@@ -82,9 +82,9 @@ type ValkeyClientInterface interface {
 // PipelineInstanceReconciler reconciles a PipelineInstance object
 type PipelineInstanceReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	ValkeyClient   ValkeyClientInterface
-	ValkeyAddr     string
+	Scheme                  *runtime.Scheme
+	ValkeyClient            ValkeyClientInterface
+	ValkeyAddr              string
 	ValkeyPasswordSecret    string // Secret name containing the Valkey password
 	ValkeyPasswordSecretKey string // Key within the secret for the Valkey password
 	ClaimerImage            string // Image for the claimer init container

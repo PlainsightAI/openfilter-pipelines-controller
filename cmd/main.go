@@ -118,7 +118,9 @@ func main() {
 		"The container image for the claimer init container. Can also be set via CLAIMER_IMAGE env var.")
 	flag.StringVar(&gpuNodeSelector, "gpu-node-selector",
 		getEnvOrDefault("GPU_NODE_SELECTOR", ""),
-		"Comma-separated key=value node selector labels applied to pods that request nvidia.com/gpu resources (e.g. 'cloud.google.com/gke-gpu-driver-version=latest'). Disabled when empty. Can also be set via GPU_NODE_SELECTOR env var.")
+		"Comma-separated key=value node selector labels applied to pods that request nvidia.com/gpu resources "+
+			"(e.g. 'cloud.google.com/gke-gpu-driver-version=latest'). Disabled when empty. "+
+			"Can also be set via GPU_NODE_SELECTOR env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+

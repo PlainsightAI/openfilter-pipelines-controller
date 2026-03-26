@@ -40,6 +40,7 @@ func makeMinimalPipelineSource() *pipelinesv1alpha1.PipelineSource {
 
 func TestBuildJob_GPUNodeSelector_WithGPULimits(t *testing.T) {
 	r := makeMinimalReconciler()
+	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
@@ -73,6 +74,7 @@ func TestBuildJob_GPUNodeSelector_WithGPULimits(t *testing.T) {
 
 func TestBuildJob_GPUNodeSelector_WithGPURequests(t *testing.T) {
 	r := makeMinimalReconciler()
+	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 

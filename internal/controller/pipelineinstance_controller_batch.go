@@ -488,11 +488,11 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	var nodeSelector map[string]string
 	for _, c := range filterContainers {
 		if _, ok := c.Resources.Limits["nvidia.com/gpu"]; ok {
-			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "LATEST"}
+			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
 			break
 		}
 		if _, ok := c.Resources.Requests["nvidia.com/gpu"]; ok {
-			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "LATEST"}
+			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
 			break
 		}
 	}

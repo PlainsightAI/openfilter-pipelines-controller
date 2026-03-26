@@ -66,8 +66,8 @@ func TestBuildJob_GPUNodeSelector_WithGPULimits(t *testing.T) {
 		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
 	}
 	got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]
-	if got != "LATEST" {
-		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=LATEST, got %q", got)
+	if got != "latest" {
+		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 }
 
@@ -99,8 +99,8 @@ func TestBuildJob_GPUNodeSelector_WithGPURequests(t *testing.T) {
 		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
 	}
 	got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]
-	if got != "LATEST" {
-		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=LATEST, got %q", got)
+	if got != "latest" {
+		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 }
 

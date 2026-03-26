@@ -119,7 +119,8 @@ func main() {
 	flag.StringVar(&gpuNodeSelector, "gpu-node-selector",
 		getEnvOrDefault("GPU_NODE_SELECTOR", ""),
 		"Comma-separated key=value node selector labels applied to pods that request nvidia.com/gpu resources "+
-			"(e.g. 'cloud.google.com/gke-gpu-driver-version=latest'). When not set, GKE defaults to 'default' driver version (which may not support newer CUDA versions). "+
+			"(e.g. 'cloud.google.com/gke-gpu-driver-version=latest'). When not set, GKE defaults to "+
+			"'default' driver version (which may not support newer CUDA versions). "+
 			"Can also be set via GPU_NODE_SELECTOR env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,

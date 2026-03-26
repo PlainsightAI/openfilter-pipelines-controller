@@ -484,20 +484,11 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		filterContainers = append(filterContainers, container)
 	}
 
-	// Detect if any filter container requires GPU resources and set NodeSelector accordingly
+	// Apply configured GPU node selector labels when any container requests nvidia.com/gpu resources.
 	var nodeSelector map[string]string
-	for _, c := range filterContainers {
-		if _, ok := c.Resources.Limits["nvidia.com/gpu"]; ok {
-			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
-			break
-		}
-		if _, ok := c.Resources.Requests["nvidia.com/gpu"]; ok {
-			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
-			break
-		}
-	}
-	if nodeSelector != nil {
-		log.V(1).Info("GPU resources detected, requesting latest GPU driver", "pipelineInstance", pipelineInstance.Name)
+	if len(r.GPUNodeSelectorLabels) > 0 && requiresGPU(filterContainers) {
+		nodeSelector = r.GPUNodeSelectorLabels
+		log.V(1).Info("GPU resources detected, applying GPU node selector", "pipelineInstance", pipelineInstance.Name, "nodeSelector", nodeSelector)
 	}
 
 	// Build Job spec
@@ -735,6 +726,19 @@ func resolveFailureReason(pod *corev1.Pod, startFailureReason, crashReason strin
 		}
 	}
 	return "Unknown"
+}
+
+// requiresGPU returns true if any container in the slice requests nvidia.com/gpu resources.
+func requiresGPU(containers []corev1.Container) bool {
+	for _, c := range containers {
+		if _, ok := c.Resources.Limits["nvidia.com/gpu"]; ok {
+			return true
+		}
+		if _, ok := c.Resources.Requests["nvidia.com/gpu"]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // detectPodStartFailure returns a descriptive reason when any container in the pod is unable to start.

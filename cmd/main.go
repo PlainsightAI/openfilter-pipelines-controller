@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -61,6 +62,25 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
+// parseNodeSelectorLabels parses a comma-separated list of key=value pairs into a map.
+// Returns nil if the input is empty or contains no valid pairs.
+func parseNodeSelectorLabels(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	result := map[string]string{}
+	for _, pair := range strings.Split(s, ",") {
+		kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+		if len(kv) == 2 && kv[0] != "" {
+			result[kv[0]] = kv[1]
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
@@ -75,6 +95,7 @@ func main() {
 	var valkeyPasswordSecret string
 	var valkeyPasswordSecretKey string
 	var claimerImage string
+	var gpuNodeSelector string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -95,6 +116,9 @@ func main() {
 	flag.StringVar(&claimerImage, "claimer-image",
 		getEnvOrDefault("CLAIMER_IMAGE", "plainsightai/openfilter-pipelines-claimer:latest"),
 		"The container image for the claimer init container. Can also be set via CLAIMER_IMAGE env var.")
+	flag.StringVar(&gpuNodeSelector, "gpu-node-selector",
+		getEnvOrDefault("GPU_NODE_SELECTOR", ""),
+		"Comma-separated key=value node selector labels applied to pods that request nvidia.com/gpu resources (e.g. 'cloud.google.com/gke-gpu-driver-version=latest'). Disabled when empty. Can also be set via GPU_NODE_SELECTOR env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -237,6 +261,7 @@ func main() {
 		ValkeyPasswordSecret:    valkeyPasswordSecret,
 		ValkeyPasswordSecretKey: valkeyPasswordSecretKey,
 		ClaimerImage:            claimerImage,
+		GPUNodeSelectorLabels:   parseNodeSelectorLabels(gpuNodeSelector),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")
 		os.Exit(1)

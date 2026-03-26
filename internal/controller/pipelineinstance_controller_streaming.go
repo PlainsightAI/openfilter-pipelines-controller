@@ -294,6 +294,12 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 		containers = append(containers, container)
 	}
 
+	// Apply configured GPU node selector labels when any container requests nvidia.com/gpu resources.
+	var nodeSelector map[string]string
+	if len(r.GPUNodeSelectorLabels) > 0 && requiresGPU(containers) {
+		nodeSelector = r.GPUNodeSelectorLabels
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deploymentName,
@@ -328,6 +334,7 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 				Spec: corev1.PodSpec{
 					// No dedicated ServiceAccount required for streaming mode; default SA is sufficient
 					RestartPolicy: corev1.RestartPolicyAlways,
+					NodeSelector:  nodeSelector,
 					Containers:    containers,
 				},
 			},

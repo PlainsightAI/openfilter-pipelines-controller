@@ -484,6 +484,22 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		filterContainers = append(filterContainers, container)
 	}
 
+	// Detect if any filter container requires GPU resources and set NodeSelector accordingly
+	var nodeSelector map[string]string
+	for _, c := range filterContainers {
+		if _, ok := c.Resources.Limits["nvidia.com/gpu"]; ok {
+			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "LATEST"}
+			break
+		}
+		if _, ok := c.Resources.Requests["nvidia.com/gpu"]; ok {
+			nodeSelector = map[string]string{"cloud.google.com/gke-gpu-driver-version": "LATEST"}
+			break
+		}
+	}
+	if nodeSelector != nil {
+		log.V(1).Info("GPU resources detected, requesting latest GPU driver", "pipelineInstance", pipelineInstance.Name)
+	}
+
 	// Build Job spec
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -510,6 +526,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 				Spec: corev1.PodSpec{
 					// No special ServiceAccount required; default SA is sufficient
 					RestartPolicy: corev1.RestartPolicyNever,
+					NodeSelector:  nodeSelector,
 					Volumes: []corev1.Volume{
 						{
 							Name: "workspace",

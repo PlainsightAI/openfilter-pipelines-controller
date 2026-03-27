@@ -557,9 +557,10 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 	}
 
 	for _, pod := range podList.Items {
-		// Only process completed pods
+		// Only process completed pods or pods with crashed containers
 		startFailureReason, hasStartFailure := detectPodStartFailure(&pod)
-		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed && !hasStartFailure {
+		crashReason, hasCrash := detectContainerCrash(&pod)
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed && !hasStartFailure && !hasCrash {
 			log.V(1).Info("Skipping pod that is not complete", "pod", pod.Name, "phase", pod.Status.Phase)
 			continue
 		}
@@ -603,10 +604,7 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 		}
 
 		filepath := msgs[0].Values["file"]
-		attempts := parseAttempts(msgs[0].Values["attempts"], int(maxAttempts))
-
-		// Get DLQ key
-		dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+		attempts := parseAttempts(msgs[0].Values["attempts"], 0)
 
 		if pod.Status.Phase == corev1.PodSucceeded {
 			// ACK the message
@@ -616,58 +614,110 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 			}
 			log.Info("ACKed successful message", "pod", pod.Name, "file", filepath)
 
-		} else if pod.Status.Phase == corev1.PodFailed || hasStartFailure {
-			// Determine reason for failure
-			reason := startFailureReason
-			if reason == "" {
-				reason = "Unknown"
-				for _, containerStatus := range pod.Status.ContainerStatuses {
-					if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.ExitCode != 0 {
-						reason = fmt.Sprintf("Container %s exited with code %d", containerStatus.Name, containerStatus.State.Terminated.ExitCode)
-						break
-					}
-				}
-			}
-
-			attempts++
-			if attempts < int(maxAttempts) {
-				// Re-enqueue with incremented attempts
-				if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, filepath, attempts); err != nil {
-					log.Error(err, "Failed to re-enqueue file", "file", filepath)
-				} else {
-					log.Info("Re-enqueued failed file", "file", filepath, "attempts", attempts)
-				}
-			} else {
-				// Add to DLQ
-				if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, filepath, attempts, reason); err != nil {
-					log.Error(err, "Failed to add to DLQ", "file", filepath)
-				} else {
-					log.Info("Added file to DLQ", "file", filepath, "reason", reason)
-				}
-			}
-
-			// ACK the original message
-			if err := r.ValkeyClient.AckMessage(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), messageID); err != nil {
-				log.Error(err, "Failed to ACK failed message", "messageID", messageID)
-				continue
-			}
-
-			if hasStartFailure {
-				// Delete the pod to allow the Job controller to create a replacement
-				if err := r.Delete(ctx, &pod); err != nil {
-					log.Error(err, "Failed to delete pod after start failure", "pod", pod.Name)
-				} else {
-					log.Info("Deleted pod after start failure", "pod", pod.Name)
-				}
-				// Skip marking processed because the pod is gone
-				continue
-			}
+		} else if pod.Status.Phase == corev1.PodFailed || hasStartFailure || hasCrash {
+			r.handleFailedPodMessage(ctx, pipelineInstance, &pod, messageID, filepath, attempts, maxAttempts, podFailureInfo{
+				startFailureReason: startFailureReason,
+				crashReason:        crashReason,
+				hasStartFailure:    hasStartFailure,
+				hasCrash:           hasCrash,
+			})
 		}
 
 		// No need to mark pod as processed; we rely on queue state to avoid reprocessing.
 	}
 
 	return nil
+}
+
+// podFailureInfo groups crash and start-failure detection results for a pod.
+type podFailureInfo struct {
+	startFailureReason string
+	crashReason        string
+	hasStartFailure    bool
+	hasCrash           bool
+}
+
+// handleFailedPodMessage handles a pod that has failed, crashed, or had a start failure.
+// It re-enqueues the file or moves it to the DLQ, ACKs the original message, and optionally
+// deletes the pod so the Job controller can schedule a replacement.
+func (r *PipelineInstanceReconciler) handleFailedPodMessage(
+	ctx context.Context,
+	pipelineInstance *pipelinesv1alpha1.PipelineInstance,
+	pod *corev1.Pod,
+	messageID, filepath string,
+	attempts int,
+	maxAttempts int32,
+	info podFailureInfo,
+) {
+	log := logf.FromContext(ctx)
+	instanceID := pipelineInstance.GetInstanceID()
+	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+
+	reason := resolveFailureReason(pod, info.startFailureReason, info.crashReason)
+	attempts++
+
+	requeueOK := false
+	if attempts < int(maxAttempts) {
+		// Re-enqueue with incremented attempts
+		if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, filepath, attempts); err != nil {
+			log.Error(err, "Failed to re-enqueue file", "file", filepath)
+		} else {
+			log.Info("Re-enqueued failed file", "file", filepath, "attempts", attempts)
+			requeueOK = true
+		}
+	} else {
+		// Add to DLQ
+		if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, filepath, attempts, reason); err != nil {
+			log.Error(err, "Failed to add to DLQ", "file", filepath)
+		} else {
+			log.Info("Added file to DLQ", "file", filepath, "reason", reason)
+			requeueOK = true
+		}
+	}
+
+	// Only ACK the original message if the re-enqueue or DLQ write succeeded.
+	// Skipping ACK on failure keeps the message pending so it can be retried on the next reconcile.
+	if !requeueOK {
+		log.Error(nil, "Skipping ACK — re-enqueue/DLQ write failed; message will be retried on next reconcile", "file", filepath, "messageID", messageID)
+		return
+	}
+
+	// ACK the original message
+	if err := r.ValkeyClient.AckMessage(ctx, pipelineInstance.GetQueueStream(), pipelineInstance.GetQueueGroup(), messageID); err != nil {
+		log.Error(err, "Failed to ACK failed message", "messageID", messageID)
+		return
+	}
+
+	if info.hasStartFailure || info.hasCrash {
+		// Delete the pod to allow the Job controller to schedule a replacement.
+		// This relies on RestartPolicy: Never — with that policy Kubernetes will not
+		// restart the pod automatically, so deletion is required to trigger a new pod.
+		// If the policy were OnFailure, the kubelet would handle restarts and deleting
+		// the pod would be counterproductive.
+		if err := r.Delete(ctx, pod); err != nil {
+			log.Error(err, "Failed to delete pod after failure", "pod", pod.Name)
+		} else {
+			log.Info("Deleted pod after failure", "pod", pod.Name, "reason", reason)
+		}
+	}
+}
+
+// resolveFailureReason returns a human-readable failure reason for a pod.
+// It prefers explicit start-failure and crash reasons, then falls back to inspecting
+// terminated container exit codes, and finally returns "Unknown".
+func resolveFailureReason(pod *corev1.Pod, startFailureReason, crashReason string) string {
+	if startFailureReason != "" {
+		return startFailureReason
+	}
+	if crashReason != "" {
+		return crashReason
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+			return fmt.Sprintf("Container %s exited with code %d", cs.Name, cs.State.Terminated.ExitCode)
+		}
+	}
+	return "Unknown"
 }
 
 // detectPodStartFailure returns a descriptive reason when any container in the pod is unable to start.
@@ -704,17 +754,34 @@ func detectContainerStartFailure(statuses []corev1.ContainerStatus) string {
 			}
 			return fmt.Sprintf("Container %s configuration error: %s", status.Name, message)
 		case "CrashLoopBackOff":
-			message := waiting.Message
 			if status.LastTerminationState.Terminated != nil {
 				terminated := status.LastTerminationState.Terminated
-				message = fmt.Sprintf("Container %s crashlooped with exit code %d: %s", status.Name, terminated.ExitCode, terminated.Reason)
-			} else if message == "" {
+				return fmt.Sprintf("Container %s crashlooped with exit code %d: %s", status.Name, terminated.ExitCode, terminated.Reason)
+			}
+			message := waiting.Message
+			if message == "" {
 				message = waiting.Reason
 			}
-			return message
+			return fmt.Sprintf("Container %s crashlooped: %s", status.Name, message)
 		}
 	}
 	return ""
+}
+
+// detectContainerCrash checks whether any non-init container in a Running pod has terminated
+// with a non-zero exit code. This catches the case where one container (e.g. huggingface-vision)
+// crashes but the pod phase stays "Running" because another container (e.g. video-in) is still alive.
+func detectContainerCrash(pod *corev1.Pod) (string, bool) {
+	if pod.Status.Phase != corev1.PodRunning {
+		return "", false
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+			return fmt.Sprintf("Container %s crashed with exit code %d while pod still running",
+				cs.Name, cs.State.Terminated.ExitCode), true
+		}
+	}
+	return "", false
 }
 
 // runReclaimer recovers stale pending messages from consumers whose pods are no longer running.
@@ -761,7 +828,11 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 	for _, pod := range podList.Items {
 		switch pod.Status.Phase {
 		case corev1.PodRunning, corev1.PodPending:
-			runningPods[pod.Name] = true
+			// A Running pod with a crashed container is effectively dead — don't
+			// protect its message from reclamation.
+			if _, crashed := detectContainerCrash(&pod); !crashed {
+				runningPods[pod.Name] = true
+			}
 		case corev1.PodSucceeded:
 			succeededPods[pod.Name] = true
 		}
@@ -879,6 +950,7 @@ func (r *PipelineInstanceReconciler) updateStatus(ctx context.Context, pipelineI
 	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
 	failed, err := r.ValkeyClient.GetStreamLength(ctx, dlqKey)
 	if err != nil {
+		log.Error(err, "Failed to get DLQ length")
 		failed = 0
 	}
 
@@ -1087,7 +1159,7 @@ func parseAttempts(value string, fallback int) int {
 	if err != nil {
 		return fallback
 	}
-	if parsed <= 0 {
+	if parsed < 0 {
 		return fallback
 	}
 	return parsed

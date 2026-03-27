@@ -163,3 +163,180 @@ func TestBuildJob_GPUNodeSelector_NoResources(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildJob_GPUNodeSelector_MultipleLabels(t *testing.T) {
+	r := makeMinimalReconciler()
+	r.GPUNodeSelectorLabels = map[string]string{
+		"cloud.google.com/gke-gpu-driver-version": "latest",
+		"nvidia.com/present":                      "true",
+	}
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	nodeSelector := job.Spec.Template.Spec.NodeSelector
+	if nodeSelector == nil {
+		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
+	}
+	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
+	}
+	if got := nodeSelector["nvidia.com/present"]; got != "true" {
+		t.Errorf("expected NodeSelector[nvidia.com/present]=true, got %q", got)
+	}
+}
+
+func TestBuildJob_GPUNodeSelector_NilLabels(t *testing.T) {
+	r := makeMinimalReconciler()
+	// GPUNodeSelectorLabels is nil (zero value)
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	if nodeSelector := job.Spec.Template.Spec.NodeSelector; nodeSelector != nil {
+		if len(nodeSelector) != 0 {
+			t.Errorf("expected empty NodeSelector when GPUNodeSelectorLabels is nil, got %v", nodeSelector)
+		}
+	}
+}
+
+func TestBuildJob_GPUNodeSelector_EmptyLabels(t *testing.T) {
+	r := makeMinimalReconciler()
+	r.GPUNodeSelectorLabels = map[string]string{}
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	if nodeSelector := job.Spec.Template.Spec.NodeSelector; nodeSelector != nil {
+		if len(nodeSelector) != 0 {
+			t.Errorf("expected empty NodeSelector when GPUNodeSelectorLabels is empty, got %v", nodeSelector)
+		}
+	}
+}
+
+func TestBuildJob_GPUNodeSelector_DefensiveCopy(t *testing.T) {
+	r := makeMinimalReconciler()
+	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	// Mutate the returned pod's NodeSelector
+	job.Spec.Template.Spec.NodeSelector["injected-key"] = "injected-value"
+	job.Spec.Template.Spec.NodeSelector["cloud.google.com/gke-gpu-driver-version"] = "mutated"
+
+	// The reconciler's shared map must be unaffected
+	if got := r.GPUNodeSelectorLabels["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+		t.Errorf("defensive copy broken: r.GPUNodeSelectorLabels[driver-version] = %q, want \"latest\"", got)
+	}
+	if _, ok := r.GPUNodeSelectorLabels["injected-key"]; ok {
+		t.Error("defensive copy broken: injected-key appeared in r.GPUNodeSelectorLabels")
+	}
+}
+
+func TestBuildJob_GPUNodeSelector_BothLimitsAndRequests(t *testing.T) {
+	r := makeMinimalReconciler()
+	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+						Requests: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	nodeSelector := job.Spec.Template.Spec.NodeSelector
+	if nodeSelector == nil {
+		t.Fatal("expected NodeSelector to be set when GPU is in both limits and requests, got nil")
+	}
+	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
+	}
+	if len(nodeSelector) != 1 {
+		t.Errorf("expected exactly 1 NodeSelector entry, got %d: %v", len(nodeSelector), nodeSelector)
+	}
+}

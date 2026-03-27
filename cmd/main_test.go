@@ -66,6 +66,26 @@ func TestParseNodeSelectorLabels(t *testing.T) {
 			input:    "key=",
 			expected: map[string]string{"key": ""},
 		},
+		{
+			name:     "only whitespace returns nil",
+			input:    "   ",
+			expected: nil,
+		},
+		{
+			name:     "trailing comma keeps valid pair",
+			input:    "key=value,",
+			expected: map[string]string{"key": "value"},
+		},
+		{
+			name:     "leading comma keeps valid pair",
+			input:    ",key=value",
+			expected: map[string]string{"key": "value"},
+		},
+		{
+			name:     "double comma keeps surrounding pairs",
+			input:    "a=1,,b=2",
+			expected: map[string]string{"a": "1", "b": "2"},
+		},
 	}
 
 	for _, tt := range tests {

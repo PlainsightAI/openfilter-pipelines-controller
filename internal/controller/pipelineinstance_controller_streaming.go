@@ -295,9 +295,13 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 	}
 
 	// Apply configured GPU node selector labels when any container requests nvidia.com/gpu resources.
+	// Copy the map to prevent downstream mutation from corrupting the reconciler's shared state.
 	var nodeSelector map[string]string
 	if len(r.GPUNodeSelectorLabels) > 0 && requiresGPU(containers) {
-		nodeSelector = r.GPUNodeSelectorLabels
+		nodeSelector = make(map[string]string, len(r.GPUNodeSelectorLabels))
+		for k, v := range r.GPUNodeSelectorLabels {
+			nodeSelector[k] = v
+		}
 	}
 
 	deployment := &appsv1.Deployment{

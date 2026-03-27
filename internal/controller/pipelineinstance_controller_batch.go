@@ -485,9 +485,13 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	}
 
 	// Apply configured GPU node selector labels when any container requests nvidia.com/gpu resources.
+	// Copy the map to prevent downstream mutation from corrupting the reconciler's shared state.
 	var nodeSelector map[string]string
 	if len(r.GPUNodeSelectorLabels) > 0 && requiresGPU(filterContainers) {
-		nodeSelector = r.GPUNodeSelectorLabels
+		nodeSelector = make(map[string]string, len(r.GPUNodeSelectorLabels))
+		for k, v := range r.GPUNodeSelectorLabels {
+			nodeSelector[k] = v
+		}
 		log.V(1).Info("GPU resources detected, applying GPU node selector", "pipelineInstance", pipelineInstance.Name, "nodeSelector", nodeSelector)
 	}
 

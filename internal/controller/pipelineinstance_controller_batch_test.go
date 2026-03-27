@@ -12,6 +12,8 @@ import (
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
 
+const expectedDriverVersion = "latest"
+
 func makeMinimalReconciler() *PipelineInstanceReconciler {
 	return &PipelineInstanceReconciler{
 		ClaimerImage: "claimer:latest",
@@ -40,7 +42,7 @@ func makeMinimalPipelineSource() *pipelinesv1alpha1.PipelineSource {
 
 func TestBuildJob_GPUNodeSelector_WithGPULimits(t *testing.T) {
 	r := makeMinimalReconciler()
-	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
+	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion}
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
@@ -67,14 +69,14 @@ func TestBuildJob_GPUNodeSelector_WithGPULimits(t *testing.T) {
 		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
 	}
 	got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]
-	if got != "latest" {
+	if got != expectedDriverVersion {
 		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 }
 
 func TestBuildJob_GPUNodeSelector_WithGPURequests(t *testing.T) {
 	r := makeMinimalReconciler()
-	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
+	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion}
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
@@ -101,7 +103,7 @@ func TestBuildJob_GPUNodeSelector_WithGPURequests(t *testing.T) {
 		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
 	}
 	got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]
-	if got != "latest" {
+	if got != expectedDriverVersion {
 		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 }
@@ -167,7 +169,7 @@ func TestBuildJob_GPUNodeSelector_NoResources(t *testing.T) {
 func TestBuildJob_GPUNodeSelector_MultipleLabels(t *testing.T) {
 	r := makeMinimalReconciler()
 	r.GPUNodeSelectorLabels = map[string]string{
-		"cloud.google.com/gke-gpu-driver-version": "latest",
+		"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion,
 		"nvidia.com/present":                      "true",
 	}
 	pi := makeMinimalPipelineInstance()
@@ -195,7 +197,7 @@ func TestBuildJob_GPUNodeSelector_MultipleLabels(t *testing.T) {
 	if nodeSelector == nil {
 		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
 	}
-	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != expectedDriverVersion {
 		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 	if got := nodeSelector["nvidia.com/present"]; got != "true" {
@@ -267,7 +269,7 @@ func TestBuildJob_GPUNodeSelector_EmptyLabels(t *testing.T) {
 
 func TestBuildJob_GPUNodeSelector_DefensiveCopy(t *testing.T) {
 	r := makeMinimalReconciler()
-	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
+	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion}
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
@@ -294,7 +296,7 @@ func TestBuildJob_GPUNodeSelector_DefensiveCopy(t *testing.T) {
 	job.Spec.Template.Spec.NodeSelector["cloud.google.com/gke-gpu-driver-version"] = "mutated"
 
 	// The reconciler's shared map must be unaffected
-	if got := r.GPUNodeSelectorLabels["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+	if got := r.GPUNodeSelectorLabels["cloud.google.com/gke-gpu-driver-version"]; got != expectedDriverVersion {
 		t.Errorf("defensive copy broken: r.GPUNodeSelectorLabels[driver-version] = %q, want \"latest\"", got)
 	}
 	if _, ok := r.GPUNodeSelectorLabels["injected-key"]; ok {
@@ -304,7 +306,7 @@ func TestBuildJob_GPUNodeSelector_DefensiveCopy(t *testing.T) {
 
 func TestBuildJob_GPUNodeSelector_BothLimitsAndRequests(t *testing.T) {
 	r := makeMinimalReconciler()
-	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"}
+	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion}
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
@@ -333,7 +335,7 @@ func TestBuildJob_GPUNodeSelector_BothLimitsAndRequests(t *testing.T) {
 	if nodeSelector == nil {
 		t.Fatal("expected NodeSelector to be set when GPU is in both limits and requests, got nil")
 	}
-	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != expectedDriverVersion {
 		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 	if len(nodeSelector) != 1 {

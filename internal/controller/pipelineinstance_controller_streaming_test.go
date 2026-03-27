@@ -23,7 +23,7 @@ func makeMinimalStreamingPipelineInstance() *pipelinesv1alpha1.PipelineInstance 
 
 func TestBuildStreamingDeployment_GPUNodeSelector_WithGPULimits(t *testing.T) {
 	r := &PipelineInstanceReconciler{
-		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"},
+		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion},
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
@@ -49,14 +49,14 @@ func TestBuildStreamingDeployment_GPUNodeSelector_WithGPULimits(t *testing.T) {
 		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
 	}
 	got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]
-	if got != "latest" {
+	if got != expectedDriverVersion {
 		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 }
 
 func TestBuildStreamingDeployment_GPUNodeSelector_WithGPURequests(t *testing.T) {
 	r := &PipelineInstanceReconciler{
-		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"},
+		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion},
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
@@ -82,14 +82,14 @@ func TestBuildStreamingDeployment_GPUNodeSelector_WithGPURequests(t *testing.T) 
 		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
 	}
 	got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]
-	if got != "latest" {
+	if got != expectedDriverVersion {
 		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 }
 
 func TestBuildStreamingDeployment_GPUNodeSelector_WithoutGPU(t *testing.T) {
 	r := &PipelineInstanceReconciler{
-		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"},
+		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion},
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
@@ -121,7 +121,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_WithoutGPU(t *testing.T) {
 
 func TestBuildStreamingDeployment_GPUNodeSelector_NoResources(t *testing.T) {
 	r := &PipelineInstanceReconciler{
-		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"},
+		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion},
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
@@ -148,7 +148,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_NoResources(t *testing.T) {
 func TestBuildStreamingDeployment_GPUNodeSelector_MultipleLabels(t *testing.T) {
 	r := &PipelineInstanceReconciler{
 		GPUNodeSelectorLabels: map[string]string{
-			"cloud.google.com/gke-gpu-driver-version": "latest",
+			"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion,
 			"nvidia.com/present":                      "true",
 		},
 	}
@@ -175,7 +175,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_MultipleLabels(t *testing.T) {
 	if nodeSelector == nil {
 		t.Fatal("expected NodeSelector to be set for GPU workload, got nil")
 	}
-	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != expectedDriverVersion {
 		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 	if got := nodeSelector["nvidia.com/present"]; got != "true" {
@@ -245,7 +245,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_EmptyLabels(t *testing.T) {
 
 func TestBuildStreamingDeployment_GPUNodeSelector_DefensiveCopy(t *testing.T) {
 	r := &PipelineInstanceReconciler{
-		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"},
+		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion},
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
@@ -271,7 +271,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_DefensiveCopy(t *testing.T) {
 	deployment.Spec.Template.Spec.NodeSelector["cloud.google.com/gke-gpu-driver-version"] = "mutated"
 
 	// The reconciler's shared map must be unaffected
-	if got := r.GPUNodeSelectorLabels["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+	if got := r.GPUNodeSelectorLabels["cloud.google.com/gke-gpu-driver-version"]; got != expectedDriverVersion {
 		t.Errorf("defensive copy broken: r.GPUNodeSelectorLabels[driver-version] = %q, want \"latest\"", got)
 	}
 	if _, ok := r.GPUNodeSelectorLabels["injected-key"]; ok {
@@ -281,7 +281,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_DefensiveCopy(t *testing.T) {
 
 func TestBuildStreamingDeployment_GPUNodeSelector_BothLimitsAndRequests(t *testing.T) {
 	r := &PipelineInstanceReconciler{
-		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": "latest"},
+		GPUNodeSelectorLabels: map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion},
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
@@ -309,7 +309,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_BothLimitsAndRequests(t *testi
 	if nodeSelector == nil {
 		t.Fatal("expected NodeSelector to be set when GPU is in both limits and requests, got nil")
 	}
-	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != "latest" {
+	if got := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; got != expectedDriverVersion {
 		t.Errorf("expected NodeSelector[cloud.google.com/gke-gpu-driver-version]=latest, got %q", got)
 	}
 	if len(nodeSelector) != 1 {

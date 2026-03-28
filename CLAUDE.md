@@ -14,6 +14,7 @@ This is a Kubernetes operator built with Kubebuilder v4 that manages Pipeline cu
 ## Development Commands
 
 ### Build and Run
+
 ```bash
 # Build the manager binary
 make build
@@ -29,6 +30,7 @@ make vet
 ```
 
 ### Testing
+
 ```bash
 # Run unit tests (auto-runs manifests, generate, fmt, vet first)
 make test
@@ -44,6 +46,7 @@ make cleanup-test-e2e
 ```
 
 ### Linting
+
 ```bash
 # Run golangci-lint
 make lint
@@ -56,6 +59,7 @@ make lint-config
 ```
 
 ### Code Generation
+
 ```bash
 # Generate CRD manifests, RBAC, webhooks
 make manifests
@@ -65,6 +69,7 @@ make generate
 ```
 
 ### Cluster Operations
+
 ```bash
 # Install CRDs into cluster
 make install
@@ -83,6 +88,7 @@ make undeploy
 ```
 
 ### Docker/Container
+
 ```bash
 # Build Docker image
 make docker-build IMG=<registry>/openfilter-pipelines-controller:tag
@@ -95,12 +101,14 @@ make docker-buildx IMG=<registry>/openfilter-pipelines-controller:tag
 ```
 
 ### Distribution
+
 ```bash
 # Generate consolidated install.yaml in dist/
 make build-installer IMG=<registry>/openfilter-pipelines-controller:tag
 ```
 
 ### Helm Chart
+
 ```bash
 # Update CRDs in Helm chart (after modifying API types)
 make helm-update-crds
@@ -206,12 +214,35 @@ When modifying CRD types or controller RBAC:
 ## Linter Configuration
 
 The project uses golangci-lint v2.4.0 with the following enabled linters:
+
 - copyloopvar, dupl, errcheck, ginkgolinter, goconst, gocyclo, govet
 - ineffassign, lll, misspell, nakedret, prealloc, revive, staticcheck
 - unconvert, unparam, unused
 
 Line length checks (lll) are relaxed for api/ and internal/ directories.
 
+## GPU Node Selector Feature
+
+The controller supports injecting NodeSelector labels into pods that request `nvidia.com/gpu` resources. This lets operators pin GPU workloads to nodes with a specific GPU driver version (e.g. `cloud.google.com/gke-gpu-driver-version=latest` on GKE).
+
+**How it works:**
+
+- At startup, `parseNodeSelectorLabels` in `cmd/main.go` parses a comma-separated `key=value` string into `map[string]string`.
+- The parsed map is stored in `PipelineInstanceReconciler.GPUNodeSelectorLabels`.
+- Both `buildJob` (batch mode, `pipelineinstance_controller_batch.go`) and `buildStreamingDeployment` (streaming mode, `pipelineinstance_controller_streaming.go`) call `requiresGPU(containers)` before applying the labels. If no container requests `nvidia.com/gpu`, no NodeSelector is set.
+- The map is **defensively copied** into each pod spec to prevent downstream mutation from corrupting the reconciler's shared state.
+
+**Configuration:**
+
+| Method | Value |
+|--------|-------|
+| CLI flag | `--gpu-node-selector "key=value,key2=value2"` |
+| Env var | `GPU_NODE_SELECTOR` |
+| Helm value | `gpuNodeSelector` (string, default `""`) |
+
+When `gpuNodeSelector` is set in `values.yaml`, the Helm chart injects it as the `GPU_NODE_SELECTOR` env var into the controller Deployment. An empty value disables the feature entirely (no NodeSelector is applied to any pod).
+
 ## General Guidelines
+
 - Always use context7 when I need code generation, setup or configuration steps, or library/API documentation. This means you should automatically use the Context7 MCP tools to resolve library id and get library docs without me having to explicitly ask
 - Avoid using emojis everywhere like you life depended on that

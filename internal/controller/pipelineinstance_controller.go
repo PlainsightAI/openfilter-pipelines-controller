@@ -85,9 +85,10 @@ type PipelineInstanceReconciler struct {
 	Scheme                  *runtime.Scheme
 	ValkeyClient            ValkeyClientInterface
 	ValkeyAddr              string
-	ValkeyPasswordSecret    string // Secret name containing the Valkey password
-	ValkeyPasswordSecretKey string // Key within the secret for the Valkey password
-	ClaimerImage            string // Image for the claimer init container
+	ValkeyPasswordSecret    string            // Secret name containing the Valkey password
+	ValkeyPasswordSecretKey string            // Key within the secret for the Valkey password
+	ClaimerImage            string            // Image for the claimer init container
+	GPUNodeSelectorLabels   map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete

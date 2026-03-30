@@ -127,6 +127,10 @@ spec:
             {{- end }}
             - name: CLAIMER_IMAGE
               value: "{{ .Values.claimerImage.repository }}:{{ .Values.claimerImage.tag | default .Chart.AppVersion }}"
+            {{- if .Values.gpuNodeSelector }}
+            - name: GPU_NODE_SELECTOR
+              value: {{ .Values.gpuNodeSelector | quote }}
+            {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

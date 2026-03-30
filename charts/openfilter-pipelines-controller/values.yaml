@@ -133,6 +133,11 @@ volumes: []
 # Additional volume mounts
 volumeMounts: []
 
+# GPU node selector: comma-separated key=value pairs applied to pods that request
+# nvidia.com/gpu resources (e.g. "cloud.google.com/gke-gpu-driver-version=latest").
+# Leave empty to disable (no node selector is applied).
+gpuNodeSelector: ""
+
 # Environment variables
 env: []
 

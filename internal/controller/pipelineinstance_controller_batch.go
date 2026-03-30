@@ -520,8 +520,9 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 				},
 				Spec: corev1.PodSpec{
 					// No special ServiceAccount required; default SA is sufficient
-					RestartPolicy: corev1.RestartPolicyNever,
-					NodeSelector:  nodeSelector,
+					RestartPolicy:    corev1.RestartPolicyNever,
+					NodeSelector:     nodeSelector,
+					ImagePullSecrets: pipeline.Spec.ImagePullSecrets,
 					Volumes: []corev1.Volume{
 						{
 							Name: "workspace",

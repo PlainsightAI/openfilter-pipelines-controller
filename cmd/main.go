@@ -103,7 +103,7 @@ func main() {
 	flag.StringVar(&valkeyPassword, "valkey-password", os.Getenv("VALKEY_PASSWORD"),
 		"The Valkey server password. Can also be set via VALKEY_PASSWORD env var.")
 	flag.StringVar(&valkeyOrgSecretName, "valkey-org-secret-name",
-		getEnvOrDefault("VALKEY_ORG_SECRET_NAME", "valkey-org-credentials"),
+		getEnvOrDefault("VALKEY_ORG_SECRET_NAME", controller.DefaultValkeyOrgSecretName),
 		"Name of the per-org Valkey credentials secret. "+
 			"Can also be set via VALKEY_ORG_SECRET_NAME env var.")
 	flag.StringVar(&claimerImage, "claimer-image",

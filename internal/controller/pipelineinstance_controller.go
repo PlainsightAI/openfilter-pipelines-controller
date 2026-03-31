@@ -160,12 +160,9 @@ func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Cont
 	}
 	password := base64.RawURLEncoding.EncodeToString(passwordBytes)
 
-	// Create the ACL user in Valkey
-	if err := r.ValkeyClient.EnsureACLUser(ctx, username, password, namespace); err != nil {
-		return fmt.Errorf("failed to create ACL user %s: %w", username, err)
-	}
-
-	// Create the secret in the target namespace
+	// Create the secret first — the secret is the source of truth for the password.
+	// If two reconciles race, the loser gets AlreadyExists and re-reads the winner's
+	// password to ensure the ACL user matches.
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
@@ -182,10 +179,19 @@ func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Cont
 		},
 	}
 	if err := r.Create(ctx, secret); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			return nil // race condition — another reconcile created it
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create org Valkey secret in %s: %w", namespace, err)
 		}
-		return fmt.Errorf("failed to create org Valkey secret in %s: %w", namespace, err)
+		// Race: another reconcile created it first — re-read to get the winning password
+		if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
+			return fmt.Errorf("failed to re-read org Valkey secret after race in %s: %w", namespace, err)
+		}
+		password = string(secret.Data["valkey-password"])
+	}
+
+	// Set the ACL user with the password from the secret (source of truth)
+	if err := r.ValkeyClient.EnsureACLUser(ctx, username, password, namespace); err != nil {
+		return fmt.Errorf("failed to create ACL user %s: %w", username, err)
 	}
 
 	log.Info("Created org Valkey credentials", "namespace", namespace, "username", username)

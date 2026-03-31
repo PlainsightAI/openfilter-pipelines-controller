@@ -464,6 +464,7 @@ func (v *ValkeyClient) EnsureACLUser(ctx context.Context, username, password, na
 		"resetpass",     // remove any existing passwords
 		"resetkeys",     // remove any existing key patterns
 		"resetchannels", // remove any existing channel patterns
+		"nocommands",    // remove any existing command permissions
 		"on",            // enable the user
 		">"+password,    // set password
 		keyPattern,      // restrict to namespace keys

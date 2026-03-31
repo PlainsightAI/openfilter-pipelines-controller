@@ -237,31 +237,35 @@ func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx conte
 		return nil // other active instances exist, keep the credentials
 	}
 
-	username := queue.ValkeyUsernameForNamespace(namespace)
+	// Verify the namespace secret exists and is managed by us before cleaning up
+	secretName := r.ValkeyNSSecretName
+	if secretName == "" {
+		secretName = DefaultValkeyNSSecretName
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // secret already gone, nothing to clean up
+		}
+		return fmt.Errorf("failed to get namespace Valkey secret %s: %w", secretName, err)
+	}
+	if secret.Labels["app.kubernetes.io/managed-by"] != "openfilter-pipelines-controller" {
+		log.Info("Skipping cleanup — namespace Valkey secret not managed by this controller", "secret", secretName)
+		return nil
+	}
 
-	// Delete the ACL user from Valkey
+	// Delete the ACL user from Valkey (only after confirming we own the secret)
+	username := queue.ValkeyUsernameForNamespace(namespace)
 	if err := r.ValkeyClient.DeleteACLUser(ctx, username); err != nil {
 		return fmt.Errorf("failed to delete Valkey ACL user %s: %w", username, err)
 	}
 	log.Info("Deleted Valkey ACL user", "username", username)
 
 	// Delete the namespace secret
-	secretName := r.ValkeyNSSecretName
-	if secretName == "" {
-		secretName = DefaultValkeyNSSecretName
+	if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete namespace Valkey secret %s: %w", secretName, err)
 	}
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err == nil {
-		// Only delete if we manage this secret (avoid deleting unrelated secrets with the same name)
-		if secret.Labels["app.kubernetes.io/managed-by"] != "openfilter-pipelines-controller" {
-			log.Info("Skipping deletion of namespace Valkey secret — not managed by this controller", "secret", secretName)
-			return nil
-		}
-		if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete namespace Valkey secret %s: %w", secretName, err)
-		}
-		log.Info("Deleted namespace Valkey secret", "namespace", namespace)
-	}
+	log.Info("Deleted namespace Valkey secret", "namespace", namespace)
 	return nil
 }
 

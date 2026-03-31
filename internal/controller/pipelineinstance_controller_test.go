@@ -410,8 +410,17 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
 
-			// First reconcile should initialize TotalFiles
+			// First reconcile adds the Valkey credentials finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile initializes TotalFiles
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      pipelineInstanceName,
 					Namespace: namespace,
@@ -600,8 +609,14 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
 
-			// First reconcile initializes TotalFiles
+			// First reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile initializes TotalFiles
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -646,8 +661,14 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
 
-			// Reconcile should handle error gracefully
+			// First reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile should handle Pipeline not found error
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
 			})
 
@@ -681,8 +702,14 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
 
-			// Reconcile should handle error gracefully
+			// First reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile should handle PipelineSource not found error
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
 			})
 
@@ -759,8 +786,12 @@ var _ = Describe("PipelineInstance Controller", func() {
 				_ = k8sClient.Delete(ctx, streamInstance)
 			}()
 
-			// Reconcile to create Deployment
+			// First reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile creates Deployment
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Deployment name should be recorded in status

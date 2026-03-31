@@ -299,15 +299,19 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 				return ctrl.Result{}, err
 			}
 		}
-	} else {
-		// Add finalizer if not present
-		if !controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
-			controllerutil.AddFinalizer(pipelineInstance, FinalizerValkeyCredentials)
-			if err := r.Update(ctx, pipelineInstance); err != nil {
-				log.Error(err, "Failed to add Valkey credentials finalizer")
-				return ctrl.Result{}, err
-			}
+		// Don't proceed with normal reconciliation during deletion —
+		// let the mode-specific finalizers (streaming) or owner references (batch) handle the rest.
+		return ctrl.Result{}, nil
+	}
+
+	// Add Valkey credentials finalizer if not present (requeue to reconcile against the updated object)
+	if !controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
+		controllerutil.AddFinalizer(pipelineInstance, FinalizerValkeyCredentials)
+		if err := r.Update(ctx, pipelineInstance); err != nil {
+			log.Error(err, "Failed to add Valkey credentials finalizer")
+			return ctrl.Result{}, err
 		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Get the Pipeline resource

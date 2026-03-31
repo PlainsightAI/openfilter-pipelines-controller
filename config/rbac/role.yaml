@@ -8,7 +8,6 @@ rules:
   - ""
   resources:
   - pods
-  - secrets
   verbs:
   - get
   - list
@@ -19,6 +18,17 @@ rules:
   - pods/status
   verbs:
   - get
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 - apiGroups:
   - apps
   resources:

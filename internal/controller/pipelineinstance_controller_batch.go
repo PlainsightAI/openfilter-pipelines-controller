@@ -321,6 +321,11 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 		// Job was deleted, create a new one
 	}
 
+	// Ensure per-namespace Valkey credentials exist in the target namespace
+	if err := r.ensureNamespaceValkeyCredentials(ctx, pipelineInstance.Namespace); err != nil {
+		return fmt.Errorf("failed to ensure namespace Valkey credentials: %w", err)
+	}
+
 	// Generate Job name from PipelineInstance name
 	jobName := fmt.Sprintf("%s-job", pipelineInstance.Name)
 
@@ -416,22 +421,31 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		}...)
 	}
 
-	// Add Valkey password from secret reference if configured
-	if r.ValkeyPasswordSecret != "" {
-		secretKey := r.ValkeyPasswordSecretKey
-		if secretKey == "" {
-			secretKey = "valkey-password"
-		}
-		claimerEnv = append(claimerEnv, corev1.EnvVar{
+	// Add Valkey credentials from per-namespace secret (managed by ensureNamespaceValkeyCredentials)
+	nsSecretName := r.ValkeyNSSecretName
+	if nsSecretName == "" {
+		nsSecretName = DefaultValkeyNSSecretName
+	}
+	claimerEnv = append(claimerEnv,
+		corev1.EnvVar{
+			Name: "VALKEY_USERNAME",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: nsSecretName},
+					Key:                  "valkey-username",
+				},
+			},
+		},
+		corev1.EnvVar{
 			Name: "VALKEY_PASSWORD",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: r.ValkeyPasswordSecret},
-					Key:                  secretKey,
+					LocalObjectReference: corev1.LocalObjectReference{Name: nsSecretName},
+					Key:                  "valkey-password",
 				},
 			},
-		})
-	}
+		},
+	)
 
 	// Provide video input path to claimer for storing downloaded files.
 	videoInputPath := pipeline.Spec.VideoInputPath
@@ -664,7 +678,7 @@ func (r *PipelineInstanceReconciler) handleFailedPodMessage(
 ) {
 	log := logf.FromContext(ctx)
 	instanceID := pipelineInstance.GetInstanceID()
-	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+	dlqKey := pipelineInstance.GetQueueDLQ()
 
 	reason := resolveFailureReason(pod, info.startFailureReason, info.crashReason)
 	attempts++
@@ -894,7 +908,7 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 		maxAttempts = *pipelineInstance.Spec.Execution.MaxAttempts
 	}
 
-	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+	dlqKey := pipelineInstance.GetQueueDLQ()
 
 	for _, msg := range messages {
 		filepath := msg.Values["file"]
@@ -972,8 +986,7 @@ func (r *PipelineInstanceReconciler) updateStatus(ctx context.Context, pipelineI
 	}
 
 	// Get failed count (DLQ length)
-	instanceID := pipelineInstance.GetInstanceID()
-	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+	dlqKey := pipelineInstance.GetQueueDLQ()
 	failed, err := r.ValkeyClient.GetStreamLength(ctx, dlqKey)
 	if err != nil {
 		log.Error(err, "Failed to get DLQ length")
@@ -1064,7 +1077,7 @@ func (r *PipelineInstanceReconciler) flushOutstandingWork(ctx context.Context, p
 	streamKey := pipelineInstance.GetQueueStream()
 	groupName := pipelineInstance.GetQueueGroup()
 	instanceID := pipelineInstance.GetInstanceID()
-	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+	dlqKey := pipelineInstance.GetQueueDLQ()
 
 	maxAttempts := int32(3)
 	if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.MaxAttempts != nil {

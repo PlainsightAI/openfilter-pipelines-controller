@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -390,4 +391,120 @@ func TestBuildJob_ImagePullSecrets_Propagated(t *testing.T) {
 	if secrets[1].Name != "other-creds" {
 		t.Errorf("expected second secret name 'other-creds', got %q", secrets[1].Name)
 	}
+}
+
+func TestBuildJob_ValkeyNSCredentials(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "filter", Image: "filter:latest"},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+
+	// Verify VALKEY_USERNAME references the per-namespace secret
+	var foundUsername, foundPassword bool
+	for _, env := range claimerEnv {
+		if env.Name == "VALKEY_USERNAME" {
+			foundUsername = true
+			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+				t.Fatal("VALKEY_USERNAME should use secretKeyRef")
+			}
+			if env.ValueFrom.SecretKeyRef.Name != DefaultValkeyNSSecretName {
+				t.Errorf("VALKEY_USERNAME secret name = %q, want %q",
+					env.ValueFrom.SecretKeyRef.Name, DefaultValkeyNSSecretName)
+			}
+			if env.ValueFrom.SecretKeyRef.Key != "valkey-username" {
+				t.Errorf("VALKEY_USERNAME secret key = %q, want %q",
+					env.ValueFrom.SecretKeyRef.Key, "valkey-username")
+			}
+		}
+		if env.Name == "VALKEY_PASSWORD" {
+			foundPassword = true
+			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+				t.Fatal("VALKEY_PASSWORD should use secretKeyRef")
+			}
+			if env.ValueFrom.SecretKeyRef.Name != DefaultValkeyNSSecretName {
+				t.Errorf("VALKEY_PASSWORD secret name = %q, want %q",
+					env.ValueFrom.SecretKeyRef.Name, DefaultValkeyNSSecretName)
+			}
+			if env.ValueFrom.SecretKeyRef.Key != "valkey-password" {
+				t.Errorf("VALKEY_PASSWORD secret key = %q, want %q",
+					env.ValueFrom.SecretKeyRef.Key, "valkey-password")
+			}
+		}
+	}
+	if !foundUsername {
+		t.Error("expected VALKEY_USERNAME env var in claimer, not found")
+	}
+	if !foundPassword {
+		t.Error("expected VALKEY_PASSWORD env var in claimer, not found")
+	}
+}
+
+func TestBuildJob_ValkeyNSCredentials_CustomSecretName(t *testing.T) {
+	r := makeMinimalReconciler()
+	r.ValkeyNSSecretName = "custom-valkey-secret"
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "filter", Image: "filter:latest"},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+
+	for _, env := range claimerEnv {
+		if env.Name == "VALKEY_USERNAME" {
+			if env.ValueFrom.SecretKeyRef.Name != "custom-valkey-secret" {
+				t.Errorf("VALKEY_USERNAME secret name = %q, want %q",
+					env.ValueFrom.SecretKeyRef.Name, "custom-valkey-secret")
+			}
+			return
+		}
+	}
+	t.Error("expected VALKEY_USERNAME env var in claimer, not found")
+}
+
+func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "filter", Image: "filter:latest"},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+
+	for _, env := range claimerEnv {
+		if env.Name == "STREAM" {
+			expected := pi.GetQueueStream()
+			if env.Value != expected {
+				t.Errorf("STREAM = %q, want %q", env.Value, expected)
+			}
+			if !strings.HasPrefix(env.Value, "ns:") {
+				t.Errorf("STREAM should start with 'ns:' prefix, got %q", env.Value)
+			}
+			return
+		}
+	}
+	t.Error("expected STREAM env var in claimer, not found")
 }

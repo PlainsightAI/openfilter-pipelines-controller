@@ -58,12 +58,22 @@ type MockValkeyClient struct {
 	// ClaimedMessages tracks which message IDs were claimed via XCLAIM
 	ClaimedMessages []string
 
+	// ACL tracking
+	EnsuredACLUsers []mockACLUser
+	DeletedACLUsers []string
+
 	// Error injection fields for testing error paths
 	PendingEntryDetailsError error
 	ClaimMessagesError       error
 	AckMessageError          error
 	ReadRangeError           error
 	GetPendingForConsumerErr error
+}
+
+type mockACLUser struct {
+	Username  string
+	Password  string
+	Namespace string
 }
 
 type mockMessage struct {
@@ -223,6 +233,20 @@ func (m *MockValkeyClient) ReadRange(ctx context.Context, streamKey, start, end 
 
 func (m *MockValkeyClient) DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error {
 	m.DeletedMessageIDs = append(m.DeletedMessageIDs, messageIDs...)
+	return nil
+}
+
+func (m *MockValkeyClient) EnsureACLUser(ctx context.Context, username, password, namespace string) error {
+	m.EnsuredACLUsers = append(m.EnsuredACLUsers, mockACLUser{
+		Username:  username,
+		Password:  password,
+		Namespace: namespace,
+	})
+	return nil
+}
+
+func (m *MockValkeyClient) DeleteACLUser(ctx context.Context, username string) error {
+	m.DeletedACLUsers = append(m.DeletedACLUsers, username)
 	return nil
 }
 
@@ -386,8 +410,17 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
 
-			// First reconcile should initialize TotalFiles
+			// First reconcile adds the Valkey credentials finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile initializes TotalFiles
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      pipelineInstanceName,
 					Namespace: namespace,
@@ -472,18 +505,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(job.Spec.Template.Spec.Containers[0].Name).To(Equal("test-filter"))
 		})
 
-		It("should inject Valkey password as secretKeyRef in claimer", func() {
-			// Override reconciler with secret reference config
-			reconciler = &PipelineInstanceReconciler{
-				Client:                  k8sClient,
-				Scheme:                  k8sClient.Scheme(),
-				ValkeyClient:            mockValkey,
-				ValkeyAddr:              "valkey:6379",
-				ValkeyPasswordSecret:    "my-valkey-secret",
-				ValkeyPasswordSecretKey: "my-password-key",
-				ClaimerImage:            "claimer:latest",
-			}
-
+		It("should inject per-namespace Valkey credentials from namespace secret in claimer", func() {
 			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineInstanceName,
@@ -520,6 +542,24 @@ var _ = Describe("PipelineInstance Controller", func() {
 				return pipelineInstance.Status.JobName
 			}, timeout, interval).ShouldNot(BeEmpty())
 
+			// Verify per-namespace secret was created
+			nsSecret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name: DefaultValkeyNSSecretName, Namespace: namespace,
+			}, nsSecret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nsSecret.Data).To(HaveKey("valkey-username"))
+			Expect(nsSecret.Data).To(HaveKey("valkey-password"))
+			Expect(string(nsSecret.Data["valkey-username"])).To(Equal("ns-default"))
+
+			// Verify EnsureACLUser was called with the correct namespace-scoped username
+			Expect(mockValkey.EnsuredACLUsers).NotTo(BeEmpty())
+			lastACL := mockValkey.EnsuredACLUsers[len(mockValkey.EnsuredACLUsers)-1]
+			Expect(lastACL.Username).To(Equal("ns-default"))
+			Expect(lastACL.Namespace).To(Equal(namespace))
+			Expect(lastACL.Password).NotTo(BeEmpty())
+
+			// Verify claimer env vars reference the namespace secret
 			job := &batchv1.Job{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
 				Name:      pipelineInstance.Status.JobName,
@@ -529,79 +569,22 @@ var _ = Describe("PipelineInstance Controller", func() {
 
 			claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
 			Expect(claimerEnv).To(ContainElement(corev1.EnvVar{
-				Name: "VALKEY_PASSWORD",
+				Name: "VALKEY_USERNAME",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "my-valkey-secret",
+							Name: DefaultValkeyNSSecretName,
 						},
-						Key: "my-password-key",
+						Key: "valkey-username",
 					},
 				},
 			}))
-		})
-
-		It("should default Valkey password secret key to valkey-password", func() {
-			// Override reconciler with secret name only (no key)
-			reconciler = &PipelineInstanceReconciler{
-				Client:               k8sClient,
-				Scheme:               k8sClient.Scheme(),
-				ValkeyClient:         mockValkey,
-				ValkeyAddr:           "valkey:6379",
-				ValkeyPasswordSecret: "my-valkey-secret",
-				ClaimerImage:         "claimer:latest",
-			}
-
-			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pipelineInstanceName,
-					Namespace: namespace,
-				},
-				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
-					PipelineRef: pipelinesv1alpha1.PipelineReference{
-						Name: pipelineName,
-					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
-						Name: pipelineSourceName,
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
-
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name: pipelineInstanceName, Namespace: namespace,
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-			_, err = reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name: pipelineInstanceName, Namespace: namespace,
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			Eventually(func() string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name: pipelineInstanceName, Namespace: namespace,
-				}, pipelineInstance)
-				return pipelineInstance.Status.JobName
-			}, timeout, interval).ShouldNot(BeEmpty())
-
-			job := &batchv1.Job{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      pipelineInstance.Status.JobName,
-				Namespace: namespace,
-			}, job)
-			Expect(err).NotTo(HaveOccurred())
-
-			claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
 			Expect(claimerEnv).To(ContainElement(corev1.EnvVar{
 				Name: "VALKEY_PASSWORD",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "my-valkey-secret",
+							Name: DefaultValkeyNSSecretName,
 						},
 						Key: "valkey-password",
 					},
@@ -626,8 +609,14 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
 
-			// First reconcile initializes TotalFiles
+			// First reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile initializes TotalFiles
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -672,8 +661,14 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
 
-			// Reconcile should handle error gracefully
+			// First reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile should handle Pipeline not found error
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
 			})
 
@@ -707,8 +702,14 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
 
-			// Reconcile should handle error gracefully
+			// First reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile should handle PipelineSource not found error
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
 			})
 
@@ -785,8 +786,12 @@ var _ = Describe("PipelineInstance Controller", func() {
 				_ = k8sClient.Delete(ctx, streamInstance)
 			}()
 
-			// Reconcile to create Deployment
+			// First reconcile adds finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile creates Deployment
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Deployment name should be recorded in status

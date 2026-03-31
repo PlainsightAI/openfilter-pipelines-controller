@@ -82,6 +82,33 @@ func TestLoadConfig_ValkeyPassword(t *testing.T) {
 	})
 }
 
+func TestLoadConfig_ValkeyUsername(t *testing.T) {
+	t.Setenv("STREAM", "test-stream")
+	t.Setenv("GROUP", "test-group")
+	t.Setenv("S3_BUCKET", "test-bucket")
+
+	t.Run("reads VALKEY_USERNAME when set", func(t *testing.T) {
+		t.Setenv("VALKEY_USERNAME", "ns-team-alpha")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ValkeyUsername != "ns-team-alpha" {
+			t.Fatalf("expected ValkeyUsername='ns-team-alpha', got '%s'", cfg.ValkeyUsername)
+		}
+	})
+
+	t.Run("ValkeyUsername is empty when not set", func(t *testing.T) {
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.ValkeyUsername != "" {
+			t.Fatalf("expected empty ValkeyUsername, got '%s'", cfg.ValkeyUsername)
+		}
+	})
+}
+
 func TestLoadConfig_S3Region(t *testing.T) {
 	t.Setenv("STREAM", "test-stream")
 	t.Setenv("GROUP", "test-group")

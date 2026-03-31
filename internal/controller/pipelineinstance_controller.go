@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"time"
@@ -35,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
@@ -60,6 +63,12 @@ const (
 
 	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not overridden.
 	DefaultVideoInputPath = "/ws/input.mp4"
+
+	// DefaultValkeyNSSecretName is the default name for per-namespace Valkey credentials secrets.
+	DefaultValkeyNSSecretName = "valkey-ns-credentials"
+
+	// FinalizerValkeyCredentials ensures Valkey ACL users are cleaned up on deletion.
+	FinalizerValkeyCredentials = "filter.plainsight.ai/valkey-credentials"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations
@@ -77,18 +86,19 @@ type ValkeyClientInterface interface {
 	ClaimMessages(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, messageIDs ...string) ([]queue.XMessage, error)
 	ReadRange(ctx context.Context, streamKey, start, end string, count int64) ([]queue.XMessage, error)
 	DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error
+	EnsureACLUser(ctx context.Context, username, password, namespace string) error
+	DeleteACLUser(ctx context.Context, username string) error
 }
 
 // PipelineInstanceReconciler reconciles a PipelineInstance object
 type PipelineInstanceReconciler struct {
 	client.Client
-	Scheme                  *runtime.Scheme
-	ValkeyClient            ValkeyClientInterface
-	ValkeyAddr              string
-	ValkeyPasswordSecret    string            // Secret name containing the Valkey password
-	ValkeyPasswordSecretKey string            // Key within the secret for the Valkey password
-	ClaimerImage            string            // Image for the claimer init container
-	GPUNodeSelectorLabels   map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
+	Scheme                *runtime.Scheme
+	ValkeyClient          ValkeyClientInterface
+	ValkeyAddr            string
+	ValkeyNSSecretName    string            // Name of the per-namespace Valkey credentials secret (default: valkey-ns-credentials)
+	ClaimerImage          string            // Image for the claimer init container
+	GPUNodeSelectorLabels map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete
@@ -104,7 +114,160 @@ type PipelineInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=replicasets/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/status,verbs=get
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
+
+// ensureNamespaceValkeyCredentials ensures a per-namespace Valkey ACL user and corresponding
+// secret exist in the target namespace. The ACL user is restricted to keys
+// matching ns:<namespace>:* so it can only access its own namespace's data.
+func (r *PipelineInstanceReconciler) ensureNamespaceValkeyCredentials(ctx context.Context, namespace string) error {
+	log := logf.FromContext(ctx)
+
+	secretName := r.ValkeyNSSecretName
+	if secretName == "" {
+		secretName = DefaultValkeyNSSecretName
+	}
+
+	username := queue.ValkeyUsernameForNamespace(namespace)
+
+	// Check if the secret already exists
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, existing)
+	if err == nil {
+		// Secret exists — validate contents and ensure ACL user is up to date
+		if existing.Data == nil {
+			return fmt.Errorf("namespace Valkey secret %s/%s has no data", namespace, secretName)
+		}
+		storedUsername, ok := existing.Data["valkey-username"]
+		if !ok {
+			return fmt.Errorf("namespace Valkey secret %s/%s is missing key %q", namespace, secretName, "valkey-username")
+		}
+		if string(storedUsername) != username {
+			return fmt.Errorf("namespace Valkey secret %s/%s has unexpected username %q, expected %q", namespace, secretName, string(storedUsername), username)
+		}
+		storedPassword, ok := existing.Data["valkey-password"]
+		if !ok || len(storedPassword) == 0 {
+			return fmt.Errorf("namespace Valkey secret %s/%s has missing or empty password", namespace, secretName)
+		}
+		if err := r.ValkeyClient.EnsureACLUser(ctx, username, string(storedPassword), namespace); err != nil {
+			return fmt.Errorf("failed to ensure ACL user %s: %w", username, err)
+		}
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to check namespace Valkey secret in %s: %w", namespace, err)
+	}
+
+	// Generate a random password
+	passwordBytes := make([]byte, 32)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		return fmt.Errorf("failed to generate random password: %w", err)
+	}
+	password := base64.RawURLEncoding.EncodeToString(passwordBytes)
+
+	// Create the secret first — the secret is the source of truth for the password.
+	// If two reconciles race, the loser gets AlreadyExists and re-reads the winner's
+	// password to ensure the ACL user matches.
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "openfilter-pipelines-controller",
+				"app.kubernetes.io/component":  "valkey-credentials",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"valkey-username": []byte(username),
+			"valkey-password": []byte(password),
+		},
+	}
+	if err := r.Create(ctx, secret); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create namespace Valkey secret in %s: %w", namespace, err)
+		}
+		// Race: another reconcile created it first — re-read and validate
+		if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
+			return fmt.Errorf("failed to re-read namespace Valkey secret after race in %s: %w", namespace, err)
+		}
+		if secret.Data == nil {
+			return fmt.Errorf("namespace Valkey secret %s/%s has no data after race re-read", namespace, secretName)
+		}
+		storedUsername, ok := secret.Data["valkey-username"]
+		if !ok || string(storedUsername) != username {
+			return fmt.Errorf("namespace Valkey secret %s/%s has unexpected username %q after race re-read, expected %q", namespace, secretName, string(storedUsername), username)
+		}
+		storedPassword, ok := secret.Data["valkey-password"]
+		if !ok || len(storedPassword) == 0 {
+			return fmt.Errorf("namespace Valkey secret %s/%s has missing or empty password after race re-read", namespace, secretName)
+		}
+		password = string(storedPassword)
+	}
+
+	// Set the ACL user with the password from the secret (source of truth)
+	if err := r.ValkeyClient.EnsureACLUser(ctx, username, password, namespace); err != nil {
+		return fmt.Errorf("failed to create ACL user %s: %w", username, err)
+	}
+
+	log.Info("Created namespace Valkey credentials", "namespace", namespace, "username", username)
+	return nil
+}
+
+// cleanupNamespaceValkeyCredentials removes the per-namespace Valkey ACL user and secret
+// when the last PipelineInstance in a namespace is being deleted.
+// Returns an error if cleanup fails so the finalizer is retained for retry.
+func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) error {
+	log := logf.FromContext(ctx)
+	namespace := pipelineInstance.Namespace
+
+	// List other PipelineInstances in the same namespace
+	list := &pipelinesv1alpha1.PipelineInstanceList{}
+	if err := r.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		return fmt.Errorf("failed to list PipelineInstances for ACL cleanup: %w", err)
+	}
+
+	// Count instances that are NOT being deleted (excluding the current one)
+	active := 0
+	for i := range list.Items {
+		if list.Items[i].UID != pipelineInstance.UID && list.Items[i].DeletionTimestamp.IsZero() {
+			active++
+		}
+	}
+	if active > 0 {
+		return nil // other active instances exist, keep the credentials
+	}
+
+	// Verify the namespace secret exists and is managed by us before cleaning up
+	secretName := r.ValkeyNSSecretName
+	if secretName == "" {
+		secretName = DefaultValkeyNSSecretName
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // secret already gone, nothing to clean up
+		}
+		return fmt.Errorf("failed to get namespace Valkey secret %s: %w", secretName, err)
+	}
+	if secret.Labels["app.kubernetes.io/managed-by"] != "openfilter-pipelines-controller" {
+		log.Info("Skipping cleanup — namespace Valkey secret not managed by this controller", "secret", secretName)
+		return nil
+	}
+
+	// Delete the ACL user from Valkey (only after confirming we own the secret)
+	username := queue.ValkeyUsernameForNamespace(namespace)
+	if err := r.ValkeyClient.DeleteACLUser(ctx, username); err != nil {
+		return fmt.Errorf("failed to delete Valkey ACL user %s: %w", username, err)
+	}
+	log.Info("Deleted Valkey ACL user", "username", username)
+
+	// Delete the namespace secret
+	if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete namespace Valkey secret %s: %w", secretName, err)
+	}
+	log.Info("Deleted namespace Valkey secret", "namespace", namespace)
+	return nil
+}
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -125,6 +288,34 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 		log.Error(err, "Failed to get PipelineInstance")
 		return ctrl.Result{}, err
+	}
+
+	// Handle Valkey credentials finalizer
+	if !pipelineInstance.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
+			if err := r.cleanupNamespaceValkeyCredentials(ctx, pipelineInstance); err != nil {
+				log.Error(err, "Failed to clean up Valkey credentials, will retry")
+				return ctrl.Result{Requeue: true}, err
+			}
+			controllerutil.RemoveFinalizer(pipelineInstance, FinalizerValkeyCredentials)
+			if err := r.Update(ctx, pipelineInstance); err != nil {
+				log.Error(err, "Failed to remove Valkey credentials finalizer")
+				return ctrl.Result{}, err
+			}
+		}
+		// Don't proceed with normal reconciliation during deletion —
+		// let the mode-specific finalizers (streaming) or owner references (batch) handle the rest.
+		return ctrl.Result{}, nil
+	}
+
+	// Add Valkey credentials finalizer if not present (requeue to reconcile against the updated object)
+	if !controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
+		controllerutil.AddFinalizer(pipelineInstance, FinalizerValkeyCredentials)
+		if err := r.Update(ctx, pipelineInstance); err != nil {
+			log.Error(err, "Failed to add Valkey credentials finalizer")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Get the Pipeline resource

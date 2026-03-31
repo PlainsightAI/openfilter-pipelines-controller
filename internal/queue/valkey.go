@@ -451,6 +451,42 @@ func (v *ValkeyClient) AddToDLQ(ctx context.Context, dlqKey, runID, filepath str
 	return nil
 }
 
+// ValkeyUsernameForNamespace returns the Valkey ACL username for a given namespace.
+func ValkeyUsernameForNamespace(namespace string) string {
+	return "ns-" + namespace
+}
+
+// EnsureACLUser creates or updates a Valkey ACL user scoped to a namespace key prefix.
+// The user gets minimal permissions: ping and xreadgroup on keys matching ns:<namespace>:*
+func (v *ValkeyClient) EnsureACLUser(ctx context.Context, username, password, namespace string) error {
+	keyPattern := "~ns:" + namespace + ":*"
+	cmd := v.client.B().Arbitrary("ACL", "SETUSER", username,
+		"resetpass",     // remove any existing passwords
+		"resetkeys",     // remove any existing key patterns
+		"resetchannels", // remove any existing channel patterns
+		"nocommands",    // remove any existing command permissions
+		"on",            // enable the user
+		">"+password,    // set password
+		keyPattern,      // restrict to namespace keys
+		"+ping",
+		"+xreadgroup",
+	).Build()
+
+	if err := v.client.Do(ctx, cmd).Error(); err != nil {
+		return fmt.Errorf("failed to set ACL user %s: %w", username, err)
+	}
+	return nil
+}
+
+// DeleteACLUser removes a Valkey ACL user.
+func (v *ValkeyClient) DeleteACLUser(ctx context.Context, username string) error {
+	cmd := v.client.B().Arbitrary("ACL", "DELUSER", username).Build()
+	if err := v.client.Do(ctx, cmd).Error(); err != nil {
+		return fmt.Errorf("failed to delete ACL user %s: %w", username, err)
+	}
+	return nil
+}
+
 // GetConsumerGroupLag returns the lag (unread messages) for a consumer group
 func (v *ValkeyClient) GetConsumerGroupLag(ctx context.Context, streamKey, groupName string) (int64, error) {
 	cmd := v.client.B().XinfoGroups().Key(streamKey).Build()

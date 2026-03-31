@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -499,7 +500,7 @@ func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
 			if env.Value != expected {
 				t.Errorf("STREAM = %q, want %q", env.Value, expected)
 			}
-			if env.Value[:3] != "ns:" {
+			if !strings.HasPrefix(env.Value, "ns:") {
 				t.Errorf("STREAM should start with 'ns:' prefix, got %q", env.Value)
 			}
 			return

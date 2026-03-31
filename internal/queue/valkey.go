@@ -461,10 +461,12 @@ func ValkeyUsernameForNamespace(namespace string) string {
 func (v *ValkeyClient) EnsureACLUser(ctx context.Context, username, password, namespace string) error {
 	keyPattern := "~ns:" + namespace + ":*"
 	cmd := v.client.B().Arbitrary("ACL", "SETUSER", username,
-		"on",         // enable the user
-		">"+password, // set password
-		keyPattern,   // restrict to namespace keys
-		"resetchannels",
+		"resetpass",     // remove any existing passwords
+		"resetkeys",     // remove any existing key patterns
+		"resetchannels", // remove any existing channel patterns
+		"on",            // enable the user
+		">"+password,    // set password
+		keyPattern,      // restrict to namespace keys
 		"+ping",
 		"+xreadgroup",
 	).Build()

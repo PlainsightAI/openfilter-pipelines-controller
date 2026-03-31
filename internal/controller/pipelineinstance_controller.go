@@ -129,9 +129,22 @@ func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Cont
 	existing := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, existing)
 	if err == nil {
-		// Secret exists — ensure ACL user is up to date with stored password
-		password := string(existing.Data["valkey-password"])
-		if err := r.ValkeyClient.EnsureACLUser(ctx, username, password, namespace); err != nil {
+		// Secret exists — validate contents and ensure ACL user is up to date
+		if existing.Data == nil {
+			return fmt.Errorf("org Valkey secret %s/%s has no data", namespace, secretName)
+		}
+		storedUsername, ok := existing.Data["valkey-username"]
+		if !ok {
+			return fmt.Errorf("org Valkey secret %s/%s is missing key %q", namespace, secretName, "valkey-username")
+		}
+		if string(storedUsername) != username {
+			return fmt.Errorf("org Valkey secret %s/%s has unexpected username %q, expected %q", namespace, secretName, string(storedUsername), username)
+		}
+		storedPassword, ok := existing.Data["valkey-password"]
+		if !ok || len(storedPassword) == 0 {
+			return fmt.Errorf("org Valkey secret %s/%s has missing or empty password", namespace, secretName)
+		}
+		if err := r.ValkeyClient.EnsureACLUser(ctx, username, string(storedPassword), namespace); err != nil {
 			return fmt.Errorf("failed to ensure ACL user %s: %w", username, err)
 		}
 		return nil

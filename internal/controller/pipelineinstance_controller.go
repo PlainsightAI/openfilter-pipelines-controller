@@ -63,8 +63,8 @@ const (
 	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not overridden.
 	DefaultVideoInputPath = "/ws/input.mp4"
 
-	// DefaultValkeyOrgSecretName is the default name for per-org Valkey credentials secrets.
-	DefaultValkeyOrgSecretName = "valkey-org-credentials"
+	// DefaultValkeyNSSecretName is the default name for per-namespace Valkey credentials secrets.
+	DefaultValkeyNSSecretName = "valkey-ns-credentials"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations
@@ -92,7 +92,7 @@ type PipelineInstanceReconciler struct {
 	Scheme                *runtime.Scheme
 	ValkeyClient          ValkeyClientInterface
 	ValkeyAddr            string
-	ValkeyOrgSecretName   string            // Name of the per-org Valkey credentials secret (default: valkey-org-credentials)
+	ValkeyNSSecretName    string            // Name of the per-namespace Valkey credentials secret (default: valkey-ns-credentials)
 	ClaimerImage          string            // Image for the claimer init container
 	GPUNodeSelectorLabels map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
 }
@@ -112,15 +112,15 @@ type PipelineInstanceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 
-// ensureOrgValkeyCredentials ensures a per-org Valkey ACL user and corresponding
+// ensureNamespaceValkeyCredentials ensures a per-namespace Valkey ACL user and corresponding
 // secret exist in the target namespace. The ACL user is restricted to keys
-// matching ns:<namespace>:* so it can only access its own org's data.
-func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Context, namespace string) error {
+// matching ns:<namespace>:* so it can only access its own namespace's data.
+func (r *PipelineInstanceReconciler) ensureNamespaceValkeyCredentials(ctx context.Context, namespace string) error {
 	log := logf.FromContext(ctx)
 
-	secretName := r.ValkeyOrgSecretName
+	secretName := r.ValkeyNSSecretName
 	if secretName == "" {
-		secretName = DefaultValkeyOrgSecretName
+		secretName = DefaultValkeyNSSecretName
 	}
 
 	username := queue.ValkeyUsernameForNamespace(namespace)
@@ -131,18 +131,18 @@ func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Cont
 	if err == nil {
 		// Secret exists — validate contents and ensure ACL user is up to date
 		if existing.Data == nil {
-			return fmt.Errorf("org Valkey secret %s/%s has no data", namespace, secretName)
+			return fmt.Errorf("namespace Valkey secret %s/%s has no data", namespace, secretName)
 		}
 		storedUsername, ok := existing.Data["valkey-username"]
 		if !ok {
-			return fmt.Errorf("org Valkey secret %s/%s is missing key %q", namespace, secretName, "valkey-username")
+			return fmt.Errorf("namespace Valkey secret %s/%s is missing key %q", namespace, secretName, "valkey-username")
 		}
 		if string(storedUsername) != username {
-			return fmt.Errorf("org Valkey secret %s/%s has unexpected username %q, expected %q", namespace, secretName, string(storedUsername), username)
+			return fmt.Errorf("namespace Valkey secret %s/%s has unexpected username %q, expected %q", namespace, secretName, string(storedUsername), username)
 		}
 		storedPassword, ok := existing.Data["valkey-password"]
 		if !ok || len(storedPassword) == 0 {
-			return fmt.Errorf("org Valkey secret %s/%s has missing or empty password", namespace, secretName)
+			return fmt.Errorf("namespace Valkey secret %s/%s has missing or empty password", namespace, secretName)
 		}
 		if err := r.ValkeyClient.EnsureACLUser(ctx, username, string(storedPassword), namespace); err != nil {
 			return fmt.Errorf("failed to ensure ACL user %s: %w", username, err)
@@ -150,7 +150,7 @@ func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Cont
 		return nil
 	}
 	if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to check org Valkey secret in %s: %w", namespace, err)
+		return fmt.Errorf("failed to check namespace Valkey secret in %s: %w", namespace, err)
 	}
 
 	// Generate a random password
@@ -180,11 +180,11 @@ func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Cont
 	}
 	if err := r.Create(ctx, secret); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create org Valkey secret in %s: %w", namespace, err)
+			return fmt.Errorf("failed to create namespace Valkey secret in %s: %w", namespace, err)
 		}
 		// Race: another reconcile created it first — re-read to get the winning password
 		if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
-			return fmt.Errorf("failed to re-read org Valkey secret after race in %s: %w", namespace, err)
+			return fmt.Errorf("failed to re-read namespace Valkey secret after race in %s: %w", namespace, err)
 		}
 		password = string(secret.Data["valkey-password"])
 	}
@@ -194,13 +194,13 @@ func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Cont
 		return fmt.Errorf("failed to create ACL user %s: %w", username, err)
 	}
 
-	log.Info("Created org Valkey credentials", "namespace", namespace, "username", username)
+	log.Info("Created namespace Valkey credentials", "namespace", namespace, "username", username)
 	return nil
 }
 
-// cleanupOrgValkeyCredentials removes the per-org Valkey ACL user and secret
+// cleanupNamespaceValkeyCredentials removes the per-namespace Valkey ACL user and secret
 // when the last PipelineInstance in a namespace is being deleted.
-func (r *PipelineInstanceReconciler) cleanupOrgValkeyCredentials(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) {
+func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) {
 	log := logf.FromContext(ctx)
 	namespace := pipelineInstance.Namespace
 
@@ -231,17 +231,17 @@ func (r *PipelineInstanceReconciler) cleanupOrgValkeyCredentials(ctx context.Con
 		log.Info("Deleted Valkey ACL user", "username", username)
 	}
 
-	// Delete the org secret
-	secretName := r.ValkeyOrgSecretName
+	// Delete the namespace secret
+	secretName := r.ValkeyNSSecretName
 	if secretName == "" {
-		secretName = DefaultValkeyOrgSecretName
+		secretName = DefaultValkeyNSSecretName
 	}
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err == nil {
 		if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
-			log.Error(err, "Failed to delete org Valkey secret", "secret", secretName)
+			log.Error(err, "Failed to delete namespace Valkey secret", "secret", secretName)
 		} else {
-			log.Info("Deleted org Valkey secret", "namespace", namespace)
+			log.Info("Deleted namespace Valkey secret", "namespace", namespace)
 		}
 	}
 }
@@ -267,9 +267,9 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Clean up per-org Valkey credentials when the last PipelineInstance in a namespace is deleted
+	// Clean up per-namespace Valkey credentials when the last PipelineInstance in a namespace is deleted
 	if !pipelineInstance.DeletionTimestamp.IsZero() {
-		r.cleanupOrgValkeyCredentials(ctx, pipelineInstance)
+		r.cleanupNamespaceValkeyCredentials(ctx, pipelineInstance)
 	}
 
 	// Get the Pipeline resource

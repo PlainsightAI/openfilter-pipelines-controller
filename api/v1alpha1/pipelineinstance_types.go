@@ -203,7 +203,7 @@ type PipelineInstanceList struct {
 
 // GetQueueStream returns the Valkey stream key for this PipelineInstance.
 // Format: ns:<namespace>:pi:<uid>:work
-// The namespace prefix enables per-org Valkey ACL restrictions.
+// The namespace prefix enables per-namespace Valkey ACL restrictions.
 func (pi *PipelineInstance) GetQueueStream() string {
 	return "ns:" + pi.Namespace + ":pi:" + string(pi.UID) + ":work"
 }

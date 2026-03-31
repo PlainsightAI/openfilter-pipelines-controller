@@ -11,13 +11,13 @@ func TestGetQueueStream(t *testing.T) {
 	pi := &PipelineInstance{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-instance",
-			Namespace: "org-123",
+			Namespace: "team-alpha",
 			UID:       types.UID("abc-def-ghi"),
 		},
 	}
 
 	got := pi.GetQueueStream()
-	expected := "ns:org-123:pi:abc-def-ghi:work"
+	expected := "ns:team-alpha:pi:abc-def-ghi:work"
 	if got != expected {
 		t.Errorf("GetQueueStream() = %q, want %q", got, expected)
 	}
@@ -27,13 +27,13 @@ func TestGetQueueDLQ(t *testing.T) {
 	pi := &PipelineInstance{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-instance",
-			Namespace: "org-123",
+			Namespace: "team-alpha",
 			UID:       types.UID("abc-def-ghi"),
 		},
 	}
 
 	got := pi.GetQueueDLQ()
-	expected := "ns:org-123:pi:abc-def-ghi:dlq"
+	expected := "ns:team-alpha:pi:abc-def-ghi:dlq"
 	if got != expected {
 		t.Errorf("GetQueueDLQ() = %q, want %q", got, expected)
 	}
@@ -56,13 +56,13 @@ func TestGetQueueGroup(t *testing.T) {
 func TestGetQueueStream_NamespaceWithHyphens(t *testing.T) {
 	pi := &PipelineInstance{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "org-my-company-prod",
+			Namespace: "tenant-my-company-prod",
 			UID:       types.UID("uid-1"),
 		},
 	}
 
 	got := pi.GetQueueStream()
-	expected := "ns:org-my-company-prod:pi:uid-1:work"
+	expected := "ns:tenant-my-company-prod:pi:uid-1:work"
 	if got != expected {
 		t.Errorf("GetQueueStream() = %q, want %q", got, expected)
 	}

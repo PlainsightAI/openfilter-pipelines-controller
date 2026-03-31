@@ -7,9 +7,9 @@ func TestValkeyUsernameForNamespace(t *testing.T) {
 		namespace string
 		expected  string
 	}{
-		{"org-123", "ns-org-123"},
+		{"team-alpha", "ns-team-alpha"},
 		{"default", "ns-default"},
-		{"org-my-company-prod", "ns-org-my-company-prod"},
+		{"tenant-my-company-prod", "ns-tenant-my-company-prod"},
 		{"", "ns-"},
 	}
 

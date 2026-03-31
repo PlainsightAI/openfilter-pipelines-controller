@@ -393,7 +393,7 @@ func TestBuildJob_ImagePullSecrets_Propagated(t *testing.T) {
 	}
 }
 
-func TestBuildJob_ValkeyOrgCredentials(t *testing.T) {
+func TestBuildJob_ValkeyNSCredentials(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
@@ -409,7 +409,7 @@ func TestBuildJob_ValkeyOrgCredentials(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
 
-	// Verify VALKEY_USERNAME references the per-org secret
+	// Verify VALKEY_USERNAME references the per-namespace secret
 	var foundUsername, foundPassword bool
 	for _, env := range claimerEnv {
 		if env.Name == "VALKEY_USERNAME" {
@@ -417,9 +417,9 @@ func TestBuildJob_ValkeyOrgCredentials(t *testing.T) {
 			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
 				t.Fatal("VALKEY_USERNAME should use secretKeyRef")
 			}
-			if env.ValueFrom.SecretKeyRef.Name != DefaultValkeyOrgSecretName {
+			if env.ValueFrom.SecretKeyRef.Name != DefaultValkeyNSSecretName {
 				t.Errorf("VALKEY_USERNAME secret name = %q, want %q",
-					env.ValueFrom.SecretKeyRef.Name, DefaultValkeyOrgSecretName)
+					env.ValueFrom.SecretKeyRef.Name, DefaultValkeyNSSecretName)
 			}
 			if env.ValueFrom.SecretKeyRef.Key != "valkey-username" {
 				t.Errorf("VALKEY_USERNAME secret key = %q, want %q",
@@ -431,9 +431,9 @@ func TestBuildJob_ValkeyOrgCredentials(t *testing.T) {
 			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
 				t.Fatal("VALKEY_PASSWORD should use secretKeyRef")
 			}
-			if env.ValueFrom.SecretKeyRef.Name != DefaultValkeyOrgSecretName {
+			if env.ValueFrom.SecretKeyRef.Name != DefaultValkeyNSSecretName {
 				t.Errorf("VALKEY_PASSWORD secret name = %q, want %q",
-					env.ValueFrom.SecretKeyRef.Name, DefaultValkeyOrgSecretName)
+					env.ValueFrom.SecretKeyRef.Name, DefaultValkeyNSSecretName)
 			}
 			if env.ValueFrom.SecretKeyRef.Key != "valkey-password" {
 				t.Errorf("VALKEY_PASSWORD secret key = %q, want %q",
@@ -449,9 +449,9 @@ func TestBuildJob_ValkeyOrgCredentials(t *testing.T) {
 	}
 }
 
-func TestBuildJob_ValkeyOrgCredentials_CustomSecretName(t *testing.T) {
+func TestBuildJob_ValkeyNSCredentials_CustomSecretName(t *testing.T) {
 	r := makeMinimalReconciler()
-	r.ValkeyOrgSecretName = "custom-valkey-secret"
+	r.ValkeyNSSecretName = "custom-valkey-secret"
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 

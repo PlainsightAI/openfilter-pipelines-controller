@@ -92,7 +92,7 @@ func main() {
 	var enableHTTP2 bool
 	var valkeyAddr string
 	var valkeyPassword string
-	var valkeyOrgSecretName string
+	var valkeyNSSecretName string
 	var claimerImage string
 	var gpuNodeSelector string
 	var tlsOpts []func(*tls.Config)
@@ -102,10 +102,10 @@ func main() {
 		"The Valkey server address (e.g., localhost:6379). Can also be set via VALKEY_ADDR env var.")
 	flag.StringVar(&valkeyPassword, "valkey-password", os.Getenv("VALKEY_PASSWORD"),
 		"The Valkey server password. Can also be set via VALKEY_PASSWORD env var.")
-	flag.StringVar(&valkeyOrgSecretName, "valkey-org-secret-name",
-		getEnvOrDefault("VALKEY_ORG_SECRET_NAME", controller.DefaultValkeyOrgSecretName),
-		"Name of the per-org Valkey credentials secret. "+
-			"Can also be set via VALKEY_ORG_SECRET_NAME env var.")
+	flag.StringVar(&valkeyNSSecretName, "valkey-ns-secret-name",
+		getEnvOrDefault("VALKEY_NS_SECRET_NAME", controller.DefaultValkeyNSSecretName),
+		"Name of the per-namespace Valkey credentials secret. "+
+			"Can also be set via VALKEY_NS_SECRET_NAME env var.")
 	flag.StringVar(&claimerImage, "claimer-image",
 		getEnvOrDefault("CLAIMER_IMAGE", "plainsightai/openfilter-pipelines-claimer:latest"),
 		"The container image for the claimer init container. Can also be set via CLAIMER_IMAGE env var.")
@@ -254,7 +254,7 @@ func main() {
 		Scheme:                mgr.GetScheme(),
 		ValkeyClient:          valkeyClient,
 		ValkeyAddr:            valkeyAddr,
-		ValkeyOrgSecretName:   valkeyOrgSecretName,
+		ValkeyNSSecretName:    valkeyNSSecretName,
 		ClaimerImage:          claimerImage,
 		GPUNodeSelectorLabels: parseNodeSelectorLabels(gpuNodeSelector),
 	}).SetupWithManager(mgr); err != nil {

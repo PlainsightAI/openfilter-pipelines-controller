@@ -480,7 +480,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(job.Spec.Template.Spec.Containers[0].Name).To(Equal("test-filter"))
 		})
 
-		It("should inject per-org Valkey credentials from org secret in claimer", func() {
+		It("should inject per-namespace Valkey credentials from namespace secret in claimer", func() {
 			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineInstanceName,
@@ -517,17 +517,17 @@ var _ = Describe("PipelineInstance Controller", func() {
 				return pipelineInstance.Status.JobName
 			}, timeout, interval).ShouldNot(BeEmpty())
 
-			// Verify per-org secret was created
-			orgSecret := &corev1.Secret{}
+			// Verify per-namespace secret was created
+			nsSecret := &corev1.Secret{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name: DefaultValkeyOrgSecretName, Namespace: namespace,
-			}, orgSecret)
+				Name: DefaultValkeyNSSecretName, Namespace: namespace,
+			}, nsSecret)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(orgSecret.Data).To(HaveKey("valkey-username"))
-			Expect(orgSecret.Data).To(HaveKey("valkey-password"))
-			Expect(string(orgSecret.Data["valkey-username"])).To(Equal("ns-default"))
+			Expect(nsSecret.Data).To(HaveKey("valkey-username"))
+			Expect(nsSecret.Data).To(HaveKey("valkey-password"))
+			Expect(string(nsSecret.Data["valkey-username"])).To(Equal("ns-default"))
 
-			// Verify claimer env vars reference the org secret
+			// Verify claimer env vars reference the namespace secret
 			job := &batchv1.Job{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
 				Name:      pipelineInstance.Status.JobName,
@@ -541,7 +541,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: DefaultValkeyOrgSecretName,
+							Name: DefaultValkeyNSSecretName,
 						},
 						Key: "valkey-username",
 					},
@@ -552,7 +552,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{
-							Name: DefaultValkeyOrgSecretName,
+							Name: DefaultValkeyNSSecretName,
 						},
 						Key: "valkey-password",
 					},

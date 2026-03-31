@@ -321,9 +321,9 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 		// Job was deleted, create a new one
 	}
 
-	// Ensure per-org Valkey credentials exist in the target namespace
-	if err := r.ensureOrgValkeyCredentials(ctx, pipelineInstance.Namespace); err != nil {
-		return fmt.Errorf("failed to ensure org Valkey credentials: %w", err)
+	// Ensure per-namespace Valkey credentials exist in the target namespace
+	if err := r.ensureNamespaceValkeyCredentials(ctx, pipelineInstance.Namespace); err != nil {
+		return fmt.Errorf("failed to ensure namespace Valkey credentials: %w", err)
 	}
 
 	// Generate Job name from PipelineInstance name
@@ -421,17 +421,17 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		}...)
 	}
 
-	// Add Valkey credentials from per-org secret (managed by ensureOrgValkeyCredentials)
-	orgSecretName := r.ValkeyOrgSecretName
-	if orgSecretName == "" {
-		orgSecretName = DefaultValkeyOrgSecretName
+	// Add Valkey credentials from per-namespace secret (managed by ensureNamespaceValkeyCredentials)
+	nsSecretName := r.ValkeyNSSecretName
+	if nsSecretName == "" {
+		nsSecretName = DefaultValkeyNSSecretName
 	}
 	claimerEnv = append(claimerEnv,
 		corev1.EnvVar{
 			Name: "VALKEY_USERNAME",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: orgSecretName},
+					LocalObjectReference: corev1.LocalObjectReference{Name: nsSecretName},
 					Key:                  "valkey-username",
 				},
 			},
@@ -440,7 +440,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			Name: "VALKEY_PASSWORD",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: orgSecretName},
+					LocalObjectReference: corev1.LocalObjectReference{Name: nsSecretName},
 					Key:                  "valkey-password",
 				},
 			},

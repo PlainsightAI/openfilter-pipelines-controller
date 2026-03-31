@@ -88,13 +88,13 @@ func TestLoadConfig_ValkeyUsername(t *testing.T) {
 	t.Setenv("S3_BUCKET", "test-bucket")
 
 	t.Run("reads VALKEY_USERNAME when set", func(t *testing.T) {
-		t.Setenv("VALKEY_USERNAME", "ns-org-123")
+		t.Setenv("VALKEY_USERNAME", "ns-team-alpha")
 		cfg, err := loadConfig()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cfg.ValkeyUsername != "ns-org-123" {
-			t.Fatalf("expected ValkeyUsername='ns-org-123', got '%s'", cfg.ValkeyUsername)
+		if cfg.ValkeyUsername != "ns-team-alpha" {
+			t.Fatalf("expected ValkeyUsername='ns-team-alpha', got '%s'", cfg.ValkeyUsername)
 		}
 	})
 

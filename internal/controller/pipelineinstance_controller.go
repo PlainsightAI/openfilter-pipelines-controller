@@ -182,11 +182,18 @@ func (r *PipelineInstanceReconciler) ensureNamespaceValkeyCredentials(ctx contex
 		if !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create namespace Valkey secret in %s: %w", namespace, err)
 		}
-		// Race: another reconcile created it first — re-read to get the winning password
+		// Race: another reconcile created it first — re-read and validate
 		if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
 			return fmt.Errorf("failed to re-read namespace Valkey secret after race in %s: %w", namespace, err)
 		}
-		password = string(secret.Data["valkey-password"])
+		if secret.Data == nil {
+			return fmt.Errorf("namespace Valkey secret %s/%s has no data after race re-read", namespace, secretName)
+		}
+		storedPassword, ok := secret.Data["valkey-password"]
+		if !ok || len(storedPassword) == 0 {
+			return fmt.Errorf("namespace Valkey secret %s/%s has missing or empty password after race re-read", namespace, secretName)
+		}
+		password = string(storedPassword)
 	}
 
 	// Set the ACL user with the password from the secret (source of truth)

@@ -664,7 +664,7 @@ func (r *PipelineInstanceReconciler) handleFailedPodMessage(
 ) {
 	log := logf.FromContext(ctx)
 	instanceID := pipelineInstance.GetInstanceID()
-	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+	dlqKey := pipelineInstance.GetQueueDLQ()
 
 	reason := resolveFailureReason(pod, info.startFailureReason, info.crashReason)
 	attempts++
@@ -894,7 +894,7 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 		maxAttempts = *pipelineInstance.Spec.Execution.MaxAttempts
 	}
 
-	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+	dlqKey := pipelineInstance.GetQueueDLQ()
 
 	for _, msg := range messages {
 		filepath := msg.Values["file"]
@@ -972,8 +972,7 @@ func (r *PipelineInstanceReconciler) updateStatus(ctx context.Context, pipelineI
 	}
 
 	// Get failed count (DLQ length)
-	instanceID := pipelineInstance.GetInstanceID()
-	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+	dlqKey := pipelineInstance.GetQueueDLQ()
 	failed, err := r.ValkeyClient.GetStreamLength(ctx, dlqKey)
 	if err != nil {
 		log.Error(err, "Failed to get DLQ length")
@@ -1064,7 +1063,7 @@ func (r *PipelineInstanceReconciler) flushOutstandingWork(ctx context.Context, p
 	streamKey := pipelineInstance.GetQueueStream()
 	groupName := pipelineInstance.GetQueueGroup()
 	instanceID := pipelineInstance.GetInstanceID()
-	dlqKey := fmt.Sprintf("pi:%s:dlq", instanceID)
+	dlqKey := pipelineInstance.GetQueueDLQ()
 
 	maxAttempts := int32(3)
 	if pipelineInstance.Spec.Execution != nil && pipelineInstance.Spec.Execution.MaxAttempts != nil {

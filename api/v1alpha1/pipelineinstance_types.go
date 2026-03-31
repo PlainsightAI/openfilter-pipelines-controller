@@ -201,19 +201,27 @@ type PipelineInstanceList struct {
 	Items           []PipelineInstance `json:"items"`
 }
 
-// GetQueueStream returns the Valkey stream key for this PipelineInstance
-// Format: pi:<uid>:work
+// GetQueueStream returns the Valkey stream key for this PipelineInstance.
+// Format: ns:<namespace>:pi:<uid>:work
+// The namespace prefix enables per-org Valkey ACL restrictions.
 func (pi *PipelineInstance) GetQueueStream() string {
-	return "pi:" + string(pi.UID) + ":work"
+	return "ns:" + pi.Namespace + ":pi:" + string(pi.UID) + ":work"
 }
 
-// GetQueueGroup returns the Valkey consumer group name for this PipelineInstance
+// GetQueueDLQ returns the Valkey DLQ stream key for this PipelineInstance.
+// Format: ns:<namespace>:pi:<uid>:dlq
+func (pi *PipelineInstance) GetQueueDLQ() string {
+	return "ns:" + pi.Namespace + ":pi:" + string(pi.UID) + ":dlq"
+}
+
+// GetQueueGroup returns the Valkey consumer group name for this PipelineInstance.
 // Format: cg:<uid>
+// Consumer groups are per-stream, so no namespace prefix is needed.
 func (pi *PipelineInstance) GetQueueGroup() string {
 	return "cg:" + string(pi.UID)
 }
 
-// GetInstanceID returns the instance ID (UID) for this PipelineInstance
+// GetInstanceID returns the instance ID (UID) for this PipelineInstance.
 func (pi *PipelineInstance) GetInstanceID() string {
 	return string(pi.UID)
 }

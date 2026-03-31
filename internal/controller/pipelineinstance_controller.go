@@ -110,7 +110,7 @@ type PipelineInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=replicasets/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/status,verbs=get
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 
 // ensureOrgValkeyCredentials ensures a per-org Valkey ACL user and corresponding
 // secret exist in the target namespace. The ACL user is restricted to keys
@@ -192,6 +192,54 @@ func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Cont
 	return nil
 }
 
+// cleanupOrgValkeyCredentials removes the per-org Valkey ACL user and secret
+// when the last PipelineInstance in a namespace is being deleted.
+func (r *PipelineInstanceReconciler) cleanupOrgValkeyCredentials(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) {
+	log := logf.FromContext(ctx)
+	namespace := pipelineInstance.Namespace
+
+	// List other PipelineInstances in the same namespace
+	list := &pipelinesv1alpha1.PipelineInstanceList{}
+	if err := r.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		log.Error(err, "Failed to list PipelineInstances for ACL cleanup")
+		return
+	}
+
+	// Count instances that are NOT being deleted (excluding the current one)
+	active := 0
+	for i := range list.Items {
+		if list.Items[i].UID != pipelineInstance.UID && list.Items[i].DeletionTimestamp.IsZero() {
+			active++
+		}
+	}
+	if active > 0 {
+		return // other active instances exist, keep the credentials
+	}
+
+	username := queue.ValkeyUsernameForNamespace(namespace)
+
+	// Delete the ACL user from Valkey
+	if err := r.ValkeyClient.DeleteACLUser(ctx, username); err != nil {
+		log.Error(err, "Failed to delete Valkey ACL user", "username", username)
+	} else {
+		log.Info("Deleted Valkey ACL user", "username", username)
+	}
+
+	// Delete the org secret
+	secretName := r.ValkeyOrgSecretName
+	if secretName == "" {
+		secretName = DefaultValkeyOrgSecretName
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err == nil {
+		if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
+			log.Error(err, "Failed to delete org Valkey secret", "secret", secretName)
+		} else {
+			log.Info("Deleted org Valkey secret", "namespace", namespace)
+		}
+	}
+}
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
@@ -211,6 +259,11 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 		log.Error(err, "Failed to get PipelineInstance")
 		return ctrl.Result{}, err
+	}
+
+	// Clean up per-org Valkey credentials when the last PipelineInstance in a namespace is deleted
+	if !pipelineInstance.DeletionTimestamp.IsZero() {
+		r.cleanupOrgValkeyCredentials(ctx, pipelineInstance)
 	}
 
 	// Get the Pipeline resource

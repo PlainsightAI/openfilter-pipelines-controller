@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
@@ -65,6 +66,9 @@ const (
 
 	// DefaultValkeyNSSecretName is the default name for per-namespace Valkey credentials secrets.
 	DefaultValkeyNSSecretName = "valkey-ns-credentials"
+
+	// FinalizerValkeyCredentials ensures Valkey ACL users are cleaned up on deletion.
+	FinalizerValkeyCredentials = "filter.plainsight.ai/valkey-credentials"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations
@@ -189,6 +193,10 @@ func (r *PipelineInstanceReconciler) ensureNamespaceValkeyCredentials(ctx contex
 		if secret.Data == nil {
 			return fmt.Errorf("namespace Valkey secret %s/%s has no data after race re-read", namespace, secretName)
 		}
+		storedUsername, ok := secret.Data["valkey-username"]
+		if !ok || string(storedUsername) != username {
+			return fmt.Errorf("namespace Valkey secret %s/%s has unexpected username %q after race re-read, expected %q", namespace, secretName, string(storedUsername), username)
+		}
 		storedPassword, ok := secret.Data["valkey-password"]
 		if !ok || len(storedPassword) == 0 {
 			return fmt.Errorf("namespace Valkey secret %s/%s has missing or empty password after race re-read", namespace, secretName)
@@ -245,6 +253,11 @@ func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx conte
 	}
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err == nil {
+		// Only delete if we manage this secret (avoid deleting unrelated secrets with the same name)
+		if secret.Labels["app.kubernetes.io/managed-by"] != "openfilter-pipelines-controller" {
+			log.Info("Skipping deletion of namespace Valkey secret — not managed by this controller", "secret", secretName)
+			return
+		}
 		if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
 			log.Error(err, "Failed to delete namespace Valkey secret", "secret", secretName)
 		} else {
@@ -274,9 +287,25 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Clean up per-namespace Valkey credentials when the last PipelineInstance in a namespace is deleted
+	// Handle Valkey credentials finalizer
 	if !pipelineInstance.DeletionTimestamp.IsZero() {
-		r.cleanupNamespaceValkeyCredentials(ctx, pipelineInstance)
+		if controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
+			r.cleanupNamespaceValkeyCredentials(ctx, pipelineInstance)
+			controllerutil.RemoveFinalizer(pipelineInstance, FinalizerValkeyCredentials)
+			if err := r.Update(ctx, pipelineInstance); err != nil {
+				log.Error(err, "Failed to remove Valkey credentials finalizer")
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		// Add finalizer if not present
+		if !controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
+			controllerutil.AddFinalizer(pipelineInstance, FinalizerValkeyCredentials)
+			if err := r.Update(ctx, pipelineInstance); err != nil {
+				log.Error(err, "Failed to add Valkey credentials finalizer")
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	// Get the Pipeline resource

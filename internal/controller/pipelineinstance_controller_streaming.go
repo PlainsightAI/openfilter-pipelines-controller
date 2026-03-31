@@ -337,9 +337,10 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 				},
 				Spec: corev1.PodSpec{
 					// No dedicated ServiceAccount required for streaming mode; default SA is sufficient
-					RestartPolicy: corev1.RestartPolicyAlways,
-					NodeSelector:  nodeSelector,
-					Containers:    containers,
+					RestartPolicy:    corev1.RestartPolicyAlways,
+					NodeSelector:     nodeSelector,
+					ImagePullSecrets: pipeline.Spec.ImagePullSecrets,
+					Containers:       containers,
 				},
 			},
 		},

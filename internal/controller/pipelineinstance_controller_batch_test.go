@@ -342,3 +342,52 @@ func TestBuildJob_GPUNodeSelector_BothLimitsAndRequests(t *testing.T) {
 		t.Errorf("expected exactly 1 NodeSelector entry, got %d: %v", len(nodeSelector), nodeSelector)
 	}
 }
+
+func TestBuildJob_ImagePullSecrets_None(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "f1", Image: "public/image:latest"},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	if len(job.Spec.Template.Spec.ImagePullSecrets) != 0 {
+		t.Errorf("expected no ImagePullSecrets, got %v", job.Spec.Template.Spec.ImagePullSecrets)
+	}
+}
+
+func TestBuildJob_ImagePullSecrets_Propagated(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			ImagePullSecrets: []corev1.LocalObjectReference{
+				{Name: "registry-creds"},
+				{Name: "other-creds"},
+			},
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "f1", Image: "private.registry/image:latest"},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	secrets := job.Spec.Template.Spec.ImagePullSecrets
+	if len(secrets) != 2 {
+		t.Fatalf("expected 2 ImagePullSecrets, got %d", len(secrets))
+	}
+	if secrets[0].Name != "registry-creds" {
+		t.Errorf("expected first secret name 'registry-creds', got %q", secrets[0].Name)
+	}
+	if secrets[1].Name != "other-creds" {
+		t.Errorf("expected second secret name 'other-creds', got %q", secrets[1].Name)
+	}
+}

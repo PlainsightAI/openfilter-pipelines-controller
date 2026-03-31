@@ -317,6 +317,51 @@ func TestBuildStreamingDeployment_GPUNodeSelector_BothLimitsAndRequests(t *testi
 	}
 }
 
+func TestBuildStreamingDeployment_ImagePullSecrets_None(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "f1", Image: "public/image:latest"},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	if len(deployment.Spec.Template.Spec.ImagePullSecrets) != 0 {
+		t.Errorf("expected no ImagePullSecrets, got %v", deployment.Spec.Template.Spec.ImagePullSecrets)
+	}
+}
+
+func TestBuildStreamingDeployment_ImagePullSecrets_Propagated(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			ImagePullSecrets: []corev1.LocalObjectReference{
+				{Name: "registry-creds"},
+				{Name: "other-creds"},
+			},
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "f1", Image: "private.registry/image:latest"},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	secrets := deployment.Spec.Template.Spec.ImagePullSecrets
+	if len(secrets) != 2 {
+		t.Fatalf("expected 2 ImagePullSecrets, got %d", len(secrets))
+	}
+	if secrets[0].Name != "registry-creds" {
+		t.Errorf("expected first secret name 'registry-creds', got %q", secrets[0].Name)
+	}
+	if secrets[1].Name != "other-creds" {
+		t.Errorf("expected second secret name 'other-creds', got %q", secrets[1].Name)
+	}
+}
+
 func TestBuildRTSPURLWithCredentials(t *testing.T) {
 	tests := []struct {
 		name     string

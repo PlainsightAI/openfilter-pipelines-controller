@@ -237,6 +237,12 @@ type PipelineSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:default=/ws/input.mp4
 	VideoInputPath string `json:"videoInputPath,omitempty"`
+
+	// imagePullSecrets is a list of references to secrets for pulling container images
+	// from private registries for all Pods created for this Pipeline (including filters,
+	// init containers, and any sidecars). Each entry is the name of a Secret in the same namespace.
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 }
 
 // PipelineStatus defines the observed state of Pipeline.

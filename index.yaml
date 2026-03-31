@@ -2,6 +2,32 @@ apiVersion: v1
 entries:
   openfilter-pipelines-controller:
   - apiVersion: v2
+    appVersion: 0.3.0
+    created: "2026-03-31T01:49:59.316826588Z"
+    dependencies:
+    - condition: valkey.enabled
+      name: valkey
+      repository: https://charts.bitnami.com/bitnami
+      version: 4.0.10
+    description: A Kubernetes operator for managing Pipeline custom resources
+    digest: 53366d26be6118250adb56574985dabf8b6f261c02b7219ba746f98ff9f29604
+    home: https://github.com/PlainsightAI/openfilter-pipelines-controller
+    keywords:
+    - kubernetes
+    - operator
+    - pipeline
+    - plainsight
+    maintainers:
+    - name: PlainsightAI
+      url: https://plainsight.ai
+    name: openfilter-pipelines-controller
+    sources:
+    - https://github.com/PlainsightAI/openfilter-pipelines-controller
+    type: application
+    urls:
+    - https://github.com/PlainsightAI/openfilter-pipelines-controller/releases/download/openfilter-pipelines-controller-0.3.0/openfilter-pipelines-controller-0.3.0.tgz
+    version: 0.3.0
+  - apiVersion: v2
     appVersion: 0.2.8
     created: "2026-03-30T04:28:29.772792821Z"
     dependencies:
@@ -287,4 +313,4 @@ entries:
     urls:
     - https://github.com/PlainsightAI/openfilter-pipelines-controller/releases/download/openfilter-pipelines-controller-0.1.6/openfilter-pipelines-controller-0.1.6.tgz
     version: 0.1.6
-generated: "2026-03-30T04:28:29.772819732Z"
+generated: "2026-03-31T01:49:59.316864539Z"

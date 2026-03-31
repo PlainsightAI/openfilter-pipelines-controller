@@ -321,6 +321,11 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 		// Job was deleted, create a new one
 	}
 
+	// Ensure the Valkey password secret exists in the target namespace
+	if err := r.ensureValkeySecret(ctx, pipelineInstance.Namespace); err != nil {
+		return fmt.Errorf("failed to sync Valkey secret: %w", err)
+	}
+
 	// Generate Job name from PipelineInstance name
 	jobName := fmt.Sprintf("%s-job", pipelineInstance.Name)
 

@@ -236,6 +236,7 @@ func main() {
 		ValkeyAddr:              valkeyAddr,
 		ValkeyPasswordSecret:    valkeyPasswordSecret,
 		ValkeyPasswordSecretKey: valkeyPasswordSecretKey,
+		ValkeyPasswordSecretNS:  os.Getenv("VALKEY_PASSWORD_SECRET_NAMESPACE"),
 		ClaimerImage:            claimerImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")

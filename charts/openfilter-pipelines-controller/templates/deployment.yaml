@@ -108,6 +108,8 @@ spec:
               value: {{ include "openfilter-pipelines-controller.fullname" . }}-valkey
             - name: VALKEY_PASSWORD_SECRET_KEY
               value: valkey-password
+            - name: VALKEY_PASSWORD_SECRET_NAMESPACE
+              value: {{ .Release.Namespace }}
             {{- end }}
             {{- end }}
             {{- if .Values.valkey.externalValkey.enabled }}
@@ -123,6 +125,8 @@ spec:
               value: {{ .Values.valkey.externalValkey.existingSecret }}
             - name: VALKEY_PASSWORD_SECRET_KEY
               value: {{ .Values.valkey.externalValkey.existingSecretPasswordKey }}
+            - name: VALKEY_PASSWORD_SECRET_NAMESPACE
+              value: {{ .Release.Namespace }}
             {{- end }}
             {{- end }}
             - name: CLAIMER_IMAGE

@@ -87,6 +87,7 @@ type PipelineInstanceReconciler struct {
 	ValkeyAddr              string
 	ValkeyPasswordSecret    string // Secret name containing the Valkey password
 	ValkeyPasswordSecretKey string // Key within the secret for the Valkey password
+	ValkeyPasswordSecretNS  string // Namespace where the source Valkey secret lives
 	ClaimerImage            string // Image for the claimer init container
 }
 
@@ -103,7 +104,82 @@ type PipelineInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=replicasets/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/status,verbs=get
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
+
+// ensureValkeySecret copies the Valkey password secret from the controller's namespace
+// to the target namespace so that claimer pods can reference it via secretKeyRef.
+// This is a no-op if ValkeyPasswordSecret is empty or the target namespace matches the source.
+func (r *PipelineInstanceReconciler) ensureValkeySecret(ctx context.Context, targetNS string) error {
+	if r.ValkeyPasswordSecret == "" || r.ValkeyPasswordSecretNS == "" {
+		return nil
+	}
+	if targetNS == r.ValkeyPasswordSecretNS {
+		return nil
+	}
+
+	log := logf.FromContext(ctx)
+	secretKey := r.ValkeyPasswordSecretKey
+	if secretKey == "" {
+		secretKey = "valkey-password"
+	}
+
+	// Check if the secret already exists in the target namespace
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      r.ValkeyPasswordSecret,
+		Namespace: targetNS,
+	}, existing)
+	if err == nil {
+		// Secret exists — check if it's up to date
+		source := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      r.ValkeyPasswordSecret,
+			Namespace: r.ValkeyPasswordSecretNS,
+		}, source); err != nil {
+			return fmt.Errorf("failed to read source Valkey secret: %w", err)
+		}
+		if string(existing.Data[secretKey]) == string(source.Data[secretKey]) {
+			return nil
+		}
+		existing.Data = map[string][]byte{secretKey: source.Data[secretKey]}
+		if err := r.Update(ctx, existing); err != nil {
+			return fmt.Errorf("failed to update Valkey secret in %s: %w", targetNS, err)
+		}
+		log.Info("Updated Valkey secret in target namespace", "namespace", targetNS)
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to check Valkey secret in %s: %w", targetNS, err)
+	}
+
+	// Read the source secret
+	source := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      r.ValkeyPasswordSecret,
+		Namespace: r.ValkeyPasswordSecretNS,
+	}, source); err != nil {
+		return fmt.Errorf("failed to read source Valkey secret: %w", err)
+	}
+
+	// Create the secret in the target namespace
+	target := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      r.ValkeyPasswordSecret,
+			Namespace: targetNS,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "openfilter-pipelines-controller",
+				"app.kubernetes.io/component":  "valkey-credentials",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{secretKey: source.Data[secretKey]},
+	}
+	if err := r.Create(ctx, target); err != nil {
+		return fmt.Errorf("failed to create Valkey secret in %s: %w", targetNS, err)
+	}
+	log.Info("Created Valkey secret in target namespace", "namespace", targetNS)
+	return nil
+}
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

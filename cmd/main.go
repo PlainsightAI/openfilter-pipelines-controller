@@ -263,6 +263,7 @@ func main() {
 		ValkeyAddr:              valkeyAddr,
 		ValkeyPasswordSecret:    valkeyPasswordSecret,
 		ValkeyPasswordSecretKey: valkeyPasswordSecretKey,
+		ValkeyPasswordSecretNS:  os.Getenv("VALKEY_PASSWORD_SECRET_NAMESPACE"),
 		ClaimerImage:            claimerImage,
 		GPUNodeSelectorLabels:   parseNodeSelectorLabels(gpuNodeSelector),
 	}).SetupWithManager(mgr); err != nil {

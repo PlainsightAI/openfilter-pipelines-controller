@@ -58,12 +58,22 @@ type MockValkeyClient struct {
 	// ClaimedMessages tracks which message IDs were claimed via XCLAIM
 	ClaimedMessages []string
 
+	// ACL tracking
+	EnsuredACLUsers []mockACLUser
+	DeletedACLUsers []string
+
 	// Error injection fields for testing error paths
 	PendingEntryDetailsError error
 	ClaimMessagesError       error
 	AckMessageError          error
 	ReadRangeError           error
 	GetPendingForConsumerErr error
+}
+
+type mockACLUser struct {
+	Username  string
+	Password  string
+	Namespace string
 }
 
 type mockMessage struct {
@@ -227,10 +237,16 @@ func (m *MockValkeyClient) DeleteMessages(ctx context.Context, streamKey string,
 }
 
 func (m *MockValkeyClient) EnsureACLUser(ctx context.Context, username, password, namespace string) error {
+	m.EnsuredACLUsers = append(m.EnsuredACLUsers, mockACLUser{
+		Username:  username,
+		Password:  password,
+		Namespace: namespace,
+	})
 	return nil
 }
 
 func (m *MockValkeyClient) DeleteACLUser(ctx context.Context, username string) error {
+	m.DeletedACLUsers = append(m.DeletedACLUsers, username)
 	return nil
 }
 
@@ -526,6 +542,13 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(nsSecret.Data).To(HaveKey("valkey-username"))
 			Expect(nsSecret.Data).To(HaveKey("valkey-password"))
 			Expect(string(nsSecret.Data["valkey-username"])).To(Equal("ns-default"))
+
+			// Verify EnsureACLUser was called with the correct namespace-scoped username
+			Expect(mockValkey.EnsuredACLUsers).NotTo(BeEmpty())
+			lastACL := mockValkey.EnsuredACLUsers[len(mockValkey.EnsuredACLUsers)-1]
+			Expect(lastACL.Username).To(Equal("ns-default"))
+			Expect(lastACL.Namespace).To(Equal(namespace))
+			Expect(lastACL.Password).NotTo(BeEmpty())
 
 			// Verify claimer env vars reference the namespace secret
 			job := &batchv1.Job{}

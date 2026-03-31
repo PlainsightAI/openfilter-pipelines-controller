@@ -215,15 +215,15 @@ func (r *PipelineInstanceReconciler) ensureNamespaceValkeyCredentials(ctx contex
 
 // cleanupNamespaceValkeyCredentials removes the per-namespace Valkey ACL user and secret
 // when the last PipelineInstance in a namespace is being deleted.
-func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) {
+// Returns an error if cleanup fails so the finalizer is retained for retry.
+func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) error {
 	log := logf.FromContext(ctx)
 	namespace := pipelineInstance.Namespace
 
 	// List other PipelineInstances in the same namespace
 	list := &pipelinesv1alpha1.PipelineInstanceList{}
 	if err := r.List(ctx, list, client.InNamespace(namespace)); err != nil {
-		log.Error(err, "Failed to list PipelineInstances for ACL cleanup")
-		return
+		return fmt.Errorf("failed to list PipelineInstances for ACL cleanup: %w", err)
 	}
 
 	// Count instances that are NOT being deleted (excluding the current one)
@@ -234,17 +234,16 @@ func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx conte
 		}
 	}
 	if active > 0 {
-		return // other active instances exist, keep the credentials
+		return nil // other active instances exist, keep the credentials
 	}
 
 	username := queue.ValkeyUsernameForNamespace(namespace)
 
 	// Delete the ACL user from Valkey
 	if err := r.ValkeyClient.DeleteACLUser(ctx, username); err != nil {
-		log.Error(err, "Failed to delete Valkey ACL user", "username", username)
-	} else {
-		log.Info("Deleted Valkey ACL user", "username", username)
+		return fmt.Errorf("failed to delete Valkey ACL user %s: %w", username, err)
 	}
+	log.Info("Deleted Valkey ACL user", "username", username)
 
 	// Delete the namespace secret
 	secretName := r.ValkeyNSSecretName
@@ -256,14 +255,14 @@ func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx conte
 		// Only delete if we manage this secret (avoid deleting unrelated secrets with the same name)
 		if secret.Labels["app.kubernetes.io/managed-by"] != "openfilter-pipelines-controller" {
 			log.Info("Skipping deletion of namespace Valkey secret — not managed by this controller", "secret", secretName)
-			return
+			return nil
 		}
 		if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
-			log.Error(err, "Failed to delete namespace Valkey secret", "secret", secretName)
-		} else {
-			log.Info("Deleted namespace Valkey secret", "namespace", namespace)
+			return fmt.Errorf("failed to delete namespace Valkey secret %s: %w", secretName, err)
 		}
+		log.Info("Deleted namespace Valkey secret", "namespace", namespace)
 	}
+	return nil
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -290,7 +289,10 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Handle Valkey credentials finalizer
 	if !pipelineInstance.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
-			r.cleanupNamespaceValkeyCredentials(ctx, pipelineInstance)
+			if err := r.cleanupNamespaceValkeyCredentials(ctx, pipelineInstance); err != nil {
+				log.Error(err, "Failed to clean up Valkey credentials, will retry")
+				return ctrl.Result{Requeue: true}, err
+			}
 			controllerutil.RemoveFinalizer(pipelineInstance, FinalizerValkeyCredentials)
 			if err := r.Update(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to remove Valkey credentials finalizer")

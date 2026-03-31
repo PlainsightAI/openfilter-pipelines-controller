@@ -104,10 +104,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "openfilter-pipelines-controller.fullname" . }}-valkey
                   key: valkey-password
-            - name: VALKEY_PASSWORD_SECRET
-              value: {{ include "openfilter-pipelines-controller.fullname" . }}-valkey
-            - name: VALKEY_PASSWORD_SECRET_KEY
-              value: valkey-password
             {{- end }}
             {{- end }}
             {{- if .Values.valkey.externalValkey.enabled }}
@@ -119,10 +115,6 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.valkey.externalValkey.existingSecret }}
                   key: {{ .Values.valkey.externalValkey.existingSecretPasswordKey }}
-            - name: VALKEY_PASSWORD_SECRET
-              value: {{ .Values.valkey.externalValkey.existingSecret }}
-            - name: VALKEY_PASSWORD_SECRET_KEY
-              value: {{ .Values.valkey.externalValkey.existingSecretPasswordKey }}
             {{- end }}
             {{- end }}
             - name: CLAIMER_IMAGE

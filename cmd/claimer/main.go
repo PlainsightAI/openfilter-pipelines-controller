@@ -41,6 +41,7 @@ import (
 const (
 	// Environment variables
 	EnvValkeyURL      = "VALKEY_URL"
+	EnvValkeyUsername = "VALKEY_USERNAME"
 	EnvValkeyPassword = "VALKEY_PASSWORD"
 	EnvStream         = "STREAM"
 	EnvGroup          = "GROUP"
@@ -147,6 +148,7 @@ func run() error {
 
 type Config struct {
 	ValkeyURL      string
+	ValkeyUsername string
 	ValkeyPassword string
 	Stream         string
 	Group          string
@@ -166,6 +168,7 @@ type Config struct {
 func loadConfig() (*Config, error) {
 	cfg := &Config{
 		ValkeyURL:      getEnvOrDefault(EnvValkeyURL, "localhost:6379"),
+		ValkeyUsername: os.Getenv(EnvValkeyUsername),
 		ValkeyPassword: os.Getenv(EnvValkeyPassword),
 		Stream:         os.Getenv(EnvStream),
 		Group:          os.Getenv(EnvGroup),
@@ -217,6 +220,9 @@ func getEnvOrDefault(key, defaultValue string) string {
 func createValkeyClient(cfg *Config) (valkey.Client, error) {
 	clientOpts := valkey.ClientOption{
 		InitAddress: []string{cfg.ValkeyURL},
+	}
+	if cfg.ValkeyUsername != "" {
+		clientOpts.Username = cfg.ValkeyUsername
 	}
 	if cfg.ValkeyPassword != "" {
 		clientOpts.Password = cfg.ValkeyPassword

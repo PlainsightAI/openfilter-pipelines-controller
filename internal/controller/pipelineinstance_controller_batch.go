@@ -321,6 +321,11 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 		// Job was deleted, create a new one
 	}
 
+	// Ensure per-org Valkey credentials exist in the target namespace
+	if err := r.ensureOrgValkeyCredentials(ctx, pipelineInstance.Namespace); err != nil {
+		return fmt.Errorf("failed to ensure org Valkey credentials: %w", err)
+	}
+
 	// Generate Job name from PipelineInstance name
 	jobName := fmt.Sprintf("%s-job", pipelineInstance.Name)
 
@@ -416,22 +421,31 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		}...)
 	}
 
-	// Add Valkey password from secret reference if configured
-	if r.ValkeyPasswordSecret != "" {
-		secretKey := r.ValkeyPasswordSecretKey
-		if secretKey == "" {
-			secretKey = "valkey-password"
-		}
-		claimerEnv = append(claimerEnv, corev1.EnvVar{
+	// Add Valkey credentials from per-org secret (managed by ensureOrgValkeyCredentials)
+	orgSecretName := r.ValkeyOrgSecretName
+	if orgSecretName == "" {
+		orgSecretName = DefaultValkeyOrgSecretName
+	}
+	claimerEnv = append(claimerEnv,
+		corev1.EnvVar{
+			Name: "VALKEY_USERNAME",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: orgSecretName},
+					Key:                  "valkey-username",
+				},
+			},
+		},
+		corev1.EnvVar{
 			Name: "VALKEY_PASSWORD",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: r.ValkeyPasswordSecret},
-					Key:                  secretKey,
+					LocalObjectReference: corev1.LocalObjectReference{Name: orgSecretName},
+					Key:                  "valkey-password",
 				},
 			},
-		})
-	}
+		},
+	)
 
 	// Provide video input path to claimer for storing downloaded files.
 	videoInputPath := pipeline.Spec.VideoInputPath

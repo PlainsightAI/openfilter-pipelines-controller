@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"time"
@@ -60,6 +62,9 @@ const (
 
 	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not overridden.
 	DefaultVideoInputPath = "/ws/input.mp4"
+
+	// DefaultValkeyOrgSecretName is the default name for per-org Valkey credentials secrets.
+	DefaultValkeyOrgSecretName = "valkey-org-credentials"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations
@@ -77,18 +82,19 @@ type ValkeyClientInterface interface {
 	ClaimMessages(ctx context.Context, streamKey, groupName, consumerName string, minIdleTime int64, messageIDs ...string) ([]queue.XMessage, error)
 	ReadRange(ctx context.Context, streamKey, start, end string, count int64) ([]queue.XMessage, error)
 	DeleteMessages(ctx context.Context, streamKey string, messageIDs ...string) error
+	EnsureACLUser(ctx context.Context, username, password, namespace string) error
+	DeleteACLUser(ctx context.Context, username string) error
 }
 
 // PipelineInstanceReconciler reconciles a PipelineInstance object
 type PipelineInstanceReconciler struct {
 	client.Client
-	Scheme                  *runtime.Scheme
-	ValkeyClient            ValkeyClientInterface
-	ValkeyAddr              string
-	ValkeyPasswordSecret    string            // Secret name containing the Valkey password
-	ValkeyPasswordSecretKey string            // Key within the secret for the Valkey password
-	ClaimerImage            string            // Image for the claimer init container
-	GPUNodeSelectorLabels   map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
+	Scheme                *runtime.Scheme
+	ValkeyClient          ValkeyClientInterface
+	ValkeyAddr            string
+	ValkeyOrgSecretName   string            // Name of the per-org Valkey credentials secret (default: valkey-org-credentials)
+	ClaimerImage          string            // Image for the claimer init container
+	GPUNodeSelectorLabels map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete
@@ -104,7 +110,74 @@ type PipelineInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=replicasets/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/status,verbs=get
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
+
+// ensureOrgValkeyCredentials ensures a per-org Valkey ACL user and corresponding
+// secret exist in the target namespace. The ACL user is restricted to keys
+// matching ns:<namespace>:* so it can only access its own org's data.
+func (r *PipelineInstanceReconciler) ensureOrgValkeyCredentials(ctx context.Context, namespace string) error {
+	log := logf.FromContext(ctx)
+
+	secretName := r.ValkeyOrgSecretName
+	if secretName == "" {
+		secretName = DefaultValkeyOrgSecretName
+	}
+
+	username := queue.ValkeyUsernameForNamespace(namespace)
+
+	// Check if the secret already exists
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, existing)
+	if err == nil {
+		// Secret exists — ensure ACL user is up to date with stored password
+		password := string(existing.Data["valkey-password"])
+		if err := r.ValkeyClient.EnsureACLUser(ctx, username, password, namespace); err != nil {
+			return fmt.Errorf("failed to ensure ACL user %s: %w", username, err)
+		}
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to check org Valkey secret in %s: %w", namespace, err)
+	}
+
+	// Generate a random password
+	passwordBytes := make([]byte, 32)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		return fmt.Errorf("failed to generate random password: %w", err)
+	}
+	password := base64.RawURLEncoding.EncodeToString(passwordBytes)
+
+	// Create the ACL user in Valkey
+	if err := r.ValkeyClient.EnsureACLUser(ctx, username, password, namespace); err != nil {
+		return fmt.Errorf("failed to create ACL user %s: %w", username, err)
+	}
+
+	// Create the secret in the target namespace
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "openfilter-pipelines-controller",
+				"app.kubernetes.io/component":  "valkey-credentials",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"valkey-username": []byte(username),
+			"valkey-password": []byte(password),
+		},
+	}
+	if err := r.Create(ctx, secret); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return nil // race condition — another reconcile created it
+		}
+		return fmt.Errorf("failed to create org Valkey secret in %s: %w", namespace, err)
+	}
+
+	log.Info("Created org Valkey credentials", "namespace", namespace, "username", username)
+	return nil
+}
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

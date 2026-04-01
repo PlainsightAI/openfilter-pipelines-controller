@@ -344,6 +344,509 @@ func TestBuildJob_GPUNodeSelector_BothLimitsAndRequests(t *testing.T) {
 	}
 }
 
+func findEnvVar(envVars []corev1.EnvVar, name string) (corev1.EnvVar, bool) {
+	for _, e := range envVars {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return corev1.EnvVar{}, false
+}
+
+func TestBuildJob_GPUEnvInjection_WithGPULimits(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	containers := job.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		t.Fatal("expected at least one container")
+	}
+	env := containers[0].Env
+
+	ldLibPath, ok := findEnvVar(env, "LD_LIBRARY_PATH")
+	if !ok {
+		t.Fatal("expected LD_LIBRARY_PATH to be set for GPU container")
+	}
+	if ldLibPath.Value != nvidiaLibPath {
+		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", nvidiaLibPath, ldLibPath.Value)
+	}
+
+	if _, ok := findEnvVar(env, "PATH"); ok {
+		t.Error("PATH should not be injected (Kubernetes $(PATH) does not expand image PATH)")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_WithGPURequests(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); !ok {
+		t.Error("expected LD_LIBRARY_PATH to be set for GPU container with Requests")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_NotInjectedForCPUContainer(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "cpu-filter",
+					Image: "cpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("256Mi"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for CPU-only container")
+	}
+	if _, ok := findEnvVar(env, "PATH"); ok {
+		t.Error("expected PATH NOT to be set for CPU-only container")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_ZeroQuantityNotInjected(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "zero-gpu-filter",
+					Image: "filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("0"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be injected for nvidia.com/gpu: 0")
+	}
+	if nodeSelector := job.Spec.Template.Spec.NodeSelector; nodeSelector != nil {
+		if _, ok := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; ok {
+			t.Error("expected no GPU NodeSelector for nvidia.com/gpu: 0")
+		}
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_NotInjectedForNoResources(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "basic-filter",
+					Image: "basic-filter:latest",
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for container with no resources")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_UserCanOverride(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	userPath := "/custom/lib:/usr/lib"
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+					Env: []corev1.EnvVar{
+						{Name: "LD_LIBRARY_PATH", Value: userPath},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+
+	// Both the injected default and the user override should be present;
+	// the user's value appears last so container runtime uses it.
+	var ldLibVals []string
+	for _, e := range env {
+		if e.Name == "LD_LIBRARY_PATH" {
+			ldLibVals = append(ldLibVals, e.Value)
+		}
+	}
+	if len(ldLibVals) != 2 {
+		t.Fatalf("expected 2 LD_LIBRARY_PATH entries (default + user override), got %d: %v", len(ldLibVals), ldLibVals)
+	}
+	if ldLibVals[0] != nvidiaLibPath {
+		t.Errorf("first LD_LIBRARY_PATH should be default %q, got %q", nvidiaLibPath, ldLibVals[0])
+	}
+	if ldLibVals[1] != userPath {
+		t.Errorf("second LD_LIBRARY_PATH should be user override %q, got %q", userPath, ldLibVals[1])
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_PerContainerNotPod(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+				{
+					Name:  "cpu-sidecar",
+					Image: "cpu-sidecar:latest",
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	containers := job.Spec.Template.Spec.Containers
+
+	if len(containers) < 2 {
+		t.Fatalf("expected 2 containers, got %d", len(containers))
+	}
+
+	// GPU container should have the env vars
+	var gpuContainer, cpuContainer corev1.Container
+	for _, c := range containers {
+		switch c.Name {
+		case "gpu-filter":
+			gpuContainer = c
+		case "cpu-sidecar":
+			cpuContainer = c
+		}
+	}
+
+	if _, ok := findEnvVar(gpuContainer.Env, "LD_LIBRARY_PATH"); !ok {
+		t.Error("expected LD_LIBRARY_PATH on GPU container")
+	}
+	if _, ok := findEnvVar(cpuContainer.Env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT on CPU sidecar")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_NilResources(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "nil-resources-filter", Image: "filter:latest", Resources: nil},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_EmptyResourceRequirements(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:      "empty-resources-filter",
+					Image:     "filter:latest",
+					Resources: &corev1.ResourceRequirements{},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_BothLimitsAndRequestsInjectsOnce(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits:   corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+						Requests: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+
+	var count int
+	for _, e := range env {
+		if e.Name == "LD_LIBRARY_PATH" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 LD_LIBRARY_PATH entry when GPU is in both Limits and Requests, got %d", count)
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_ZeroLimitsNonZeroRequests(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits:   corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("0")},
+						Requests: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); !ok {
+		t.Error("expected LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_NonZeroLimitsZeroRequests(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits:   corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+						Requests: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("0")},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); !ok {
+		t.Error("expected LD_LIBRARY_PATH to be injected when Limits has positive GPU (Requests is zero)")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_NegativeQuantityNotInjected(t *testing.T) {
+	// resource.Quantity.Sign() returns -1 for negative values, which are invalid per
+	// Kubernetes API validation but may appear in malformed specs. The controller
+	// should treat negative as non-GPU (Sign() > 0 guard).
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "bad-filter",
+					Image: "filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("-1")},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_LargeGPUCount(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "multi-gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("8")},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+	ldLib, ok := findEnvVar(env, "LD_LIBRARY_PATH")
+	if !ok {
+		t.Fatal("expected LD_LIBRARY_PATH to be set for large GPU count")
+	}
+	if ldLib.Value != nvidiaLibPath {
+		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", nvidiaLibPath, ldLib.Value)
+	}
+}
+
+func TestBuildJob_GPUEnvInjection_UserOverridesWithEmptyString(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+					},
+					Env: []corev1.EnvVar{
+						{Name: "LD_LIBRARY_PATH", Value: ""},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	env := job.Spec.Template.Spec.Containers[0].Env
+
+	// Both entries present; user's empty-string override appears last.
+	var ldLibVals []string
+	for _, e := range env {
+		if e.Name == "LD_LIBRARY_PATH" {
+			ldLibVals = append(ldLibVals, e.Value)
+		}
+	}
+	if len(ldLibVals) != 2 {
+		t.Fatalf("expected 2 LD_LIBRARY_PATH entries, got %d: %v", len(ldLibVals), ldLibVals)
+	}
+	if ldLibVals[0] != nvidiaLibPath {
+		t.Errorf("first LD_LIBRARY_PATH should be default %q, got %q", nvidiaLibPath, ldLibVals[0])
+	}
+	if ldLibVals[1] != "" {
+		t.Errorf("second LD_LIBRARY_PATH should be empty string (user override), got %q", ldLibVals[1])
+	}
+}
+
 func TestBuildJob_ImagePullSecrets_None(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
@@ -508,3 +1011,4 @@ func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
 	}
 	t.Error("expected STREAM env var in claimer, not found")
 }
+

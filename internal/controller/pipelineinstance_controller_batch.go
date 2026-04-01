@@ -477,6 +477,17 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		// Filter-specific env vars can override config if they have the same name
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))
 		containerEnv = append(containerEnv, configEnvVars...)
+
+		// Inject LD_LIBRARY_PATH for GPU containers so PyTorch can find libcuda.so.1.
+		// GKE's device plugin mounts libraries to /usr/local/nvidia/lib64 but does not set LD_LIBRARY_PATH.
+		// Injected before user env vars so users can override if needed.
+		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
+			containerEnv = append(containerEnv,
+				corev1.EnvVar{Name: "LD_LIBRARY_PATH", Value: nvidiaLibPath},
+			)
+			log.V(1).Info("GPU resources detected, injecting LD_LIBRARY_PATH", "filter", filter.Name, "value", nvidiaLibPath)
+		}
+
 		containerEnv = append(containerEnv, filter.Env...)
 
 		container := corev1.Container{
@@ -747,13 +758,29 @@ func resolveFailureReason(pod *corev1.Pod, startFailureReason, crashReason strin
 	return "Unknown"
 }
 
-// requiresGPU returns true if any container in the slice requests nvidia.com/gpu resources.
+// nvidiaLibPath is the path where GKE's device plugin mounts NVIDIA driver libraries.
+// The device plugin does not set LD_LIBRARY_PATH, so we inject it ourselves.
+const nvidiaLibPath = "/usr/local/nvidia/lib64"
+
+// containerResourcesRequireGPU returns true if the given resource requirements request a positive
+// quantity of nvidia.com/gpu. Zero and negative quantities return false.
+func containerResourcesRequireGPU(resources corev1.ResourceRequirements) bool {
+	if q, ok := resources.Limits["nvidia.com/gpu"]; ok && q.Sign() > 0 {
+		return true
+	}
+	if q, ok := resources.Requests["nvidia.com/gpu"]; ok && q.Sign() > 0 {
+		return true
+	}
+	return false
+}
+
+// requiresGPU returns true if any container in the slice requests a positive quantity of nvidia.com/gpu.
 func requiresGPU(containers []corev1.Container) bool {
 	for _, c := range containers {
-		if _, ok := c.Resources.Limits["nvidia.com/gpu"]; ok {
+		if q, ok := c.Resources.Limits["nvidia.com/gpu"]; ok && q.Sign() > 0 {
 			return true
 		}
-		if _, ok := c.Resources.Requests["nvidia.com/gpu"]; ok {
+		if q, ok := c.Resources.Requests["nvidia.com/gpu"]; ok && q.Sign() > 0 {
 			return true
 		}
 	}

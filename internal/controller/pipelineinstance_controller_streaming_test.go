@@ -317,6 +317,381 @@ func TestBuildStreamingDeployment_GPUNodeSelector_BothLimitsAndRequests(t *testi
 	}
 }
 
+func TestBuildStreamingDeployment_GPUEnvInjection_WithGPULimits(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	containers := deployment.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		t.Fatal("expected at least one container")
+	}
+	env := containers[0].Env
+
+	ldLibPath, ok := findEnvVar(env, "LD_LIBRARY_PATH")
+	if !ok {
+		t.Fatal("expected LD_LIBRARY_PATH to be set for GPU container")
+	}
+	if ldLibPath.Value != nvidiaLibPath {
+		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", nvidiaLibPath, ldLibPath.Value)
+	}
+
+	if _, ok := findEnvVar(env, "PATH"); ok {
+		t.Error("PATH should not be injected (Kubernetes $(PATH) does not expand image PATH)")
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_ZeroQuantityNotInjected(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "zero-gpu-filter",
+					Image: "filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("0"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be injected for nvidia.com/gpu: 0")
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_NotInjectedForCPUContainer(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "cpu-filter",
+					Image: "cpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("256Mi"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for CPU-only container")
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+
+	userPath := "/custom/lib:/usr/lib"
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+					Env: []corev1.EnvVar{
+						{Name: "LD_LIBRARY_PATH", Value: userPath},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	var ldLibVals []string
+	for _, e := range env {
+		if e.Name == "LD_LIBRARY_PATH" {
+			ldLibVals = append(ldLibVals, e.Value)
+		}
+	}
+	if len(ldLibVals) != 2 {
+		t.Fatalf("expected 2 LD_LIBRARY_PATH entries (default + user override), got %d: %v", len(ldLibVals), ldLibVals)
+	}
+	if ldLibVals[0] != nvidiaLibPath {
+		t.Errorf("first LD_LIBRARY_PATH should be default %q, got %q", nvidiaLibPath, ldLibVals[0])
+	}
+	if ldLibVals[1] != userPath {
+		t.Errorf("second LD_LIBRARY_PATH should be user override %q, got %q", userPath, ldLibVals[1])
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_PerContainerNotPod(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+				{
+					Name:  "cpu-sidecar",
+					Image: "cpu-sidecar:latest",
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	containers := deployment.Spec.Template.Spec.Containers
+
+	if len(containers) < 2 {
+		t.Fatalf("expected 2 containers, got %d", len(containers))
+	}
+
+	var gpuContainer, cpuContainer corev1.Container
+	for _, c := range containers {
+		switch c.Name {
+		case "gpu-filter":
+			gpuContainer = c
+		case "cpu-sidecar":
+			cpuContainer = c
+		}
+	}
+
+	if _, ok := findEnvVar(gpuContainer.Env, "LD_LIBRARY_PATH"); !ok {
+		t.Error("expected LD_LIBRARY_PATH on GPU container")
+	}
+	if _, ok := findEnvVar(cpuContainer.Env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT on CPU sidecar")
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_NilResources(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "nil-resources-filter", Image: "filter:latest", Resources: nil},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_EmptyResourceRequirements(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:      "empty-resources-filter",
+					Image:     "filter:latest",
+					Resources: &corev1.ResourceRequirements{},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_BothLimitsAndRequestsInjectsOnce(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits:   corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+						Requests: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	var count int
+	for _, e := range env {
+		if e.Name == "LD_LIBRARY_PATH" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 LD_LIBRARY_PATH entry when GPU is in both Limits and Requests, got %d", count)
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_ZeroLimitsNonZeroRequests(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits:   corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("0")},
+						Requests: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); !ok {
+		t.Error("expected LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_NegativeQuantityNotInjected(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "bad-filter",
+					Image: "filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("-1")},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_LargeGPUCount(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "multi-gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("8")},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+	ldLib, ok := findEnvVar(env, "LD_LIBRARY_PATH")
+	if !ok {
+		t.Fatal("expected LD_LIBRARY_PATH to be set for large GPU count")
+	}
+	if ldLib.Value != nvidiaLibPath {
+		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", nvidiaLibPath, ldLib.Value)
+	}
+}
+
+func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+					},
+					Env: []corev1.EnvVar{
+						{Name: "LD_LIBRARY_PATH", Value: ""},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	var ldLibVals []string
+	for _, e := range env {
+		if e.Name == "LD_LIBRARY_PATH" {
+			ldLibVals = append(ldLibVals, e.Value)
+		}
+	}
+	if len(ldLibVals) != 2 {
+		t.Fatalf("expected 2 LD_LIBRARY_PATH entries, got %d: %v", len(ldLibVals), ldLibVals)
+	}
+	if ldLibVals[0] != nvidiaLibPath {
+		t.Errorf("first entry should be default %q, got %q", nvidiaLibPath, ldLibVals[0])
+	}
+	if ldLibVals[1] != "" {
+		t.Errorf("second entry should be empty string (user override), got %q", ldLibVals[1])
+	}
+}
+
 func TestBuildStreamingDeployment_ImagePullSecrets_None(t *testing.T) {
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()

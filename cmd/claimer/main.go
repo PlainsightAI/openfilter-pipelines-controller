@@ -219,7 +219,8 @@ func getEnvOrDefault(key, defaultValue string) string {
 
 func createValkeyClient(cfg *Config) (valkey.Client, error) {
 	clientOpts := valkey.ClientOption{
-		InitAddress: []string{cfg.ValkeyURL},
+		InitAddress:  []string{cfg.ValkeyURL},
+		DisableCache: true, // ACL users don't have CLIENT TRACKING permission
 	}
 	if cfg.ValkeyUsername != "" {
 		clientOpts.Username = cfg.ValkeyUsername

@@ -478,18 +478,14 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))
 		containerEnv = append(containerEnv, configEnvVars...)
 
-		// Inject OPENFILTER_APPEND_LD_LIBRARY_PATH and OPENFILTER_APPEND_PATH for GPU containers.
-		// The OpenFilter runtime reads these env vars at startup and appends them to the existing
-		// LD_LIBRARY_PATH/PATH. This avoids overriding existing values set by the container image.
-		// When the respective path field is empty the injection is skipped entirely (e.g. on EKS
-		// where the NVIDIA container runtime handles this automatically).
-		// Injected before user env vars so users can override if needed.
+		// Inject GPU env vars before user env vars so users can override if needed.
+		// Skipped when the respective path field is empty (e.g. on EKS).
 		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
 			if r.GPULibraryPath != "" {
 				containerEnv = append(containerEnv,
-					corev1.EnvVar{Name: appendLdLibraryPathEnvName, Value: r.GPULibraryPath},
+					corev1.EnvVar{Name: ldLibraryPathEnvName, Value: r.GPULibraryPath},
 				)
-				log.V(1).Info("GPU resources detected, injecting OPENFILTER_APPEND_LD_LIBRARY_PATH", "filter", filter.Name, "value", r.GPULibraryPath)
+				log.V(1).Info("GPU resources detected, injecting LD_LIBRARY_PATH", "filter", filter.Name, "value", r.GPULibraryPath)
 			}
 			if r.GPUBinPath != "" {
 				containerEnv = append(containerEnv,
@@ -769,14 +765,10 @@ func resolveFailureReason(pod *corev1.Pod, startFailureReason, crashReason strin
 	return "Unknown"
 }
 
-// appendLdLibraryPathEnvName is the env var injected into GPU containers. The OpenFilter runtime
-// reads this at startup and appends it to the existing LD_LIBRARY_PATH, preserving any paths
-// already set by the container image.
-const appendLdLibraryPathEnvName = "OPENFILTER_APPEND_LD_LIBRARY_PATH"
+// ldLibraryPathEnvName is injected into GPU containers so they can find NVIDIA libraries.
+const ldLibraryPathEnvName = "LD_LIBRARY_PATH"
 
-// appendPathEnvName is the env var injected into GPU containers. The OpenFilter runtime reads
-// this at startup and appends it to the existing PATH, preserving any paths already set by the
-// container image.
+// appendPathEnvName is read by the OpenFilter runtime to append to the container's PATH.
 const appendPathEnvName = "OPENFILTER_APPEND_PATH"
 
 // containerResourcesRequireGPU returns true if the given resource requirements request a positive

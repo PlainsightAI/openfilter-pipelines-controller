@@ -388,12 +388,12 @@ func TestBuildJob_GPUEnvInjection_WithGPULimits(t *testing.T) {
 	}
 	env := containers[0].Env
 
-	ldLibPath, ok := findEnvVar(env, appendLdLibraryPathEnvName)
+	ldLibPath, ok := findEnvVar(env, ldLibraryPathEnvName)
 	if !ok {
-		t.Fatal("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be set for GPU container")
+		t.Fatal("expected LD_LIBRARY_PATH to be set for GPU container")
 	}
 	if ldLibPath.Value != testGPULibraryPath {
-		t.Errorf("expected OPENFILTER_APPEND_LD_LIBRARY_PATH=%q, got %q", testGPULibraryPath, ldLibPath.Value)
+		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", testGPULibraryPath, ldLibPath.Value)
 	}
 
 	pathVar, ok := findEnvVar(env, appendPathEnvName)
@@ -429,8 +429,8 @@ func TestBuildJob_GPUEnvInjection_WithGPURequests(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); !ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be set for GPU container with Requests")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
+		t.Error("expected LD_LIBRARY_PATH to be set for GPU container with Requests")
 	}
 }
 
@@ -459,8 +459,8 @@ func TestBuildJob_GPUEnvInjection_NotInjectedForCPUContainer(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be set for CPU-only container")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for CPU-only container")
 	}
 	if _, ok := findEnvVar(env, appendPathEnvName); ok {
 		t.Error("expected OPENFILTER_APPEND_PATH NOT to be set for CPU-only container")
@@ -491,8 +491,8 @@ func TestBuildJob_GPUEnvInjection_ZeroQuantityNotInjected(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be injected for nvidia.com/gpu: 0")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be injected for nvidia.com/gpu: 0")
 	}
 	if nodeSelector := job.Spec.Template.Spec.NodeSelector; nodeSelector != nil {
 		if _, ok := nodeSelector["cloud.google.com/gke-gpu-driver-version"]; ok {
@@ -520,8 +520,8 @@ func TestBuildJob_GPUEnvInjection_NotInjectedForNoResources(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be set for container with no resources")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for container with no resources")
 	}
 }
 
@@ -543,7 +543,7 @@ func TestBuildJob_GPUEnvInjection_UserCanOverride(t *testing.T) {
 						},
 					},
 					Env: []corev1.EnvVar{
-						{Name: appendLdLibraryPathEnvName, Value: userPath},
+						{Name: ldLibraryPathEnvName, Value: userPath},
 					},
 				},
 			},
@@ -557,18 +557,18 @@ func TestBuildJob_GPUEnvInjection_UserCanOverride(t *testing.T) {
 	// the user's value appears last so container runtime uses it.
 	var ldLibVals []string
 	for _, e := range env {
-		if e.Name == appendLdLibraryPathEnvName {
+		if e.Name == ldLibraryPathEnvName {
 			ldLibVals = append(ldLibVals, e.Value)
 		}
 	}
 	if len(ldLibVals) != 2 {
-		t.Fatalf("expected 2 OPENFILTER_APPEND_LD_LIBRARY_PATH entries (default + user override), got %d: %v", len(ldLibVals), ldLibVals)
+		t.Fatalf("expected 2 LD_LIBRARY_PATH entries (default + user override), got %d: %v", len(ldLibVals), ldLibVals)
 	}
 	if ldLibVals[0] != testGPULibraryPath {
-		t.Errorf("first OPENFILTER_APPEND_LD_LIBRARY_PATH should be default %q, got %q", testGPULibraryPath, ldLibVals[0])
+		t.Errorf("first LD_LIBRARY_PATH should be default %q, got %q", testGPULibraryPath, ldLibVals[0])
 	}
 	if ldLibVals[1] != userPath {
-		t.Errorf("second OPENFILTER_APPEND_LD_LIBRARY_PATH should be user override %q, got %q", userPath, ldLibVals[1])
+		t.Errorf("second LD_LIBRARY_PATH should be user override %q, got %q", userPath, ldLibVals[1])
 	}
 }
 
@@ -615,11 +615,11 @@ func TestBuildJob_GPUEnvInjection_PerContainerNotPod(t *testing.T) {
 		}
 	}
 
-	if _, ok := findEnvVar(gpuContainer.Env, appendLdLibraryPathEnvName); !ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH on GPU container")
+	if _, ok := findEnvVar(gpuContainer.Env, ldLibraryPathEnvName); !ok {
+		t.Error("expected LD_LIBRARY_PATH on GPU container")
 	}
-	if _, ok := findEnvVar(cpuContainer.Env, appendLdLibraryPathEnvName); ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT on CPU sidecar")
+	if _, ok := findEnvVar(cpuContainer.Env, ldLibraryPathEnvName); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT on CPU sidecar")
 	}
 }
 
@@ -638,8 +638,8 @@ func TestBuildJob_GPUEnvInjection_NilResources(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
 	}
 }
 
@@ -662,8 +662,8 @@ func TestBuildJob_GPUEnvInjection_EmptyResourceRequirements(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
 	}
 }
 
@@ -692,12 +692,12 @@ func TestBuildJob_GPUEnvInjection_BothLimitsAndRequestsInjectsOnce(t *testing.T)
 
 	var count int
 	for _, e := range env {
-		if e.Name == appendLdLibraryPathEnvName {
+		if e.Name == ldLibraryPathEnvName {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Errorf("expected exactly 1 OPENFILTER_APPEND_LD_LIBRARY_PATH entry when GPU is in both Limits and Requests, got %d", count)
+		t.Errorf("expected exactly 1 LD_LIBRARY_PATH entry when GPU is in both Limits and Requests, got %d", count)
 	}
 }
 
@@ -723,8 +723,8 @@ func TestBuildJob_GPUEnvInjection_ZeroLimitsNonZeroRequests(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); !ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
+		t.Error("expected LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
 	}
 }
 
@@ -750,8 +750,8 @@ func TestBuildJob_GPUEnvInjection_NonZeroLimitsZeroRequests(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); !ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be injected when Limits has positive GPU (Requests is zero)")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
+		t.Error("expected LD_LIBRARY_PATH to be injected when Limits has positive GPU (Requests is zero)")
 	}
 }
 
@@ -779,8 +779,8 @@ func TestBuildJob_GPUEnvInjection_NegativeQuantityNotInjected(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
-		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
+		t.Error("expected LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
 	}
 }
 
@@ -805,12 +805,12 @@ func TestBuildJob_GPUEnvInjection_LargeGPUCount(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	ldLib, ok := findEnvVar(env, appendLdLibraryPathEnvName)
+	ldLib, ok := findEnvVar(env, ldLibraryPathEnvName)
 	if !ok {
-		t.Fatal("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be set for large GPU count")
+		t.Fatal("expected LD_LIBRARY_PATH to be set for large GPU count")
 	}
 	if ldLib.Value != testGPULibraryPath {
-		t.Errorf("expected OPENFILTER_APPEND_LD_LIBRARY_PATH=%q, got %q", testGPULibraryPath, ldLib.Value)
+		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", testGPULibraryPath, ldLib.Value)
 	}
 }
 
@@ -829,7 +829,7 @@ func TestBuildJob_GPUEnvInjection_UserOverridesWithEmptyString(t *testing.T) {
 						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
 					},
 					Env: []corev1.EnvVar{
-						{Name: appendLdLibraryPathEnvName, Value: ""},
+						{Name: ldLibraryPathEnvName, Value: ""},
 					},
 				},
 			},
@@ -842,18 +842,18 @@ func TestBuildJob_GPUEnvInjection_UserOverridesWithEmptyString(t *testing.T) {
 	// Both entries present; user's empty-string override appears last.
 	var ldLibVals []string
 	for _, e := range env {
-		if e.Name == appendLdLibraryPathEnvName {
+		if e.Name == ldLibraryPathEnvName {
 			ldLibVals = append(ldLibVals, e.Value)
 		}
 	}
 	if len(ldLibVals) != 2 {
-		t.Fatalf("expected 2 OPENFILTER_APPEND_LD_LIBRARY_PATH entries, got %d: %v", len(ldLibVals), ldLibVals)
+		t.Fatalf("expected 2 LD_LIBRARY_PATH entries, got %d: %v", len(ldLibVals), ldLibVals)
 	}
 	if ldLibVals[0] != testGPULibraryPath {
-		t.Errorf("first OPENFILTER_APPEND_LD_LIBRARY_PATH should be default %q, got %q", testGPULibraryPath, ldLibVals[0])
+		t.Errorf("first LD_LIBRARY_PATH should be default %q, got %q", testGPULibraryPath, ldLibVals[0])
 	}
 	if ldLibVals[1] != "" {
-		t.Errorf("second OPENFILTER_APPEND_LD_LIBRARY_PATH should be empty string (user override), got %q", ldLibVals[1])
+		t.Errorf("second LD_LIBRARY_PATH should be empty string (user override), got %q", ldLibVals[1])
 	}
 }
 

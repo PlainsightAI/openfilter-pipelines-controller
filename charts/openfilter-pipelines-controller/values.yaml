@@ -138,12 +138,9 @@ volumeMounts: []
 # Leave empty to disable (no node selector is applied).
 gpuNodeSelector: ""
 
-# GPU library path: value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH into GPU containers.
-# The OpenFilter runtime reads this at startup and appends it to the existing LD_LIBRARY_PATH,
-# preserving paths set by the container image. In some Kubernetes environments (e.g. GKE) the
-# device plugin mounts libraries here but does not set LD_LIBRARY_PATH automatically.
-# Set to an empty string to disable injection entirely (e.g. on EKS, AKS, or bare metal
-# where the NVIDIA container runtime or driver installer sets LD_LIBRARY_PATH itself).
+# GPU library path: injected as LD_LIBRARY_PATH into GPU containers.
+# On GKE the device plugin mounts libraries here but does not set LD_LIBRARY_PATH.
+# Empty string disables injection (e.g. on EKS where the NVIDIA runtime handles it).
 gpuLibraryPath: "/usr/local/nvidia/lib64"
 
 # GPU bin path: value injected as OPENFILTER_APPEND_PATH into GPU containers so that nvidia-smi

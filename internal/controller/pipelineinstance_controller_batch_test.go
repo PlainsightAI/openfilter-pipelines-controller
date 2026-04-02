@@ -13,14 +13,18 @@ import (
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
 
-const expectedDriverVersion = "latest"
+const (
+	expectedDriverVersion = "latest"
+	testGPULibraryPath    = "/usr/local/nvidia/lib64"
+	testGPUBinPath        = "/usr/local/nvidia/bin"
+)
 
 func makeMinimalReconciler() *PipelineInstanceReconciler {
 	return &PipelineInstanceReconciler{
 		ClaimerImage:   "claimer:latest",
 		ValkeyAddr:     "valkey:6379",
-		GPULibraryPath: "/usr/local/nvidia/lib64",
-		GPUBinPath:     "/usr/local/nvidia/bin",
+		GPULibraryPath: testGPULibraryPath,
+		GPUBinPath:     testGPUBinPath,
 	}
 }
 
@@ -388,16 +392,16 @@ func TestBuildJob_GPUEnvInjection_WithGPULimits(t *testing.T) {
 	if !ok {
 		t.Fatal("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be set for GPU container")
 	}
-	if ldLibPath.Value != "/usr/local/nvidia/lib64" {
-		t.Errorf("expected OPENFILTER_APPEND_LD_LIBRARY_PATH=%q, got %q", "/usr/local/nvidia/lib64", ldLibPath.Value)
+	if ldLibPath.Value != testGPULibraryPath {
+		t.Errorf("expected OPENFILTER_APPEND_LD_LIBRARY_PATH=%q, got %q", testGPULibraryPath, ldLibPath.Value)
 	}
 
 	pathVar, ok := findEnvVar(env, appendPathEnvName)
 	if !ok {
 		t.Fatal("expected OPENFILTER_APPEND_PATH to be set for GPU container")
 	}
-	if pathVar.Value != "/usr/local/nvidia/bin" {
-		t.Errorf("expected OPENFILTER_APPEND_PATH=%q, got %q", "/usr/local/nvidia/bin", pathVar.Value)
+	if pathVar.Value != testGPUBinPath {
+		t.Errorf("expected OPENFILTER_APPEND_PATH=%q, got %q", testGPUBinPath, pathVar.Value)
 	}
 }
 
@@ -560,8 +564,8 @@ func TestBuildJob_GPUEnvInjection_UserCanOverride(t *testing.T) {
 	if len(ldLibVals) != 2 {
 		t.Fatalf("expected 2 OPENFILTER_APPEND_LD_LIBRARY_PATH entries (default + user override), got %d: %v", len(ldLibVals), ldLibVals)
 	}
-	if ldLibVals[0] != "/usr/local/nvidia/lib64" {
-		t.Errorf("first OPENFILTER_APPEND_LD_LIBRARY_PATH should be default %q, got %q", "/usr/local/nvidia/lib64", ldLibVals[0])
+	if ldLibVals[0] != testGPULibraryPath {
+		t.Errorf("first OPENFILTER_APPEND_LD_LIBRARY_PATH should be default %q, got %q", testGPULibraryPath, ldLibVals[0])
 	}
 	if ldLibVals[1] != userPath {
 		t.Errorf("second OPENFILTER_APPEND_LD_LIBRARY_PATH should be user override %q, got %q", userPath, ldLibVals[1])
@@ -805,8 +809,8 @@ func TestBuildJob_GPUEnvInjection_LargeGPUCount(t *testing.T) {
 	if !ok {
 		t.Fatal("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be set for large GPU count")
 	}
-	if ldLib.Value != "/usr/local/nvidia/lib64" {
-		t.Errorf("expected OPENFILTER_APPEND_LD_LIBRARY_PATH=%q, got %q", "/usr/local/nvidia/lib64", ldLib.Value)
+	if ldLib.Value != testGPULibraryPath {
+		t.Errorf("expected OPENFILTER_APPEND_LD_LIBRARY_PATH=%q, got %q", testGPULibraryPath, ldLib.Value)
 	}
 }
 
@@ -845,8 +849,8 @@ func TestBuildJob_GPUEnvInjection_UserOverridesWithEmptyString(t *testing.T) {
 	if len(ldLibVals) != 2 {
 		t.Fatalf("expected 2 OPENFILTER_APPEND_LD_LIBRARY_PATH entries, got %d: %v", len(ldLibVals), ldLibVals)
 	}
-	if ldLibVals[0] != "/usr/local/nvidia/lib64" {
-		t.Errorf("first OPENFILTER_APPEND_LD_LIBRARY_PATH should be default %q, got %q", "/usr/local/nvidia/lib64", ldLibVals[0])
+	if ldLibVals[0] != testGPULibraryPath {
+		t.Errorf("first OPENFILTER_APPEND_LD_LIBRARY_PATH should be default %q, got %q", testGPULibraryPath, ldLibVals[0])
 	}
 	if ldLibVals[1] != "" {
 		t.Errorf("second OPENFILTER_APPEND_LD_LIBRARY_PATH should be empty string (user override), got %q", ldLibVals[1])
@@ -881,8 +885,8 @@ func TestBuildJob_PATHInjection_GPUContainerGetsPATH(t *testing.T) {
 	if !ok {
 		t.Fatal("expected OPENFILTER_APPEND_PATH to be set for GPU container")
 	}
-	if pathVar.Value != "/usr/local/nvidia/bin" {
-		t.Errorf("expected OPENFILTER_APPEND_PATH=%q, got %q", "/usr/local/nvidia/bin", pathVar.Value)
+	if pathVar.Value != testGPUBinPath {
+		t.Errorf("expected OPENFILTER_APPEND_PATH=%q, got %q", testGPUBinPath, pathVar.Value)
 	}
 }
 
@@ -955,8 +959,8 @@ func TestBuildJob_PATHInjection_UserCanOverride(t *testing.T) {
 	if len(pathVals) != 2 {
 		t.Fatalf("expected 2 OPENFILTER_APPEND_PATH entries (default + user override), got %d: %v", len(pathVals), pathVals)
 	}
-	if pathVals[0] != "/usr/local/nvidia/bin" {
-		t.Errorf("first OPENFILTER_APPEND_PATH should be default %q, got %q", "/usr/local/nvidia/bin", pathVals[0])
+	if pathVals[0] != testGPUBinPath {
+		t.Errorf("first OPENFILTER_APPEND_PATH should be default %q, got %q", testGPUBinPath, pathVals[0])
 	}
 	if pathVals[1] != userBinPath {
 		t.Errorf("second OPENFILTER_APPEND_PATH should be user override %q, got %q", userBinPath, pathVals[1])

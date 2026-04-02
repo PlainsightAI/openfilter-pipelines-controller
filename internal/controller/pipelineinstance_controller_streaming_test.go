@@ -318,7 +318,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_BothLimitsAndRequests(t *testi
 }
 
 func TestBuildStreamingDeployment_GPUEnvInjection_WithGPULimits(t *testing.T) {
-	r := &PipelineInstanceReconciler{}
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
@@ -347,8 +347,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_WithGPULimits(t *testing.T) {
 	if !ok {
 		t.Fatal("expected LD_LIBRARY_PATH to be set for GPU container")
 	}
-	if ldLibPath.Value != nvidiaLibPath {
-		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", nvidiaLibPath, ldLibPath.Value)
+	if ldLibPath.Value != DefaultGPULibraryPath {
+		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", DefaultGPULibraryPath, ldLibPath.Value)
 	}
 
 	if _, ok := findEnvVar(env, "PATH"); ok {
@@ -412,7 +412,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NotInjectedForCPUContainer(t *
 }
 
 func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) {
-	r := &PipelineInstanceReconciler{}
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath}
 	pi := makeMinimalStreamingPipelineInstance()
 
 	userPath := "/custom/lib:/usr/lib"
@@ -447,8 +447,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) 
 	if len(ldLibVals) != 2 {
 		t.Fatalf("expected 2 LD_LIBRARY_PATH entries (default + user override), got %d: %v", len(ldLibVals), ldLibVals)
 	}
-	if ldLibVals[0] != nvidiaLibPath {
-		t.Errorf("first LD_LIBRARY_PATH should be default %q, got %q", nvidiaLibPath, ldLibVals[0])
+	if ldLibVals[0] != DefaultGPULibraryPath {
+		t.Errorf("first LD_LIBRARY_PATH should be default %q, got %q", DefaultGPULibraryPath, ldLibVals[0])
 	}
 	if ldLibVals[1] != userPath {
 		t.Errorf("second LD_LIBRARY_PATH should be user override %q, got %q", userPath, ldLibVals[1])
@@ -456,7 +456,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) 
 }
 
 func TestBuildStreamingDeployment_GPUEnvInjection_PerContainerNotPod(t *testing.T) {
-	r := &PipelineInstanceReconciler{}
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
@@ -544,7 +544,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_EmptyResourceRequirements(t *t
 }
 
 func TestBuildStreamingDeployment_GPUEnvInjection_BothLimitsAndRequestsInjectsOnce(t *testing.T) {
-	r := &PipelineInstanceReconciler{}
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
@@ -576,7 +576,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_BothLimitsAndRequestsInjectsOn
 }
 
 func TestBuildStreamingDeployment_GPUEnvInjection_ZeroLimitsNonZeroRequests(t *testing.T) {
-	r := &PipelineInstanceReconciler{}
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
@@ -625,7 +625,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NegativeQuantityNotInjected(t 
 }
 
 func TestBuildStreamingDeployment_GPUEnvInjection_LargeGPUCount(t *testing.T) {
-	r := &PipelineInstanceReconciler{}
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
@@ -647,13 +647,13 @@ func TestBuildStreamingDeployment_GPUEnvInjection_LargeGPUCount(t *testing.T) {
 	if !ok {
 		t.Fatal("expected LD_LIBRARY_PATH to be set for large GPU count")
 	}
-	if ldLib.Value != nvidiaLibPath {
-		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", nvidiaLibPath, ldLib.Value)
+	if ldLib.Value != DefaultGPULibraryPath {
+		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", DefaultGPULibraryPath, ldLib.Value)
 	}
 }
 
 func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t *testing.T) {
-	r := &PipelineInstanceReconciler{}
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
@@ -684,8 +684,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t
 	if len(ldLibVals) != 2 {
 		t.Fatalf("expected 2 LD_LIBRARY_PATH entries, got %d: %v", len(ldLibVals), ldLibVals)
 	}
-	if ldLibVals[0] != nvidiaLibPath {
-		t.Errorf("first entry should be default %q, got %q", nvidiaLibPath, ldLibVals[0])
+	if ldLibVals[0] != DefaultGPULibraryPath {
+		t.Errorf("first entry should be default %q, got %q", DefaultGPULibraryPath, ldLibVals[0])
 	}
 	if ldLibVals[1] != "" {
 		t.Errorf("second entry should be empty string (user override), got %q", ldLibVals[1])

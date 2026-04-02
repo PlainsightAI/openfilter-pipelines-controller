@@ -283,11 +283,13 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 		}
 
 		// Inject LD_LIBRARY_PATH for GPU containers so PyTorch can find libcuda.so.1.
-		// GKE's device plugin mounts libraries to /usr/local/nvidia/lib64 but does not set LD_LIBRARY_PATH.
+		// In some Kubernetes environments the device plugin mounts libraries but does not set
+		// LD_LIBRARY_PATH, so the controller injects it. When GPULibraryPath is empty the
+		// injection is skipped entirely (e.g. on EKS where the runtime handles this).
 		// Injected before user env vars so users can override if needed.
-		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
+		if r.GPULibraryPath != "" && filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
 			envVars = append(envVars,
-				corev1.EnvVar{Name: "LD_LIBRARY_PATH", Value: nvidiaLibPath},
+				corev1.EnvVar{Name: "LD_LIBRARY_PATH", Value: r.GPULibraryPath},
 			)
 		}
 

@@ -138,6 +138,13 @@ volumeMounts: []
 # Leave empty to disable (no node selector is applied).
 gpuNodeSelector: ""
 
+# GPU library path: path injected as LD_LIBRARY_PATH into GPU containers so the CUDA
+# runtime libraries can be found. In some Kubernetes environments (e.g. GKE) the device
+# plugin mounts libraries here but does not set LD_LIBRARY_PATH automatically.
+# Set to an empty string to disable injection entirely (e.g. on EKS, AKS, or bare metal
+# where the NVIDIA container runtime or driver installer sets LD_LIBRARY_PATH itself).
+gpuLibraryPath: "/usr/local/nvidia/lib64"
+
 # Environment variables
 env: []
 

@@ -383,7 +383,7 @@ func TestBuildJob_GPUEnvInjection_WithGPULimits(t *testing.T) {
 	}
 	env := containers[0].Env
 
-	ldLibPath, ok := findEnvVar(env, "LD_LIBRARY_PATH")
+	ldLibPath, ok := findEnvVar(env, ldLibraryPathEnvName)
 	if !ok {
 		t.Fatal("expected LD_LIBRARY_PATH to be set for GPU container")
 	}
@@ -420,7 +420,7 @@ func TestBuildJob_GPUEnvInjection_WithGPURequests(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); !ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
 		t.Error("expected LD_LIBRARY_PATH to be set for GPU container with Requests")
 	}
 }
@@ -450,7 +450,7 @@ func TestBuildJob_GPUEnvInjection_NotInjectedForCPUContainer(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for CPU-only container")
 	}
 	if _, ok := findEnvVar(env, "PATH"); ok {
@@ -482,7 +482,7 @@ func TestBuildJob_GPUEnvInjection_ZeroQuantityNotInjected(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be injected for nvidia.com/gpu: 0")
 	}
 	if nodeSelector := job.Spec.Template.Spec.NodeSelector; nodeSelector != nil {
@@ -511,7 +511,7 @@ func TestBuildJob_GPUEnvInjection_NotInjectedForNoResources(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for container with no resources")
 	}
 }
@@ -534,7 +534,7 @@ func TestBuildJob_GPUEnvInjection_UserCanOverride(t *testing.T) {
 						},
 					},
 					Env: []corev1.EnvVar{
-						{Name: "LD_LIBRARY_PATH", Value: userPath},
+						{Name: ldLibraryPathEnvName, Value: userPath},
 					},
 				},
 			},
@@ -548,7 +548,7 @@ func TestBuildJob_GPUEnvInjection_UserCanOverride(t *testing.T) {
 	// the user's value appears last so container runtime uses it.
 	var ldLibVals []string
 	for _, e := range env {
-		if e.Name == "LD_LIBRARY_PATH" {
+		if e.Name == ldLibraryPathEnvName {
 			ldLibVals = append(ldLibVals, e.Value)
 		}
 	}
@@ -606,10 +606,10 @@ func TestBuildJob_GPUEnvInjection_PerContainerNotPod(t *testing.T) {
 		}
 	}
 
-	if _, ok := findEnvVar(gpuContainer.Env, "LD_LIBRARY_PATH"); !ok {
+	if _, ok := findEnvVar(gpuContainer.Env, ldLibraryPathEnvName); !ok {
 		t.Error("expected LD_LIBRARY_PATH on GPU container")
 	}
-	if _, ok := findEnvVar(cpuContainer.Env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(cpuContainer.Env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT on CPU sidecar")
 	}
 }
@@ -629,7 +629,7 @@ func TestBuildJob_GPUEnvInjection_NilResources(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
 	}
 }
@@ -653,7 +653,7 @@ func TestBuildJob_GPUEnvInjection_EmptyResourceRequirements(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
 	}
 }
@@ -683,7 +683,7 @@ func TestBuildJob_GPUEnvInjection_BothLimitsAndRequestsInjectsOnce(t *testing.T)
 
 	var count int
 	for _, e := range env {
-		if e.Name == "LD_LIBRARY_PATH" {
+		if e.Name == ldLibraryPathEnvName {
 			count++
 		}
 	}
@@ -714,7 +714,7 @@ func TestBuildJob_GPUEnvInjection_ZeroLimitsNonZeroRequests(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); !ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
 		t.Error("expected LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
 	}
 }
@@ -741,7 +741,7 @@ func TestBuildJob_GPUEnvInjection_NonZeroLimitsZeroRequests(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); !ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
 		t.Error("expected LD_LIBRARY_PATH to be injected when Limits has positive GPU (Requests is zero)")
 	}
 }
@@ -770,7 +770,7 @@ func TestBuildJob_GPUEnvInjection_NegativeQuantityNotInjected(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
 	}
 }
@@ -796,7 +796,7 @@ func TestBuildJob_GPUEnvInjection_LargeGPUCount(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
-	ldLib, ok := findEnvVar(env, "LD_LIBRARY_PATH")
+	ldLib, ok := findEnvVar(env, ldLibraryPathEnvName)
 	if !ok {
 		t.Fatal("expected LD_LIBRARY_PATH to be set for large GPU count")
 	}
@@ -820,7 +820,7 @@ func TestBuildJob_GPUEnvInjection_UserOverridesWithEmptyString(t *testing.T) {
 						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
 					},
 					Env: []corev1.EnvVar{
-						{Name: "LD_LIBRARY_PATH", Value: ""},
+						{Name: ldLibraryPathEnvName, Value: ""},
 					},
 				},
 			},
@@ -833,7 +833,7 @@ func TestBuildJob_GPUEnvInjection_UserOverridesWithEmptyString(t *testing.T) {
 	// Both entries present; user's empty-string override appears last.
 	var ldLibVals []string
 	for _, e := range env {
-		if e.Name == "LD_LIBRARY_PATH" {
+		if e.Name == ldLibraryPathEnvName {
 			ldLibVals = append(ldLibVals, e.Value)
 		}
 	}
@@ -1012,4 +1012,3 @@ func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
 	}
 	t.Error("expected STREAM env var in claimer, not found")
 }
-

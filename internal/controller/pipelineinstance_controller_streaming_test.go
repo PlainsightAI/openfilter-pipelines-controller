@@ -343,7 +343,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_WithGPULimits(t *testing.T) {
 	}
 	env := containers[0].Env
 
-	ldLibPath, ok := findEnvVar(env, "LD_LIBRARY_PATH")
+	ldLibPath, ok := findEnvVar(env, ldLibraryPathEnvName)
 	if !ok {
 		t.Fatal("expected LD_LIBRARY_PATH to be set for GPU container")
 	}
@@ -378,7 +378,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_ZeroQuantityNotInjected(t *tes
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be injected for nvidia.com/gpu: 0")
 	}
 }
@@ -406,7 +406,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NotInjectedForCPUContainer(t *
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for CPU-only container")
 	}
 }
@@ -428,7 +428,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) 
 						},
 					},
 					Env: []corev1.EnvVar{
-						{Name: "LD_LIBRARY_PATH", Value: userPath},
+						{Name: ldLibraryPathEnvName, Value: userPath},
 					},
 				},
 			},
@@ -440,7 +440,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) 
 
 	var ldLibVals []string
 	for _, e := range env {
-		if e.Name == "LD_LIBRARY_PATH" {
+		if e.Name == ldLibraryPathEnvName {
 			ldLibVals = append(ldLibVals, e.Value)
 		}
 	}
@@ -495,10 +495,10 @@ func TestBuildStreamingDeployment_GPUEnvInjection_PerContainerNotPod(t *testing.
 		}
 	}
 
-	if _, ok := findEnvVar(gpuContainer.Env, "LD_LIBRARY_PATH"); !ok {
+	if _, ok := findEnvVar(gpuContainer.Env, ldLibraryPathEnvName); !ok {
 		t.Error("expected LD_LIBRARY_PATH on GPU container")
 	}
-	if _, ok := findEnvVar(cpuContainer.Env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(cpuContainer.Env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT on CPU sidecar")
 	}
 }
@@ -516,7 +516,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NilResources(t *testing.T) {
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
 	}
 }
@@ -538,7 +538,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_EmptyResourceRequirements(t *t
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
 	}
 }
@@ -566,7 +566,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_BothLimitsAndRequestsInjectsOn
 
 	var count int
 	for _, e := range env {
-		if e.Name == "LD_LIBRARY_PATH" {
+		if e.Name == ldLibraryPathEnvName {
 			count++
 		}
 	}
@@ -595,7 +595,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_ZeroLimitsNonZeroRequests(t *t
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); !ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
 		t.Error("expected LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
 	}
 }
@@ -619,7 +619,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NegativeQuantityNotInjected(t 
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, "LD_LIBRARY_PATH"); ok {
+	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
 	}
 }
@@ -643,7 +643,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_LargeGPUCount(t *testing.T) {
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	ldLib, ok := findEnvVar(env, "LD_LIBRARY_PATH")
+	ldLib, ok := findEnvVar(env, ldLibraryPathEnvName)
 	if !ok {
 		t.Fatal("expected LD_LIBRARY_PATH to be set for large GPU count")
 	}
@@ -665,7 +665,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t
 						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
 					},
 					Env: []corev1.EnvVar{
-						{Name: "LD_LIBRARY_PATH", Value: ""},
+						{Name: ldLibraryPathEnvName, Value: ""},
 					},
 				},
 			},
@@ -677,7 +677,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t
 
 	var ldLibVals []string
 	for _, e := range env {
-		if e.Name == "LD_LIBRARY_PATH" {
+		if e.Name == ldLibraryPathEnvName {
 			ldLibVals = append(ldLibVals, e.Value)
 		}
 	}

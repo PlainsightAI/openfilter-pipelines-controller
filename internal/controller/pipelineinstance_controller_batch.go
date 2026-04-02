@@ -767,6 +767,9 @@ func resolveFailureReason(pod *corev1.Pod, startFailureReason, crashReason strin
 // NVIDIA container runtime injects the path itself).
 const DefaultGPULibraryPath = "/usr/local/nvidia/lib64"
 
+// ldLibraryPathEnvName is the environment variable name used to set the GPU library search path.
+const ldLibraryPathEnvName = "LD_LIBRARY_PATH"
+
 // containerResourcesRequireGPU returns true if the given resource requirements request a positive
 // quantity of nvidia.com/gpu. Zero and negative quantities return false.
 func containerResourcesRequireGPU(resources corev1.ResourceRequirements) bool {

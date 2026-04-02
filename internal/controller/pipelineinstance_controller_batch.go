@@ -769,19 +769,6 @@ func resolveFailureReason(pod *corev1.Pod, startFailureReason, crashReason strin
 	return "Unknown"
 }
 
-// DefaultGPULibraryPath is the value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH for GPU
-// containers when no explicit value is configured. This default suits environments (e.g. GKE)
-// where the device plugin mounts libraries here but does not set LD_LIBRARY_PATH automatically.
-// Set GPULibraryPath to an empty string to disable injection entirely (e.g. on EKS, where the
-// NVIDIA container runtime injects the path itself).
-const DefaultGPULibraryPath = "/usr/local/nvidia/lib64"
-
-// DefaultGPUBinPath is the value injected as OPENFILTER_APPEND_PATH for GPU containers so that
-// nvidia-smi (used by OpenFilter for GPU utilization monitoring) is accessible. The NVIDIA device
-// plugin mounts binaries under /usr/local/nvidia/bin but does not update PATH. Set GPUBinPath to
-// an empty string to disable injection entirely.
-const DefaultGPUBinPath = "/usr/local/nvidia/bin"
-
 // appendLdLibraryPathEnvName is the env var injected into GPU containers. The OpenFilter runtime
 // reads this at startup and appends it to the existing LD_LIBRARY_PATH, preserving any paths
 // already set by the container image.

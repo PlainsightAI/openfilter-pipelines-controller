@@ -118,7 +118,7 @@ func main() {
 			"'default' driver version (which may not support newer CUDA versions). "+
 			"Can also be set via GPU_NODE_SELECTOR env var.")
 	flag.StringVar(&gpuLibraryPath, "gpu-library-path",
-		getEnvOrDefault("GPU_LIBRARY_PATH", controller.DefaultGPULibraryPath),
+		getEnvOrDefault("GPU_LIBRARY_PATH", ""),
 		"Value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH into GPU containers. The OpenFilter runtime "+
 			"appends this to the existing LD_LIBRARY_PATH at startup, preserving image-set paths. "+
 			"In some Kubernetes environments (e.g. GKE) the device plugin mounts libraries but does not "+
@@ -127,7 +127,7 @@ func main() {
 			"runtime handles LD_LIBRARY_PATH automatically). "+
 			"Can also be set via GPU_LIBRARY_PATH env var.")
 	flag.StringVar(&gpuBinPath, "gpu-bin-path",
-		getEnvOrDefault("GPU_BIN_PATH", controller.DefaultGPUBinPath),
+		getEnvOrDefault("GPU_BIN_PATH", ""),
 		"Value injected as OPENFILTER_APPEND_PATH into GPU containers so that nvidia-smi (used by "+
 			"OpenFilter for GPU utilization monitoring) is accessible. The OpenFilter runtime appends "+
 			"this to the existing PATH at startup, preserving image-set paths. "+

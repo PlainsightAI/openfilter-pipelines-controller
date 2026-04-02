@@ -123,10 +123,14 @@ spec:
             - name: GPU_NODE_SELECTOR
               value: {{ .Values.gpuNodeSelector | quote }}
             {{- end }}
+            {{- if .Values.gpuLibraryPath }}
             - name: GPU_LIBRARY_PATH
               value: {{ .Values.gpuLibraryPath | quote }}
+            {{- end }}
+            {{- if .Values.gpuBinPath }}
             - name: GPU_BIN_PATH
               value: {{ .Values.gpuBinPath | quote }}
+            {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

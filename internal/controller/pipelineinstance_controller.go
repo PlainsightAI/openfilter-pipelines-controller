@@ -99,6 +99,8 @@ type PipelineInstanceReconciler struct {
 	ValkeyNSSecretName    string            // Name of the per-namespace Valkey credentials secret (default: valkey-ns-credentials)
 	ClaimerImage          string            // Image for the claimer init container
 	GPUNodeSelectorLabels map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
+	GPULibraryPath        string            // Value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH for GPU containers; empty string disables injection
+	GPUBinPath            string            // Value injected as OPENFILTER_APPEND_PATH for GPU containers; empty string disables injection
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete

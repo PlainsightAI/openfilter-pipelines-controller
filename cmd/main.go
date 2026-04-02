@@ -95,6 +95,8 @@ func main() {
 	var valkeyNSSecretName string
 	var claimerImage string
 	var gpuNodeSelector string
+	var gpuLibraryPath string
+	var gpuBinPath string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -115,6 +117,22 @@ func main() {
 			"(e.g. 'cloud.google.com/gke-gpu-driver-version=latest'). When not set, GKE defaults to "+
 			"'default' driver version (which may not support newer CUDA versions). "+
 			"Can also be set via GPU_NODE_SELECTOR env var.")
+	flag.StringVar(&gpuLibraryPath, "gpu-library-path",
+		getEnvOrDefault("GPU_LIBRARY_PATH", ""),
+		"Value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH into GPU containers. The OpenFilter runtime "+
+			"appends this to the existing LD_LIBRARY_PATH at startup, preserving image-set paths. "+
+			"In some Kubernetes environments (e.g. GKE) the device plugin mounts libraries but does not "+
+			"set LD_LIBRARY_PATH; set this to the correct mount path for your environment. "+
+			"Set to an empty string to disable injection entirely (e.g. on EKS where the NVIDIA container "+
+			"runtime handles LD_LIBRARY_PATH automatically). "+
+			"Can also be set via GPU_LIBRARY_PATH env var.")
+	flag.StringVar(&gpuBinPath, "gpu-bin-path",
+		getEnvOrDefault("GPU_BIN_PATH", ""),
+		"Value injected as OPENFILTER_APPEND_PATH into GPU containers so that nvidia-smi (used by "+
+			"OpenFilter for GPU utilization monitoring) is accessible. The OpenFilter runtime appends "+
+			"this to the existing PATH at startup, preserving image-set paths. "+
+			"Set to an empty string to disable injection entirely. "+
+			"Can also be set via GPU_BIN_PATH env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -257,6 +275,8 @@ func main() {
 		ValkeyNSSecretName:    valkeyNSSecretName,
 		ClaimerImage:          claimerImage,
 		GPUNodeSelectorLabels: parseNodeSelectorLabels(gpuNodeSelector),
+		GPULibraryPath:        gpuLibraryPath,
+		GPUBinPath:            gpuBinPath,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")
 		os.Exit(1)

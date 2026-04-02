@@ -343,20 +343,20 @@ func TestBuildStreamingDeployment_GPUEnvInjection_WithGPULimits(t *testing.T) {
 	}
 	env := containers[0].Env
 
-	ldLibPath, ok := findEnvVar(env, ldLibraryPathEnvName)
+	ldLibPath, ok := findEnvVar(env, appendLdLibraryPathEnvName)
 	if !ok {
-		t.Fatal("expected LD_LIBRARY_PATH to be set for GPU container")
+		t.Fatal("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be set for GPU container")
 	}
 	if ldLibPath.Value != DefaultGPULibraryPath {
-		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", DefaultGPULibraryPath, ldLibPath.Value)
+		t.Errorf("expected OPENFILTER_APPEND_LD_LIBRARY_PATH=%q, got %q", DefaultGPULibraryPath, ldLibPath.Value)
 	}
 
-	pathVar, ok := findEnvVar(env, pathEnvName)
+	pathVar, ok := findEnvVar(env, appendPathEnvName)
 	if !ok {
-		t.Fatal("expected PATH to be set for GPU container")
+		t.Fatal("expected OPENFILTER_APPEND_PATH to be set for GPU container")
 	}
 	if pathVar.Value != DefaultGPUBinPath {
-		t.Errorf("expected PATH=%q, got %q", DefaultGPUBinPath, pathVar.Value)
+		t.Errorf("expected OPENFILTER_APPEND_PATH=%q, got %q", DefaultGPUBinPath, pathVar.Value)
 	}
 }
 
@@ -382,8 +382,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_ZeroQuantityNotInjected(t *tes
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
-	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
-		t.Error("expected LD_LIBRARY_PATH NOT to be injected for nvidia.com/gpu: 0")
+	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
+		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be injected for nvidia.com/gpu: 0")
 	}
 }
 
@@ -410,8 +410,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NotInjectedForCPUContainer(t *
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
-	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
-		t.Error("expected LD_LIBRARY_PATH NOT to be set for CPU-only container")
+	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
+		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be set for CPU-only container")
 	}
 }
 
@@ -432,7 +432,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) 
 						},
 					},
 					Env: []corev1.EnvVar{
-						{Name: ldLibraryPathEnvName, Value: userPath},
+						{Name: appendLdLibraryPathEnvName, Value: userPath},
 					},
 				},
 			},
@@ -444,18 +444,18 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) 
 
 	var ldLibVals []string
 	for _, e := range env {
-		if e.Name == ldLibraryPathEnvName {
+		if e.Name == appendLdLibraryPathEnvName {
 			ldLibVals = append(ldLibVals, e.Value)
 		}
 	}
 	if len(ldLibVals) != 2 {
-		t.Fatalf("expected 2 LD_LIBRARY_PATH entries (default + user override), got %d: %v", len(ldLibVals), ldLibVals)
+		t.Fatalf("expected 2 OPENFILTER_APPEND_LD_LIBRARY_PATH entries (default + user override), got %d: %v", len(ldLibVals), ldLibVals)
 	}
 	if ldLibVals[0] != DefaultGPULibraryPath {
-		t.Errorf("first LD_LIBRARY_PATH should be default %q, got %q", DefaultGPULibraryPath, ldLibVals[0])
+		t.Errorf("first OPENFILTER_APPEND_LD_LIBRARY_PATH should be default %q, got %q", DefaultGPULibraryPath, ldLibVals[0])
 	}
 	if ldLibVals[1] != userPath {
-		t.Errorf("second LD_LIBRARY_PATH should be user override %q, got %q", userPath, ldLibVals[1])
+		t.Errorf("second OPENFILTER_APPEND_LD_LIBRARY_PATH should be user override %q, got %q", userPath, ldLibVals[1])
 	}
 }
 
@@ -499,11 +499,11 @@ func TestBuildStreamingDeployment_GPUEnvInjection_PerContainerNotPod(t *testing.
 		}
 	}
 
-	if _, ok := findEnvVar(gpuContainer.Env, ldLibraryPathEnvName); !ok {
-		t.Error("expected LD_LIBRARY_PATH on GPU container")
+	if _, ok := findEnvVar(gpuContainer.Env, appendLdLibraryPathEnvName); !ok {
+		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH on GPU container")
 	}
-	if _, ok := findEnvVar(cpuContainer.Env, ldLibraryPathEnvName); ok {
-		t.Error("expected LD_LIBRARY_PATH NOT on CPU sidecar")
+	if _, ok := findEnvVar(cpuContainer.Env, appendLdLibraryPathEnvName); ok {
+		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT on CPU sidecar")
 	}
 }
 
@@ -520,8 +520,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NilResources(t *testing.T) {
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
-		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
+	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
+		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
 	}
 }
 
@@ -542,8 +542,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_EmptyResourceRequirements(t *t
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
-		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
+	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
+		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
 	}
 }
 
@@ -570,12 +570,12 @@ func TestBuildStreamingDeployment_GPUEnvInjection_BothLimitsAndRequestsInjectsOn
 
 	var count int
 	for _, e := range env {
-		if e.Name == ldLibraryPathEnvName {
+		if e.Name == appendLdLibraryPathEnvName {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Errorf("expected exactly 1 LD_LIBRARY_PATH entry when GPU is in both Limits and Requests, got %d", count)
+		t.Errorf("expected exactly 1 OPENFILTER_APPEND_LD_LIBRARY_PATH entry when GPU is in both Limits and Requests, got %d", count)
 	}
 }
 
@@ -599,8 +599,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_ZeroLimitsNonZeroRequests(t *t
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
-		t.Error("expected LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
+	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); !ok {
+		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
 	}
 }
 
@@ -623,8 +623,8 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NegativeQuantityNotInjected(t 
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
-		t.Error("expected LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
+	if _, ok := findEnvVar(env, appendLdLibraryPathEnvName); ok {
+		t.Error("expected OPENFILTER_APPEND_LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
 	}
 }
 
@@ -647,12 +647,12 @@ func TestBuildStreamingDeployment_GPUEnvInjection_LargeGPUCount(t *testing.T) {
 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
-	ldLib, ok := findEnvVar(env, ldLibraryPathEnvName)
+	ldLib, ok := findEnvVar(env, appendLdLibraryPathEnvName)
 	if !ok {
-		t.Fatal("expected LD_LIBRARY_PATH to be set for large GPU count")
+		t.Fatal("expected OPENFILTER_APPEND_LD_LIBRARY_PATH to be set for large GPU count")
 	}
 	if ldLib.Value != DefaultGPULibraryPath {
-		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", DefaultGPULibraryPath, ldLib.Value)
+		t.Errorf("expected OPENFILTER_APPEND_LD_LIBRARY_PATH=%q, got %q", DefaultGPULibraryPath, ldLib.Value)
 	}
 }
 
@@ -669,7 +669,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t
 						Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
 					},
 					Env: []corev1.EnvVar{
-						{Name: ldLibraryPathEnvName, Value: ""},
+						{Name: appendLdLibraryPathEnvName, Value: ""},
 					},
 				},
 			},
@@ -681,12 +681,12 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t
 
 	var ldLibVals []string
 	for _, e := range env {
-		if e.Name == ldLibraryPathEnvName {
+		if e.Name == appendLdLibraryPathEnvName {
 			ldLibVals = append(ldLibVals, e.Value)
 		}
 	}
 	if len(ldLibVals) != 2 {
-		t.Fatalf("expected 2 LD_LIBRARY_PATH entries, got %d: %v", len(ldLibVals), ldLibVals)
+		t.Fatalf("expected 2 OPENFILTER_APPEND_LD_LIBRARY_PATH entries, got %d: %v", len(ldLibVals), ldLibVals)
 	}
 	if ldLibVals[0] != DefaultGPULibraryPath {
 		t.Errorf("first entry should be default %q, got %q", DefaultGPULibraryPath, ldLibVals[0])
@@ -718,12 +718,12 @@ func TestBuildStreamingDeployment_PATHInjection_GPUContainerGetsPATH(t *testing.
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
-	pathVar, ok := findEnvVar(env, pathEnvName)
+	pathVar, ok := findEnvVar(env, appendPathEnvName)
 	if !ok {
-		t.Fatal("expected PATH to be set for GPU container")
+		t.Fatal("expected OPENFILTER_APPEND_PATH to be set for GPU container")
 	}
 	if pathVar.Value != DefaultGPUBinPath {
-		t.Errorf("expected PATH=%q, got %q", DefaultGPUBinPath, pathVar.Value)
+		t.Errorf("expected OPENFILTER_APPEND_PATH=%q, got %q", DefaultGPUBinPath, pathVar.Value)
 	}
 }
 
@@ -750,8 +750,8 @@ func TestBuildStreamingDeployment_PATHInjection_CPUContainerDoesNotGetPATH(t *te
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
-	if _, ok := findEnvVar(env, pathEnvName); ok {
-		t.Error("expected PATH NOT to be set for CPU-only container")
+	if _, ok := findEnvVar(env, appendPathEnvName); ok {
+		t.Error("expected OPENFILTER_APPEND_PATH NOT to be set for CPU-only container")
 	}
 }
 
@@ -772,7 +772,7 @@ func TestBuildStreamingDeployment_PATHInjection_UserCanOverride(t *testing.T) {
 						},
 					},
 					Env: []corev1.EnvVar{
-						{Name: pathEnvName, Value: userBinPath},
+						{Name: appendPathEnvName, Value: userBinPath},
 					},
 				},
 			},
@@ -784,18 +784,18 @@ func TestBuildStreamingDeployment_PATHInjection_UserCanOverride(t *testing.T) {
 
 	var pathVals []string
 	for _, e := range env {
-		if e.Name == pathEnvName {
+		if e.Name == appendPathEnvName {
 			pathVals = append(pathVals, e.Value)
 		}
 	}
 	if len(pathVals) != 2 {
-		t.Fatalf("expected 2 PATH entries (default + user override), got %d: %v", len(pathVals), pathVals)
+		t.Fatalf("expected 2 OPENFILTER_APPEND_PATH entries (default + user override), got %d: %v", len(pathVals), pathVals)
 	}
 	if pathVals[0] != DefaultGPUBinPath {
-		t.Errorf("first PATH should be default %q, got %q", DefaultGPUBinPath, pathVals[0])
+		t.Errorf("first OPENFILTER_APPEND_PATH should be default %q, got %q", DefaultGPUBinPath, pathVals[0])
 	}
 	if pathVals[1] != userBinPath {
-		t.Errorf("second PATH should be user override %q, got %q", userBinPath, pathVals[1])
+		t.Errorf("second OPENFILTER_APPEND_PATH should be user override %q, got %q", userBinPath, pathVals[1])
 	}
 }
 
@@ -821,8 +821,8 @@ func TestBuildStreamingDeployment_PATHInjection_EmptyGPUBinPathSkipsInjection(t 
 	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
-	if _, ok := findEnvVar(env, pathEnvName); ok {
-		t.Error("expected PATH NOT to be injected when GPUBinPath is empty")
+	if _, ok := findEnvVar(env, appendPathEnvName); ok {
+		t.Error("expected OPENFILTER_APPEND_PATH NOT to be injected when GPUBinPath is empty")
 	}
 }
 

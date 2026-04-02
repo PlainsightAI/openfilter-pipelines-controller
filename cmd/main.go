@@ -119,7 +119,8 @@ func main() {
 			"Can also be set via GPU_NODE_SELECTOR env var.")
 	flag.StringVar(&gpuLibraryPath, "gpu-library-path",
 		getEnvOrDefault("GPU_LIBRARY_PATH", controller.DefaultGPULibraryPath),
-		"Path injected as LD_LIBRARY_PATH into GPU containers so the CUDA runtime libraries can be found. "+
+		"Value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH into GPU containers. The OpenFilter runtime "+
+			"appends this to the existing LD_LIBRARY_PATH at startup, preserving image-set paths. "+
 			"In some Kubernetes environments (e.g. GKE) the device plugin mounts libraries but does not "+
 			"set LD_LIBRARY_PATH; set this to the correct mount path for your environment. "+
 			"Set to an empty string to disable injection entirely (e.g. on EKS where the NVIDIA container "+
@@ -127,9 +128,10 @@ func main() {
 			"Can also be set via GPU_LIBRARY_PATH env var.")
 	flag.StringVar(&gpuBinPath, "gpu-bin-path",
 		getEnvOrDefault("GPU_BIN_PATH", controller.DefaultGPUBinPath),
-		"PATH injected into GPU containers so that nvidia-smi (used by OpenFilter for GPU utilization "+
-			"monitoring) is accessible. The NVIDIA device plugin mounts binaries under /usr/local/nvidia/bin "+
-			"but does not update PATH. Set to an empty string to disable injection entirely. "+
+		"Value injected as OPENFILTER_APPEND_PATH into GPU containers so that nvidia-smi (used by "+
+			"OpenFilter for GPU utilization monitoring) is accessible. The OpenFilter runtime appends "+
+			"this to the existing PATH at startup, preserving image-set paths. "+
+			"Set to an empty string to disable injection entirely. "+
 			"Can also be set via GPU_BIN_PATH env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,

@@ -478,25 +478,24 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))
 		containerEnv = append(containerEnv, configEnvVars...)
 
-		// Inject LD_LIBRARY_PATH and PATH for GPU containers so PyTorch can find libcuda.so.1
-		// and nvidia-smi is accessible for GPU utilization monitoring.
-		// In some Kubernetes environments the device plugin mounts libraries and binaries but
-		// does not update LD_LIBRARY_PATH or PATH, so the controller injects them. When the
-		// respective path field is empty the injection is skipped entirely (e.g. on EKS where
-		// the NVIDIA container runtime handles this automatically).
+		// Inject OPENFILTER_APPEND_LD_LIBRARY_PATH and OPENFILTER_APPEND_PATH for GPU containers.
+		// The OpenFilter runtime reads these env vars at startup and appends them to the existing
+		// LD_LIBRARY_PATH/PATH. This avoids overriding existing values set by the container image.
+		// When the respective path field is empty the injection is skipped entirely (e.g. on EKS
+		// where the NVIDIA container runtime handles this automatically).
 		// Injected before user env vars so users can override if needed.
 		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
 			if r.GPULibraryPath != "" {
 				containerEnv = append(containerEnv,
-					corev1.EnvVar{Name: ldLibraryPathEnvName, Value: r.GPULibraryPath},
+					corev1.EnvVar{Name: appendLdLibraryPathEnvName, Value: r.GPULibraryPath},
 				)
-				log.V(1).Info("GPU resources detected, injecting LD_LIBRARY_PATH", "filter", filter.Name, "value", r.GPULibraryPath)
+				log.V(1).Info("GPU resources detected, injecting OPENFILTER_APPEND_LD_LIBRARY_PATH", "filter", filter.Name, "value", r.GPULibraryPath)
 			}
 			if r.GPUBinPath != "" {
 				containerEnv = append(containerEnv,
-					corev1.EnvVar{Name: pathEnvName, Value: r.GPUBinPath},
+					corev1.EnvVar{Name: appendPathEnvName, Value: r.GPUBinPath},
 				)
-				log.V(1).Info("GPU resources detected, injecting PATH", "filter", filter.Name, "value", r.GPUBinPath)
+				log.V(1).Info("GPU resources detected, injecting OPENFILTER_APPEND_PATH", "filter", filter.Name, "value", r.GPUBinPath)
 			}
 		}
 
@@ -770,25 +769,28 @@ func resolveFailureReason(pod *corev1.Pod, startFailureReason, crashReason strin
 	return "Unknown"
 }
 
-// DefaultGPULibraryPath is the path injected as LD_LIBRARY_PATH for GPU containers when no
-// explicit value is configured. This default suits environments (e.g. GKE) where the device
-// plugin mounts libraries here but does not set LD_LIBRARY_PATH automatically. Set
-// GPULibraryPath to an empty string to disable injection entirely (e.g. on EKS, where the
+// DefaultGPULibraryPath is the value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH for GPU
+// containers when no explicit value is configured. This default suits environments (e.g. GKE)
+// where the device plugin mounts libraries here but does not set LD_LIBRARY_PATH automatically.
+// Set GPULibraryPath to an empty string to disable injection entirely (e.g. on EKS, where the
 // NVIDIA container runtime injects the path itself).
 const DefaultGPULibraryPath = "/usr/local/nvidia/lib64"
 
-// DefaultGPUBinPath is the PATH injected for GPU containers so that nvidia-smi (used by
-// OpenFilter for GPU utilization monitoring) is accessible. The NVIDIA device plugin mounts
-// binaries under /usr/local/nvidia/bin but does not update PATH. The remaining components
-// are the standard Debian/Ubuntu PATH as used by python:3.x-slim (the base for OpenFilter
-// filter images). Set GPUBinPath to an empty string to disable injection entirely.
-const DefaultGPUBinPath = "/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+// DefaultGPUBinPath is the value injected as OPENFILTER_APPEND_PATH for GPU containers so that
+// nvidia-smi (used by OpenFilter for GPU utilization monitoring) is accessible. The NVIDIA device
+// plugin mounts binaries under /usr/local/nvidia/bin but does not update PATH. Set GPUBinPath to
+// an empty string to disable injection entirely.
+const DefaultGPUBinPath = "/usr/local/nvidia/bin"
 
-// ldLibraryPathEnvName is the environment variable name used to set the GPU library search path.
-const ldLibraryPathEnvName = "LD_LIBRARY_PATH"
+// appendLdLibraryPathEnvName is the env var injected into GPU containers. The OpenFilter runtime
+// reads this at startup and appends it to the existing LD_LIBRARY_PATH, preserving any paths
+// already set by the container image.
+const appendLdLibraryPathEnvName = "OPENFILTER_APPEND_LD_LIBRARY_PATH"
 
-// pathEnvName is the environment variable name used to set the executable search path.
-const pathEnvName = "PATH"
+// appendPathEnvName is the env var injected into GPU containers. The OpenFilter runtime reads
+// this at startup and appends it to the existing PATH, preserving any paths already set by the
+// container image.
+const appendPathEnvName = "OPENFILTER_APPEND_PATH"
 
 // containerResourcesRequireGPU returns true if the given resource requirements request a positive
 // quantity of nvidia.com/gpu. Zero and negative quantities return false.

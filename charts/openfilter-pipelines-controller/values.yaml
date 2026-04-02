@@ -138,19 +138,19 @@ volumeMounts: []
 # Leave empty to disable (no node selector is applied).
 gpuNodeSelector: ""
 
-# GPU library path: path injected as LD_LIBRARY_PATH into GPU containers so the CUDA
-# runtime libraries can be found. In some Kubernetes environments (e.g. GKE) the device
-# plugin mounts libraries here but does not set LD_LIBRARY_PATH automatically.
+# GPU library path: value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH into GPU containers.
+# The OpenFilter runtime reads this at startup and appends it to the existing LD_LIBRARY_PATH,
+# preserving paths set by the container image. In some Kubernetes environments (e.g. GKE) the
+# device plugin mounts libraries here but does not set LD_LIBRARY_PATH automatically.
 # Set to an empty string to disable injection entirely (e.g. on EKS, AKS, or bare metal
 # where the NVIDIA container runtime or driver installer sets LD_LIBRARY_PATH itself).
 gpuLibraryPath: "/usr/local/nvidia/lib64"
 
-# GPU bin path: PATH injected into GPU containers so that nvidia-smi (used by OpenFilter
-# for GPU utilization monitoring) is accessible. The NVIDIA device plugin mounts binaries
-# under /usr/local/nvidia/bin but does not update PATH. The remaining entries are the
-# standard Debian PATH used by python:3.x-slim (the base for OpenFilter filter images).
+# GPU bin path: value injected as OPENFILTER_APPEND_PATH into GPU containers so that nvidia-smi
+# (used by OpenFilter for GPU utilization monitoring) is accessible. The OpenFilter runtime reads
+# this at startup and appends it to the existing PATH, preserving paths set by the container image.
 # Set to an empty string to disable injection entirely.
-gpuBinPath: "/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+gpuBinPath: "/usr/local/nvidia/bin"
 
 # Environment variables
 env: []

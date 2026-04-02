@@ -125,6 +125,8 @@ spec:
             {{- end }}
             - name: GPU_LIBRARY_PATH
               value: {{ .Values.gpuLibraryPath | quote }}
+            - name: GPU_BIN_PATH
+              value: {{ .Values.gpuBinPath | quote }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

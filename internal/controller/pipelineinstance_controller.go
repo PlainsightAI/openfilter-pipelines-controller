@@ -100,6 +100,7 @@ type PipelineInstanceReconciler struct {
 	ClaimerImage          string            // Image for the claimer init container
 	GPUNodeSelectorLabels map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
 	GPULibraryPath        string            // Path injected as LD_LIBRARY_PATH for GPU containers; empty string disables injection
+	GPUBinPath            string            // Path injected as PATH for GPU containers so nvidia-smi is accessible; empty string disables injection
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete

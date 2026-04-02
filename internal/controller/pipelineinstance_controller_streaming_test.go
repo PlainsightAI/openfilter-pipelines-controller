@@ -318,7 +318,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_BothLimitsAndRequests(t *testi
 }
 
 func TestBuildStreamingDeployment_GPUEnvInjection_WithGPULimits(t *testing.T) {
-	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath}
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath, GPUBinPath: DefaultGPUBinPath}
 	pi := makeMinimalStreamingPipelineInstance()
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
@@ -351,8 +351,12 @@ func TestBuildStreamingDeployment_GPUEnvInjection_WithGPULimits(t *testing.T) {
 		t.Errorf("expected LD_LIBRARY_PATH=%q, got %q", DefaultGPULibraryPath, ldLibPath.Value)
 	}
 
-	if _, ok := findEnvVar(env, "PATH"); ok {
-		t.Error("PATH should not be injected (Kubernetes $(PATH) does not expand image PATH)")
+	pathVar, ok := findEnvVar(env, pathEnvName)
+	if !ok {
+		t.Fatal("expected PATH to be set for GPU container")
+	}
+	if pathVar.Value != DefaultGPUBinPath {
+		t.Errorf("expected PATH=%q, got %q", DefaultGPUBinPath, pathVar.Value)
 	}
 }
 
@@ -689,6 +693,136 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t
 	}
 	if ldLibVals[1] != "" {
 		t.Errorf("second entry should be empty string (user override), got %q", ldLibVals[1])
+	}
+}
+
+func TestBuildStreamingDeployment_PATHInjection_GPUContainerGetsPATH(t *testing.T) {
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath, GPUBinPath: DefaultGPUBinPath}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	pathVar, ok := findEnvVar(env, pathEnvName)
+	if !ok {
+		t.Fatal("expected PATH to be set for GPU container")
+	}
+	if pathVar.Value != DefaultGPUBinPath {
+		t.Errorf("expected PATH=%q, got %q", DefaultGPUBinPath, pathVar.Value)
+	}
+}
+
+func TestBuildStreamingDeployment_PATHInjection_CPUContainerDoesNotGetPATH(t *testing.T) {
+	r := &PipelineInstanceReconciler{GPUBinPath: DefaultGPUBinPath}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "cpu-filter",
+					Image: "cpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("256Mi"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	if _, ok := findEnvVar(env, pathEnvName); ok {
+		t.Error("expected PATH NOT to be set for CPU-only container")
+	}
+}
+
+func TestBuildStreamingDeployment_PATHInjection_UserCanOverride(t *testing.T) {
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath, GPUBinPath: DefaultGPUBinPath}
+	pi := makeMinimalStreamingPipelineInstance()
+
+	userBinPath := "/custom/bin:/usr/bin:/bin"
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+					Env: []corev1.EnvVar{
+						{Name: pathEnvName, Value: userBinPath},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	var pathVals []string
+	for _, e := range env {
+		if e.Name == pathEnvName {
+			pathVals = append(pathVals, e.Value)
+		}
+	}
+	if len(pathVals) != 2 {
+		t.Fatalf("expected 2 PATH entries (default + user override), got %d: %v", len(pathVals), pathVals)
+	}
+	if pathVals[0] != DefaultGPUBinPath {
+		t.Errorf("first PATH should be default %q, got %q", DefaultGPUBinPath, pathVals[0])
+	}
+	if pathVals[1] != userBinPath {
+		t.Errorf("second PATH should be user override %q, got %q", userBinPath, pathVals[1])
+	}
+}
+
+func TestBuildStreamingDeployment_PATHInjection_EmptyGPUBinPathSkipsInjection(t *testing.T) {
+	r := &PipelineInstanceReconciler{GPULibraryPath: DefaultGPULibraryPath, GPUBinPath: ""}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+
+	if _, ok := findEnvVar(env, pathEnvName); ok {
+		t.Error("expected PATH NOT to be injected when GPUBinPath is empty")
 	}
 }
 

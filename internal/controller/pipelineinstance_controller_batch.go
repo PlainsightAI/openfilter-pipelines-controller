@@ -478,16 +478,26 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))
 		containerEnv = append(containerEnv, configEnvVars...)
 
-		// Inject LD_LIBRARY_PATH for GPU containers so PyTorch can find libcuda.so.1.
-		// In some Kubernetes environments the device plugin mounts libraries but does not set
-		// LD_LIBRARY_PATH, so the controller injects it. When GPULibraryPath is empty the
-		// injection is skipped entirely (e.g. on EKS where the runtime handles this).
+		// Inject LD_LIBRARY_PATH and PATH for GPU containers so PyTorch can find libcuda.so.1
+		// and nvidia-smi is accessible for GPU utilization monitoring.
+		// In some Kubernetes environments the device plugin mounts libraries and binaries but
+		// does not update LD_LIBRARY_PATH or PATH, so the controller injects them. When the
+		// respective path field is empty the injection is skipped entirely (e.g. on EKS where
+		// the NVIDIA container runtime handles this automatically).
 		// Injected before user env vars so users can override if needed.
-		if r.GPULibraryPath != "" && filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
-			containerEnv = append(containerEnv,
-				corev1.EnvVar{Name: "LD_LIBRARY_PATH", Value: r.GPULibraryPath},
-			)
-			log.V(1).Info("GPU resources detected, injecting LD_LIBRARY_PATH", "filter", filter.Name, "value", r.GPULibraryPath)
+		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
+			if r.GPULibraryPath != "" {
+				containerEnv = append(containerEnv,
+					corev1.EnvVar{Name: ldLibraryPathEnvName, Value: r.GPULibraryPath},
+				)
+				log.V(1).Info("GPU resources detected, injecting LD_LIBRARY_PATH", "filter", filter.Name, "value", r.GPULibraryPath)
+			}
+			if r.GPUBinPath != "" {
+				containerEnv = append(containerEnv,
+					corev1.EnvVar{Name: pathEnvName, Value: r.GPUBinPath},
+				)
+				log.V(1).Info("GPU resources detected, injecting PATH", "filter", filter.Name, "value", r.GPUBinPath)
+			}
 		}
 
 		containerEnv = append(containerEnv, filter.Env...)
@@ -767,8 +777,18 @@ func resolveFailureReason(pod *corev1.Pod, startFailureReason, crashReason strin
 // NVIDIA container runtime injects the path itself).
 const DefaultGPULibraryPath = "/usr/local/nvidia/lib64"
 
+// DefaultGPUBinPath is the PATH injected for GPU containers so that nvidia-smi (used by
+// OpenFilter for GPU utilization monitoring) is accessible. The NVIDIA device plugin mounts
+// binaries under /usr/local/nvidia/bin but does not update PATH. The remaining components
+// are the standard Debian/Ubuntu PATH as used by python:3.x-slim (the base for OpenFilter
+// filter images). Set GPUBinPath to an empty string to disable injection entirely.
+const DefaultGPUBinPath = "/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 // ldLibraryPathEnvName is the environment variable name used to set the GPU library search path.
 const ldLibraryPathEnvName = "LD_LIBRARY_PATH"
+
+// pathEnvName is the environment variable name used to set the executable search path.
+const pathEnvName = "PATH"
 
 // containerResourcesRequireGPU returns true if the given resource requirements request a positive
 // quantity of nvidia.com/gpu. Zero and negative quantities return false.

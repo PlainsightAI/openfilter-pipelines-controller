@@ -282,15 +282,24 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 			})
 		}
 
-		// Inject LD_LIBRARY_PATH for GPU containers so PyTorch can find libcuda.so.1.
-		// In some Kubernetes environments the device plugin mounts libraries but does not set
-		// LD_LIBRARY_PATH, so the controller injects it. When GPULibraryPath is empty the
-		// injection is skipped entirely (e.g. on EKS where the runtime handles this).
+		// Inject LD_LIBRARY_PATH and PATH for GPU containers so PyTorch can find libcuda.so.1
+		// and nvidia-smi is accessible for GPU utilization monitoring.
+		// In some Kubernetes environments the device plugin mounts libraries and binaries but
+		// does not update LD_LIBRARY_PATH or PATH, so the controller injects them. When the
+		// respective path field is empty the injection is skipped entirely (e.g. on EKS where
+		// the NVIDIA container runtime handles this automatically).
 		// Injected before user env vars so users can override if needed.
-		if r.GPULibraryPath != "" && filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
-			envVars = append(envVars,
-				corev1.EnvVar{Name: "LD_LIBRARY_PATH", Value: r.GPULibraryPath},
-			)
+		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
+			if r.GPULibraryPath != "" {
+				envVars = append(envVars,
+					corev1.EnvVar{Name: ldLibraryPathEnvName, Value: r.GPULibraryPath},
+				)
+			}
+			if r.GPUBinPath != "" {
+				envVars = append(envVars,
+					corev1.EnvVar{Name: pathEnvName, Value: r.GPUBinPath},
+				)
+			}
 		}
 
 		// Add user-defined env vars

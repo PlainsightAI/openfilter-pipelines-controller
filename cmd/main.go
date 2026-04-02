@@ -96,6 +96,7 @@ func main() {
 	var claimerImage string
 	var gpuNodeSelector string
 	var gpuLibraryPath string
+	var gpuBinPath string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -124,6 +125,12 @@ func main() {
 			"Set to an empty string to disable injection entirely (e.g. on EKS where the NVIDIA container "+
 			"runtime handles LD_LIBRARY_PATH automatically). "+
 			"Can also be set via GPU_LIBRARY_PATH env var.")
+	flag.StringVar(&gpuBinPath, "gpu-bin-path",
+		getEnvOrDefault("GPU_BIN_PATH", controller.DefaultGPUBinPath),
+		"PATH injected into GPU containers so that nvidia-smi (used by OpenFilter for GPU utilization "+
+			"monitoring) is accessible. The NVIDIA device plugin mounts binaries under /usr/local/nvidia/bin "+
+			"but does not update PATH. Set to an empty string to disable injection entirely. "+
+			"Can also be set via GPU_BIN_PATH env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -267,6 +274,7 @@ func main() {
 		ClaimerImage:          claimerImage,
 		GPUNodeSelectorLabels: parseNodeSelectorLabels(gpuNodeSelector),
 		GPULibraryPath:        gpuLibraryPath,
+		GPUBinPath:            gpuBinPath,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")
 		os.Exit(1)

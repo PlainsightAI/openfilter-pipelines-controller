@@ -2500,12 +2500,28 @@ var _ = Describe("PipelineInstance Controller", func() {
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, dep)).To(Succeed())
 
-			// Now delete the PipelineInstance
+			// Remove the valkey-credentials finalizer to simulate the race condition
+			// where it was never successfully added. This is the exact incident scenario.
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)).To(Succeed())
+			controllerutil.RemoveFinalizer(streamInstance, FinalizerValkeyCredentials)
+			Expect(k8sClient.Update(ctx, streamInstance)).To(Succeed())
+
+			// Verify precondition: only streaming-cleanup finalizer is present at deletion time
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials)).To(BeFalse(), "valkey finalizer should be absent")
+			Expect(controllerutil.ContainsFinalizer(streamInstance, FinalizerStreamingCleanup)).To(BeTrue(), "streaming finalizer should be present")
+
+			// Delete the PipelineInstance
 			Expect(k8sClient.Delete(ctx, streamInstance)).To(Succeed())
 
-			// Reconcile until deletion completes (valkey-credentials removal + streaming-cleanup removal)
+			// Single reconcile should handle deletion: valkey finalizer is absent,
+			// so the main reconciler delegates directly to reconcileStreaming which
+			// processes the streaming-cleanup finalizer.
+			_, reconcileErr := reconciler.Reconcile(ctx, req)
+			Expect(reconcileErr).NotTo(HaveOccurred())
+
+			// PipelineInstance should be fully deleted
 			Eventually(func() bool {
-				_, _ = reconciler.Reconcile(ctx, req)
 				getErr := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
 				return errors.IsNotFound(getErr)
 			}, timeout, interval).Should(BeTrue())

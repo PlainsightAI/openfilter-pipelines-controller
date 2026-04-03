@@ -40,23 +40,8 @@ import (
 func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	// Initialize streaming status if not already set
-	if pipelineInstance.Status.Streaming == nil {
-		pipelineInstance.Status.Streaming = &pipelinesv1alpha1.StreamingStatus{}
-	}
-
-	// Set start time if not already set
-	if pipelineInstance.Status.StartTime == nil {
-		now := metav1.Now()
-		pipelineInstance.Status.StartTime = &now
-		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
-			log.Error(err, "Failed to set start time")
-			return ctrl.Result{}, err
-		}
-	}
-
-	// Handle deletion (finalizer cleanup)
-	const finalizerName = "filter.plainsight.ai/streaming-cleanup"
+	// Handle deletion (finalizer cleanup) before any status initialization
+	finalizerName := FinalizerStreamingCleanup
 	if !pipelineInstance.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(pipelineInstance, finalizerName) {
 			// Delete the Deployment
@@ -82,18 +67,34 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 		return ctrl.Result{}, nil
 	}
 
-	// If we reach here during deletion without finalizer, Pipeline must exist for normal reconciliation
+	// Past the deletion block — Pipeline is required for normal reconciliation.
 	if pipeline == nil {
 		return ctrl.Result{}, fmt.Errorf("pipeline is required for non-deletion reconciliation")
 	}
 
-	// Add finalizer if not present
+	// Initialize streaming status if not already set
+	if pipelineInstance.Status.Streaming == nil {
+		pipelineInstance.Status.Streaming = &pipelinesv1alpha1.StreamingStatus{}
+	}
+
+	// Set start time if not already set
+	if pipelineInstance.Status.StartTime == nil {
+		now := metav1.Now()
+		pipelineInstance.Status.StartTime = &now
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
+			log.Error(err, "Failed to set start time")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Add finalizer if not present (requeue to reconcile against the updated object)
 	if !controllerutil.ContainsFinalizer(pipelineInstance, finalizerName) {
 		controllerutil.AddFinalizer(pipelineInstance, finalizerName)
 		if err := r.Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Step 1: Ensure Deployment exists

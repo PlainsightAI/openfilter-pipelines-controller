@@ -786,11 +786,15 @@ var _ = Describe("PipelineInstance Controller", func() {
 				_ = k8sClient.Delete(ctx, streamInstance)
 			}()
 
-			// First reconcile adds finalizer
+			// First reconcile adds valkey-credentials finalizer
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Second reconcile creates Deployment
+			// Second reconcile adds streaming-cleanup finalizer
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Third reconcile creates Deployment
 			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}})
 			Expect(err).NotTo(HaveOccurred())
 

@@ -292,7 +292,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Handle Valkey credentials finalizer
+	// Handle deletion: process finalizers in order (valkey credentials first, then mode-specific)
 	if !pipelineInstance.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
 			if err := r.cleanupNamespaceValkeyCredentials(ctx, pipelineInstance); err != nil {
@@ -304,10 +304,14 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 				log.Error(err, "Failed to remove Valkey credentials finalizer")
 				return ctrl.Result{}, err
 			}
+			// Requeue so the next reconcile processes mode-specific finalizers
+			// with a fresh resourceVersion (avoids "object has been modified" conflicts).
+			return ctrl.Result{Requeue: true}, nil
 		}
-		// Don't proceed with normal reconciliation during deletion —
-		// let the mode-specific finalizers (streaming) or owner references (batch) handle the rest.
-		return ctrl.Result{}, nil
+		// Valkey finalizer already handled — delegate to mode-specific cleanup.
+		// reconcileStreaming handles the streaming-cleanup finalizer;
+		// batch mode relies on owner references (no finalizer needed).
+		return r.reconcileStreaming(ctx, pipelineInstance, nil, nil)
 	}
 
 	// Add Valkey credentials finalizer if not present (requeue to reconcile against the updated object)

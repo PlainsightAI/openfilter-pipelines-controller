@@ -2388,7 +2388,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					return false
 				}
 				return controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
-					controllerutil.ContainsFinalizer(streamInstance, "filter.plainsight.ai/streaming-cleanup") &&
+					controllerutil.ContainsFinalizer(streamInstance, FinalizerStreamingCleanup) &&
 					streamInstance.Status.Streaming != nil &&
 					streamInstance.Status.Streaming.DeploymentName != ""
 			}, timeout, interval).Should(BeTrue())
@@ -2413,7 +2413,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					return false
 				}
 				return !controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
-					controllerutil.ContainsFinalizer(streamInstance, "filter.plainsight.ai/streaming-cleanup")
+					controllerutil.ContainsFinalizer(streamInstance, FinalizerStreamingCleanup)
 			}, timeout, interval).Should(BeTrue())
 
 			// Second deletion reconcile: removes streaming-cleanup finalizer (deployment + services deleted)
@@ -2468,7 +2468,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					Name:      streamInstanceName,
 					Namespace: namespace,
 					// Add ONLY the streaming-cleanup finalizer (simulating the race where valkey finalizer was never added)
-					Finalizers: []string{"filter.plainsight.ai/streaming-cleanup"},
+					Finalizers: []string{FinalizerStreamingCleanup},
 				},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: streamPipelineName},
@@ -2486,7 +2486,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					return false
 				}
 				return !controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
-					controllerutil.ContainsFinalizer(streamInstance, "filter.plainsight.ai/streaming-cleanup")
+					controllerutil.ContainsFinalizer(streamInstance, FinalizerStreamingCleanup)
 			}, timeout, interval).Should(BeTrue())
 
 			// Delete the PipelineInstance
@@ -2534,7 +2534,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 
 			// Verify no streaming-cleanup finalizer (batch mode)
-			Expect(controllerutil.ContainsFinalizer(batchInstance, "filter.plainsight.ai/streaming-cleanup")).To(BeFalse())
+			Expect(controllerutil.ContainsFinalizer(batchInstance, FinalizerStreamingCleanup)).To(BeFalse())
 
 			// Delete the batch PipelineInstance
 			Expect(k8sClient.Delete(ctx, batchInstance)).To(Succeed())
@@ -2622,7 +2622,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					return false
 				}
 				return controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
-					controllerutil.ContainsFinalizer(streamInstance, "filter.plainsight.ai/streaming-cleanup")
+					controllerutil.ContainsFinalizer(streamInstance, FinalizerStreamingCleanup)
 			}, timeout, interval).Should(BeTrue())
 
 			// Delete the Pipeline CR first (simulating Pipeline being deleted before PipelineInstance)

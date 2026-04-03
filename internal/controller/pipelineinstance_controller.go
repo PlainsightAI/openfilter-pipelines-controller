@@ -69,6 +69,9 @@ const (
 
 	// FinalizerValkeyCredentials ensures Valkey ACL users are cleaned up on deletion.
 	FinalizerValkeyCredentials = "filter.plainsight.ai/valkey-credentials"
+
+	// FinalizerStreamingCleanup ensures streaming resources (Deployment, Services) are cleaned up on deletion.
+	FinalizerStreamingCleanup = "filter.plainsight.ai/streaming-cleanup"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations

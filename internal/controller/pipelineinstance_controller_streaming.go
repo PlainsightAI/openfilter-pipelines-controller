@@ -41,7 +41,7 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 	log := logf.FromContext(ctx)
 
 	// Handle deletion (finalizer cleanup) before any status initialization
-	const finalizerName = "filter.plainsight.ai/streaming-cleanup"
+	finalizerName := FinalizerStreamingCleanup
 	if !pipelineInstance.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(pipelineInstance, finalizerName) {
 			// Delete the Deployment

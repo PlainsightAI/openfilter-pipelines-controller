@@ -300,7 +300,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		if controllerutil.ContainsFinalizer(pipelineInstance, FinalizerValkeyCredentials) {
 			if err := r.cleanupNamespaceValkeyCredentials(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to clean up Valkey credentials, will retry")
-				return ctrl.Result{Requeue: true}, err
+				return ctrl.Result{}, err
 			}
 			controllerutil.RemoveFinalizer(pipelineInstance, FinalizerValkeyCredentials)
 			if err := r.Update(ctx, pipelineInstance); err != nil {

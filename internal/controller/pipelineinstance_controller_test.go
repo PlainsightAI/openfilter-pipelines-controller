@@ -2487,15 +2487,20 @@ var _ = Describe("PipelineInstance Controller", func() {
 			// Reconcile until the Deployment is created.
 			// Multiple cycles needed: add valkey-credentials finalizer → set start time → create deployment.
 			var deploymentName string
-			Eventually(func() bool {
-				_, _ = reconciler.Reconcile(ctx, req)
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
-				if err != nil || streamInstance.Status.Streaming == nil || streamInstance.Status.Streaming.DeploymentName == "" {
-					return false
+			Eventually(func() error {
+				_, err := reconciler.Reconcile(ctx, req)
+				if err != nil {
+					return err
+				}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance); err != nil {
+					return err
+				}
+				if streamInstance.Status.Streaming == nil || streamInstance.Status.Streaming.DeploymentName == "" {
+					return fmt.Errorf("streaming deployment name not yet set")
 				}
 				deploymentName = streamInstance.Status.Streaming.DeploymentName
-				return true
-			}, timeout, interval).Should(BeTrue())
+				return nil
+			}, timeout, interval).Should(Succeed())
 
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, dep)).To(Succeed())

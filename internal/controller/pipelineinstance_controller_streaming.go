@@ -67,7 +67,7 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 		return ctrl.Result{}, nil
 	}
 
-	// If we reach here during deletion without finalizer, Pipeline must exist for normal reconciliation
+	// Past the deletion block — Pipeline is required for normal reconciliation.
 	if pipeline == nil {
 		return ctrl.Result{}, fmt.Errorf("pipeline is required for non-deletion reconciliation")
 	}

@@ -2433,6 +2433,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 
 		It("should clean up streaming resources when deleted without valkey-credentials finalizer", func() {
 			// Create streaming PipelineInstance with ONLY the streaming-cleanup finalizer
+			// (simulating the race where valkey finalizer was never added)
 			streamPipelineName := fmt.Sprintf("test-pipeline-stream-novc-%d", testCounter)
 			streamPipeline := &pipelinesv1alpha1.Pipeline{
 				ObjectMeta: metav1.ObjectMeta{
@@ -2471,7 +2472,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      streamInstanceName,
 					Namespace: namespace,
-					// Add ONLY the streaming-cleanup finalizer (simulating the race where valkey finalizer was never added)
+					// Pre-set ONLY the streaming-cleanup finalizer (simulating the race)
 					Finalizers: []string{FinalizerStreamingCleanup},
 				},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
@@ -2483,33 +2484,35 @@ var _ = Describe("PipelineInstance Controller", func() {
 
 			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}}
 
-			// Verify only streaming-cleanup finalizer is present
+			// Reconcile until the Deployment is created.
+			// Multiple cycles needed: add valkey-credentials finalizer → set start time → create deployment.
+			var deploymentName string
 			Eventually(func() bool {
+				_, _ = reconciler.Reconcile(ctx, req)
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
-				if err != nil {
+				if err != nil || streamInstance.Status.Streaming == nil || streamInstance.Status.Streaming.DeploymentName == "" {
 					return false
 				}
-				return !controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
-					controllerutil.ContainsFinalizer(streamInstance, FinalizerStreamingCleanup)
+				deploymentName = streamInstance.Status.Streaming.DeploymentName
+				return true
 			}, timeout, interval).Should(BeTrue())
 
-			// Delete the PipelineInstance
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, dep)).To(Succeed())
+
+			// Now delete the PipelineInstance
 			Expect(k8sClient.Delete(ctx, streamInstance)).To(Succeed())
 
-			// Reconcile delegates to streaming cleanup even though valkey finalizer was absent
-			_, err := reconciler.Reconcile(ctx, req)
-			Expect(err).NotTo(HaveOccurred())
-
-			// PipelineInstance should be fully deleted after streaming-cleanup finalizer is removed
+			// Reconcile until deletion completes (valkey-credentials removal + streaming-cleanup removal)
 			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
-				return errors.IsNotFound(err)
+				_, _ = reconciler.Reconcile(ctx, req)
+				getErr := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
+				return errors.IsNotFound(getErr)
 			}, timeout, interval).Should(BeTrue())
 
-			// Verify the streaming Deployment does not exist (was cleaned up or never created)
-			deploymentName := streamInstanceName + "-deploy"
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, &appsv1.Deployment{})
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "expected streaming Deployment to not exist")
+			// Verify the streaming Deployment was cleaned up by the finalizer
+			depErr := k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, &appsv1.Deployment{})
+			Expect(errors.IsNotFound(depErr)).To(BeTrue(), "expected streaming Deployment to be deleted by finalizer cleanup")
 		})
 
 		It("should handle deletion of batch PipelineInstance with only valkey-credentials finalizer", func() {

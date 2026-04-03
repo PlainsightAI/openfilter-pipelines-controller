@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
@@ -2312,6 +2313,343 @@ var _ = Describe("PipelineInstance Controller", func() {
 			// Message should be ACKed and deleted from stream after DLQ
 			Expect(mockValkey.AckedMessages).To(ContainElement("msg-maxed"))
 			Expect(mockValkey.DeletedMessageIDs).To(ContainElement("msg-maxed"))
+		})
+
+		// --- Deletion / Finalizer tests ---
+
+		It("should clean up streaming resources when deleted with both finalizers", func() {
+			// Create a streaming Pipeline
+			streamPipelineName := fmt.Sprintf("test-pipeline-stream-del-%d", testCounter)
+			streamPipeline := &pipelinesv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      streamPipelineName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineSpec{
+					Mode: pipelinesv1alpha1.PipelineModeStream,
+					Filters: []pipelinesv1alpha1.Filter{
+						{Name: "video-in", Image: "busybox:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, streamPipeline)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, streamPipeline) }()
+
+			// Create RTSP PipelineSource
+			rtspSourceName := fmt.Sprintf("test-rtsp-source-del-%d", testCounter)
+			rtspSource := &pipelinesv1alpha1.PipelineSource{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      rtspSourceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineSourceSpec{
+					RTSP: &pipelinesv1alpha1.RTSPSource{
+						Host: "rtsp-video-stream",
+						Port: 8554,
+						Path: "/live",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, rtspSource)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, rtspSource) }()
+
+			// Create streaming PipelineInstance
+			streamInstanceName := fmt.Sprintf("test-instance-stream-del-%d", testCounter)
+			streamInstance := &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      streamInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: streamPipelineName},
+					SourceRef:   pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, streamInstance)).To(Succeed())
+
+			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}}
+
+			// First reconcile adds valkey-credentials finalizer
+			_, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile adds streaming-cleanup finalizer
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Third reconcile creates Deployment
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify both finalizers are present and deployment exists
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
+				if err != nil {
+					return false
+				}
+				return controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
+					controllerutil.ContainsFinalizer(streamInstance, "filter.plainsight.ai/streaming-cleanup") &&
+					streamInstance.Status.Streaming != nil &&
+					streamInstance.Status.Streaming.DeploymentName != ""
+			}, timeout, interval).Should(BeTrue())
+
+			deploymentName := streamInstance.Status.Streaming.DeploymentName
+
+			// Verify deployment exists
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, dep)).To(Succeed())
+
+			// Delete the PipelineInstance
+			Expect(k8sClient.Delete(ctx, streamInstance)).To(Succeed())
+
+			// First deletion reconcile: removes valkey-credentials finalizer and requeues
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify valkey-credentials finalizer is removed but streaming-cleanup remains
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
+				if err != nil {
+					return false
+				}
+				return !controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
+					controllerutil.ContainsFinalizer(streamInstance, "filter.plainsight.ai/streaming-cleanup")
+			}, timeout, interval).Should(BeTrue())
+
+			// Second deletion reconcile: removes streaming-cleanup finalizer (deployment + services deleted)
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// PipelineInstance should be fully deleted after all finalizers are removed
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should clean up streaming resources when deleted without valkey-credentials finalizer", func() {
+			// Create streaming PipelineInstance with ONLY the streaming-cleanup finalizer
+			streamPipelineName := fmt.Sprintf("test-pipeline-stream-novc-%d", testCounter)
+			streamPipeline := &pipelinesv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      streamPipelineName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineSpec{
+					Mode: pipelinesv1alpha1.PipelineModeStream,
+					Filters: []pipelinesv1alpha1.Filter{
+						{Name: "video-in", Image: "busybox:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, streamPipeline)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, streamPipeline) }()
+
+			rtspSourceName := fmt.Sprintf("test-rtsp-source-novc-%d", testCounter)
+			rtspSource := &pipelinesv1alpha1.PipelineSource{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      rtspSourceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineSourceSpec{
+					RTSP: &pipelinesv1alpha1.RTSPSource{
+						Host: "rtsp-video-stream",
+						Port: 8554,
+						Path: "/live",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, rtspSource)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, rtspSource) }()
+
+			streamInstanceName := fmt.Sprintf("test-instance-stream-novc-%d", testCounter)
+			streamInstance := &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      streamInstanceName,
+					Namespace: namespace,
+					// Add ONLY the streaming-cleanup finalizer (simulating the race where valkey finalizer was never added)
+					Finalizers: []string{"filter.plainsight.ai/streaming-cleanup"},
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: streamPipelineName},
+					SourceRef:   pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, streamInstance)).To(Succeed())
+
+			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}}
+
+			// Verify only streaming-cleanup finalizer is present
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
+				if err != nil {
+					return false
+				}
+				return !controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
+					controllerutil.ContainsFinalizer(streamInstance, "filter.plainsight.ai/streaming-cleanup")
+			}, timeout, interval).Should(BeTrue())
+
+			// Delete the PipelineInstance
+			Expect(k8sClient.Delete(ctx, streamInstance)).To(Succeed())
+
+			// Reconcile delegates to streaming cleanup even though valkey finalizer was absent
+			_, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// PipelineInstance should be fully deleted after streaming-cleanup finalizer is removed
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should handle deletion of batch PipelineInstance with only valkey-credentials finalizer", func() {
+			// Create a batch PipelineInstance (uses the default pipeline from BeforeEach which has no Mode set)
+			batchInstanceName := fmt.Sprintf("test-instance-batch-del-%d", testCounter)
+			batchInstance := &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      batchInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipelineName},
+					SourceRef:   pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, batchInstance)).To(Succeed())
+
+			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: batchInstanceName, Namespace: namespace}}
+
+			// First reconcile adds valkey-credentials finalizer
+			_, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify valkey-credentials finalizer is present
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: batchInstanceName, Namespace: namespace}, batchInstance)
+				if err != nil {
+					return false
+				}
+				return controllerutil.ContainsFinalizer(batchInstance, FinalizerValkeyCredentials)
+			}, timeout, interval).Should(BeTrue())
+
+			// Verify no streaming-cleanup finalizer (batch mode)
+			Expect(controllerutil.ContainsFinalizer(batchInstance, "filter.plainsight.ai/streaming-cleanup")).To(BeFalse())
+
+			// Delete the batch PipelineInstance
+			Expect(k8sClient.Delete(ctx, batchInstance)).To(Succeed())
+
+			// First deletion reconcile: removes valkey-credentials finalizer
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second deletion reconcile: delegates to streaming cleanup (no-op since no streaming finalizer)
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// PipelineInstance should be fully deleted
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: batchInstanceName, Namespace: namespace}, batchInstance)
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should handle deletion when Pipeline CR is already gone", func() {
+			// Create a streaming Pipeline
+			streamPipelineName := fmt.Sprintf("test-pipeline-stream-gone-%d", testCounter)
+			streamPipeline := &pipelinesv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      streamPipelineName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineSpec{
+					Mode: pipelinesv1alpha1.PipelineModeStream,
+					Filters: []pipelinesv1alpha1.Filter{
+						{Name: "video-in", Image: "busybox:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, streamPipeline)).To(Succeed())
+
+			rtspSourceName := fmt.Sprintf("test-rtsp-source-gone-%d", testCounter)
+			rtspSource := &pipelinesv1alpha1.PipelineSource{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      rtspSourceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineSourceSpec{
+					RTSP: &pipelinesv1alpha1.RTSPSource{
+						Host: "rtsp-video-stream",
+						Port: 8554,
+						Path: "/live",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, rtspSource)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, rtspSource) }()
+
+			streamInstanceName := fmt.Sprintf("test-instance-stream-gone-%d", testCounter)
+			streamInstance := &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      streamInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: streamPipelineName},
+					SourceRef:   pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, streamInstance)).To(Succeed())
+
+			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: streamInstanceName, Namespace: namespace}}
+
+			// First reconcile adds valkey-credentials finalizer
+			_, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile adds streaming-cleanup finalizer
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Third reconcile creates Deployment
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify both finalizers are present
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
+				if err != nil {
+					return false
+				}
+				return controllerutil.ContainsFinalizer(streamInstance, FinalizerValkeyCredentials) &&
+					controllerutil.ContainsFinalizer(streamInstance, "filter.plainsight.ai/streaming-cleanup")
+			}, timeout, interval).Should(BeTrue())
+
+			// Delete the Pipeline CR first (simulating Pipeline being deleted before PipelineInstance)
+			Expect(k8sClient.Delete(ctx, streamPipeline)).To(Succeed())
+
+			// Verify Pipeline is gone
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamPipelineName, Namespace: namespace}, &pipelinesv1alpha1.Pipeline{})
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+
+			// Now delete the PipelineInstance
+			Expect(k8sClient.Delete(ctx, streamInstance)).To(Succeed())
+
+			// First deletion reconcile: removes valkey-credentials finalizer (does not need Pipeline)
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second deletion reconcile: removes streaming-cleanup finalizer (cleanup still works without Pipeline)
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// PipelineInstance should be fully deleted
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
 		})
 	})
 

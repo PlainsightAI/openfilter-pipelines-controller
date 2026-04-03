@@ -119,12 +119,9 @@ func main() {
 			"Can also be set via GPU_NODE_SELECTOR env var.")
 	flag.StringVar(&gpuLibraryPath, "gpu-library-path",
 		getEnvOrDefault("GPU_LIBRARY_PATH", ""),
-		"Value injected as OPENFILTER_APPEND_LD_LIBRARY_PATH into GPU containers. The OpenFilter runtime "+
-			"appends this to the existing LD_LIBRARY_PATH at startup, preserving image-set paths. "+
-			"In some Kubernetes environments (e.g. GKE) the device plugin mounts libraries but does not "+
-			"set LD_LIBRARY_PATH; set this to the correct mount path for your environment. "+
-			"Set to an empty string to disable injection entirely (e.g. on EKS where the NVIDIA container "+
-			"runtime handles LD_LIBRARY_PATH automatically). "+
+		"Value injected as LD_LIBRARY_PATH into GPU containers. "+
+			"On GKE the device plugin mounts GPU libraries but does not set LD_LIBRARY_PATH. "+
+			"Empty string disables injection (e.g. on EKS where the NVIDIA runtime handles it). "+
 			"Can also be set via GPU_LIBRARY_PATH env var.")
 	flag.StringVar(&gpuBinPath, "gpu-bin-path",
 		getEnvOrDefault("GPU_BIN_PATH", ""),

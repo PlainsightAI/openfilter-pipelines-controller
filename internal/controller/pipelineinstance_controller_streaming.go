@@ -282,16 +282,12 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 			})
 		}
 
-		// Inject OPENFILTER_APPEND_LD_LIBRARY_PATH and OPENFILTER_APPEND_PATH for GPU containers.
-		// The OpenFilter runtime reads these env vars at startup and appends them to the existing
-		// LD_LIBRARY_PATH/PATH. This avoids overriding existing values set by the container image.
-		// When the respective path field is empty the injection is skipped entirely (e.g. on EKS
-		// where the NVIDIA container runtime handles this automatically).
-		// Injected before user env vars so users can override if needed.
+		// Inject GPU env vars before user env vars so users can override if needed.
+		// Skipped when the respective path field is empty (e.g. on EKS).
 		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
 			if r.GPULibraryPath != "" {
 				envVars = append(envVars,
-					corev1.EnvVar{Name: appendLdLibraryPathEnvName, Value: r.GPULibraryPath},
+					corev1.EnvVar{Name: ldLibraryPathEnvName, Value: r.GPULibraryPath},
 				)
 			}
 			if r.GPUBinPath != "" {

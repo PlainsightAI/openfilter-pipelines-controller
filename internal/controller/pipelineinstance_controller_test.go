@@ -2425,6 +2425,10 @@ var _ = Describe("PipelineInstance Controller", func() {
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
 				return errors.IsNotFound(err)
 			}, timeout, interval).Should(BeTrue())
+
+			// Verify the streaming Deployment was also cleaned up
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, &appsv1.Deployment{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "expected streaming Deployment to be deleted")
 		})
 
 		It("should clean up streaming resources when deleted without valkey-credentials finalizer", func() {
@@ -2501,6 +2505,11 @@ var _ = Describe("PipelineInstance Controller", func() {
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: streamInstanceName, Namespace: namespace}, streamInstance)
 				return errors.IsNotFound(err)
 			}, timeout, interval).Should(BeTrue())
+
+			// Verify the streaming Deployment does not exist (was cleaned up or never created)
+			deploymentName := streamInstanceName + "-deploy"
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: namespace}, &appsv1.Deployment{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "expected streaming Deployment to not exist")
 		})
 
 		It("should handle deletion of batch PipelineInstance with only valkey-credentials finalizer", func() {

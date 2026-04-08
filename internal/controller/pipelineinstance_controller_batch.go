@@ -495,6 +495,28 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			}
 		}
 
+		// Always inject pipeline identity from CR metadata so filter spans
+		// can be grouped/filtered by pipeline in Cloud Trace.
+		containerEnv = append(containerEnv, corev1.EnvVar{Name: "PIPELINE_ID", Value: pipelineInstance.Name})
+		containerEnv = append(containerEnv, corev1.EnvVar{Name: "PIPELINE_INSTANCE_UID", Value: string(pipelineInstance.UID)})
+
+		// Inject traceparent from PipelineInstance CR annotation for distributed tracing
+		if tp, ok := pipelineInstance.Annotations["traces.opentelemetry.io/traceparent"]; ok && tp != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
+		}
+		// Inject tracestate alongside traceparent so the W3C propagator preserves
+		// vendor-specific trace context across the controller hop. Skip empty/missing
+		// annotations — the upstream chain may legitimately have no tracestate.
+		if ts, ok := pipelineInstance.Annotations["traces.opentelemetry.io/tracestate"]; ok && ts != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TRACESTATE", Value: ts})
+		}
+		if r.TelemetryExporterType != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
+		}
+		if r.TelemetryExporterEndpoint != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterEndpoint})
+		}
+
 		containerEnv = append(containerEnv, filter.Env...)
 
 		container := corev1.Container{

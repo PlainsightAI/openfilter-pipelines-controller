@@ -149,6 +149,14 @@ gpuLibraryPath: "/usr/local/nvidia/lib64"
 # Set to an empty string to disable injection entirely.
 gpuBinPath: "/usr/local/nvidia/bin"
 
+# Telemetry exporter values injected into every filter container the controller
+# spawns. When non-empty, the controller appends TELEMETRY_EXPORTER_TYPE and
+# TELEMETRY_EXPORTER_OTLP_ENDPOINT to the filter container env so openfilter's
+# OTel client ships spans/metrics to the configured collector. Both empty
+# disables injection (openfilter falls back to its silent exporter).
+telemetryExporterType: ""
+telemetryExporterEndpoint: ""
+
 # Environment variables
 env: []
 

@@ -97,6 +97,8 @@ func main() {
 	var gpuNodeSelector string
 	var gpuLibraryPath string
 	var gpuBinPath string
+	var telemetryExporterType string
+	var telemetryExporterEndpoint string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -130,6 +132,16 @@ func main() {
 			"this to the existing PATH at startup, preserving image-set paths. "+
 			"Set to an empty string to disable injection entirely. "+
 			"Can also be set via GPU_BIN_PATH env var.")
+	flag.StringVar(&telemetryExporterType, "telemetry-exporter-type",
+		getEnvOrDefault("TELEMETRY_EXPORTER_TYPE", ""),
+		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp_grpc'). "+
+			"Empty string disables injection and openfilter falls back to its silent exporter. "+
+			"Can also be set via TELEMETRY_EXPORTER_TYPE env var.")
+	flag.StringVar(&telemetryExporterEndpoint, "telemetry-exporter-otlp-endpoint",
+		getEnvOrDefault("TELEMETRY_EXPORTER_OTLP_ENDPOINT", ""),
+		"Value injected as TELEMETRY_EXPORTER_OTLP_ENDPOINT into filter containers "+
+			"(e.g. 'otel-collector.monitoring.svc.cluster.local:4317'). Empty string disables injection. "+
+			"Can also be set via TELEMETRY_EXPORTER_OTLP_ENDPOINT env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -265,15 +277,17 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.PipelineInstanceReconciler{
-		Client:                mgr.GetClient(),
-		Scheme:                mgr.GetScheme(),
-		ValkeyClient:          valkeyClient,
-		ValkeyAddr:            valkeyAddr,
-		ValkeyNSSecretName:    valkeyNSSecretName,
-		ClaimerImage:          claimerImage,
-		GPUNodeSelectorLabels: parseNodeSelectorLabels(gpuNodeSelector),
-		GPULibraryPath:        gpuLibraryPath,
-		GPUBinPath:            gpuBinPath,
+		Client:                    mgr.GetClient(),
+		Scheme:                    mgr.GetScheme(),
+		ValkeyClient:              valkeyClient,
+		ValkeyAddr:                valkeyAddr,
+		ValkeyNSSecretName:        valkeyNSSecretName,
+		ClaimerImage:              claimerImage,
+		GPUNodeSelectorLabels:     parseNodeSelectorLabels(gpuNodeSelector),
+		GPULibraryPath:            gpuLibraryPath,
+		GPUBinPath:                gpuBinPath,
+		TelemetryExporterType:     telemetryExporterType,
+		TelemetryExporterEndpoint: telemetryExporterEndpoint,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")
 		os.Exit(1)

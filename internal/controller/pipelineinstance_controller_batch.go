@@ -475,15 +475,23 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		filterContainers = append(filterContainers, container)
 	}
 
+	// Build pod labels: propagate plainsight.ai/* labels from CR for Loki querying
+	podLabels := map[string]string{
+		"filter.plainsight.ai/instance":         instanceID,
+		"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
+	}
+	for k, v := range pipelineInstance.Labels {
+		if strings.HasPrefix(k, "plainsight.ai/") {
+			podLabels[k] = v
+		}
+	}
+
 	// Build Job spec
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
 			Namespace: pipelineInstance.Namespace,
-			Labels: map[string]string{
-				"filter.plainsight.ai/instance":         instanceID,
-				"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
-			},
+			Labels:    podLabels,
 		},
 		Spec: batchv1.JobSpec{
 			CompletionMode:          ptr.To(batchv1.NonIndexedCompletion),
@@ -493,10 +501,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			TTLSecondsAfterFinished: ptr.To(int32(86400)), // 24 hours
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"filter.plainsight.ai/instance":         instanceID,
-						"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
-					},
+					Labels: podLabels,
 				},
 				Spec: corev1.PodSpec{
 					// No special ServiceAccount required; default SA is sufficient

@@ -294,14 +294,22 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 		containers = append(containers, container)
 	}
 
+	// Propagate plainsight.ai/* labels from CR for Loki querying
+	deployLabels := map[string]string{
+		"app":              "pipeline-stream",
+		"pipelineinstance": pipelineInstance.Name,
+	}
+	for k, v := range pipelineInstance.Labels {
+		if strings.HasPrefix(k, "plainsight.ai/") {
+			deployLabels[k] = v
+		}
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deploymentName,
 			Namespace: pipelineInstance.Namespace,
-			Labels: map[string]string{
-				"app":              "pipeline-stream",
-				"pipelineinstance": pipelineInstance.Name,
-			},
+			Labels:    deployLabels,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -320,10 +328,7 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app":              "pipeline-stream",
-						"pipelineinstance": pipelineInstance.Name,
-					},
+					Labels: deployLabels,
 				},
 				Spec: corev1.PodSpec{
 					// No dedicated ServiceAccount required for streaming mode; default SA is sufficient

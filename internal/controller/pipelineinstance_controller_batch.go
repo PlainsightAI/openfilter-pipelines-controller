@@ -532,10 +532,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
 			Namespace: pipelineInstance.Namespace,
-			Labels: map[string]string{
-				"filter.plainsight.ai/instance":         instanceID,
-				"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
-			},
+			Labels:    buildPodLabels(instanceID, pipelineInstance),
 		},
 		Spec: batchv1.JobSpec{
 			CompletionMode:          ptr.To(batchv1.NonIndexedCompletion),
@@ -545,10 +542,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			TTLSecondsAfterFinished: ptr.To(int32(86400)), // 24 hours
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"filter.plainsight.ai/instance":         instanceID,
-						"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
-					},
+					Labels: buildPodLabels(instanceID, pipelineInstance),
 				},
 				Spec: corev1.PodSpec{
 					// No special ServiceAccount required; default SA is sufficient
@@ -1235,4 +1229,28 @@ func parseAttempts(value string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+// propagatedLabels is the whitelist of plainsight.ai/* labels that are copied
+// from PipelineInstance CR metadata to pod templates. Using a whitelist (not
+// prefix match) prevents unbounded cardinality in Loki from arbitrary labels.
+var propagatedLabels = []string{
+	"plainsight.ai/pipeline-instance-id",
+	"plainsight.ai/organization-id",
+	"plainsight.ai/project-id",
+}
+
+// buildPodLabels creates pod labels by merging the standard filter labels with
+// whitelisted plainsight.ai/* labels from the PipelineInstance CR.
+func buildPodLabels(instanceID string, pi *pipelinesv1alpha1.PipelineInstance) map[string]string {
+	labels := map[string]string{
+		"filter.plainsight.ai/instance":         instanceID,
+		"filter.plainsight.ai/pipelineinstance": pi.Name,
+	}
+	for _, key := range propagatedLabels {
+		if val, ok := pi.Labels[key]; ok {
+			labels[key] = val
+		}
+	}
+	return labels
 }

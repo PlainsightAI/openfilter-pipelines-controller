@@ -162,7 +162,7 @@ func TestBuildJob_PropagatesPlainsightLabels(t *testing.T) {
 
 	job := r.buildJob(t.Context(), pi, pipeline, ps, "test-job")
 
-	podLabels := job.Spec.Template.ObjectMeta.Labels
+	podLabels := job.Spec.Template.Labels
 	for k, want := range map[string]string{
 		"plainsight.ai/pipeline-instance-id": "pi-550e8400",
 		"plainsight.ai/organization-id":      "org-aaa",
@@ -202,8 +202,8 @@ func TestBuildStreamingDeployment_PropagatesPlainsightLabels(t *testing.T) {
 		name   string
 		labels map[string]string
 	}{
-		{"deployment", dep.ObjectMeta.Labels},
-		{"pod template", dep.Spec.Template.ObjectMeta.Labels},
+		{"deployment", dep.Labels},
+		{"pod template", dep.Spec.Template.Labels},
 	} {
 		for k, want := range map[string]string{
 			"plainsight.ai/pipeline-instance-id": "pi-550e8400",
@@ -221,8 +221,8 @@ func TestBuildStreamingDeployment_PropagatesPlainsightLabels(t *testing.T) {
 
 	// Defensive: mutating the pod template labels must not affect the deployment labels.
 	// This catches the shared-map-reference bug class.
-	dep.Spec.Template.ObjectMeta.Labels["mutation-test"] = "x"
-	if _, ok := dep.ObjectMeta.Labels["mutation-test"]; ok {
+	dep.Spec.Template.Labels["mutation-test"] = "x"
+	if _, ok := dep.Labels["mutation-test"]; ok {
 		t.Errorf("deployment labels and pod template labels share the same map")
 	}
 }

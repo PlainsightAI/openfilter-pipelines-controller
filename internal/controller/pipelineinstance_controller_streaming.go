@@ -320,26 +320,18 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 		}
 	}
 
-	// Build pod labels: base selector labels + whitelisted plainsight.ai/* from CR
-	streamLabels := map[string]string{
+	// Base labels used for deployment/pod selector (MUST stay stable — selector is immutable)
+	streamSelectorLabels := map[string]string{
 		"app":              "pipeline-stream",
 		"pipelineinstance": pipelineInstance.Name,
-	}
-	podLabels := map[string]string{
-		"app":              "pipeline-stream",
-		"pipelineinstance": pipelineInstance.Name,
-	}
-	for _, key := range propagatedLabels {
-		if val, ok := pipelineInstance.Labels[key]; ok {
-			podLabels[key] = val
-		}
 	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deploymentName,
 			Namespace: pipelineInstance.Namespace,
-			Labels:    podLabels,
+			// Fresh map per call site to avoid shared-map mutation bugs
+			Labels: mergeLabelsFromCR(streamSelectorLabels, pipelineInstance),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -351,11 +343,11 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 				},
 			},
 			Selector: &metav1.LabelSelector{
-				MatchLabels: streamLabels,
+				MatchLabels: streamSelectorLabels,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: podLabels,
+					Labels: mergeLabelsFromCR(streamSelectorLabels, pipelineInstance),
 				},
 				Spec: corev1.PodSpec{
 					// No dedicated ServiceAccount required for streaming mode; default SA is sufficient

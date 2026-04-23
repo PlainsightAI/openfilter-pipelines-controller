@@ -1240,12 +1240,14 @@ var propagatedLabels = []string{
 	"plainsight.ai/project-id",
 }
 
-// buildPodLabels creates pod labels by merging the standard filter labels with
-// whitelisted plainsight.ai/* labels from the PipelineInstance CR.
-func buildPodLabels(instanceID string, pi *pipelinesv1alpha1.PipelineInstance) map[string]string {
-	labels := map[string]string{
-		"filter.plainsight.ai/instance":         instanceID,
-		"filter.plainsight.ai/pipelineinstance": pi.Name,
+// mergeLabelsFromCR returns a fresh map that contains all base labels plus
+// whitelisted plainsight.ai/* labels from the PipelineInstance CR. A fresh
+// map is always returned to avoid shared-map mutation bugs across Deployment
+// metadata, pod template metadata, and selector matchLabels.
+func mergeLabelsFromCR(base map[string]string, pi *pipelinesv1alpha1.PipelineInstance) map[string]string {
+	labels := make(map[string]string, len(base)+len(propagatedLabels))
+	for k, v := range base {
+		labels[k] = v
 	}
 	for _, key := range propagatedLabels {
 		if val, ok := pi.Labels[key]; ok {
@@ -1253,4 +1255,12 @@ func buildPodLabels(instanceID string, pi *pipelinesv1alpha1.PipelineInstance) m
 		}
 	}
 	return labels
+}
+
+// buildPodLabels creates pod labels for the batch controller.
+func buildPodLabels(instanceID string, pi *pipelinesv1alpha1.PipelineInstance) map[string]string {
+	return mergeLabelsFromCR(map[string]string{
+		"filter.plainsight.ai/instance":         instanceID,
+		"filter.plainsight.ai/pipelineinstance": pi.Name,
+	}, pi)
 }

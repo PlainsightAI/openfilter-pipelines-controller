@@ -42,6 +42,14 @@ func TestMergeLabelsFromCR(t *testing.T) {
 			},
 		},
 		{
+			name:     "CR has nil labels (default)",
+			crLabels: nil,
+			expect: map[string]string{
+				"app":              "pipeline-stream",
+				"pipelineinstance": "pi-test",
+			},
+		},
+		{
 			name:     "CR has no propagated labels",
 			crLabels: map[string]string{},
 			expect: map[string]string{
@@ -162,18 +170,27 @@ func TestBuildJob_PropagatesPlainsightLabels(t *testing.T) {
 
 	job := r.buildJob(t.Context(), pi, pipeline, ps, "test-job")
 
-	podLabels := job.Spec.Template.Labels
-	for k, want := range map[string]string{
+	wantPropagated := map[string]string{
 		"plainsight.ai/pipeline-instance-id": "pi-550e8400",
 		"plainsight.ai/organization-id":      "org-aaa",
 		"plainsight.ai/project-id":           "proj-bbb",
-	} {
-		if podLabels[k] != want {
-			t.Errorf("job pod template missing %s=%s; got %q (all labels: %v)", k, want, podLabels[k], podLabels)
-		}
 	}
-	if _, ok := podLabels["plainsight.ai/request-id"]; ok {
-		t.Errorf("non-whitelisted label leaked into pod template labels: %v", podLabels)
+
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+	}{
+		{"job ObjectMeta", job.Labels},
+		{"pod template", job.Spec.Template.Labels},
+	} {
+		for k, want := range wantPropagated {
+			if tc.labels[k] != want {
+				t.Errorf("%s: missing %s=%s; got %q (all labels: %v)", tc.name, k, want, tc.labels[k], tc.labels)
+			}
+		}
+		if _, ok := tc.labels["plainsight.ai/request-id"]; ok {
+			t.Errorf("%s: non-whitelisted label leaked: %v", tc.name, tc.labels)
+		}
 	}
 }
 
@@ -217,6 +234,14 @@ func TestBuildStreamingDeployment_PropagatesPlainsightLabels(t *testing.T) {
 		if _, ok := tc.labels["plainsight.ai/build-sha"]; ok {
 			t.Errorf("%s: non-whitelisted label leaked: %v", tc.name, tc.labels)
 		}
+	}
+
+	// Selector must contain ONLY the base labels. If propagated labels leak
+	// into MatchLabels and a label later changes on the CR, the Deployment
+	// will orphan its existing pods (selector is immutable after creation).
+	sel := dep.Spec.Selector.MatchLabels
+	if len(sel) != 2 || sel["app"] != "pipeline-stream" || sel["pipelineinstance"] != pi.Name {
+		t.Errorf("selector must contain only base labels, got: %v", sel)
 	}
 
 	// Defensive: mutating the pod template labels must not affect the deployment labels.

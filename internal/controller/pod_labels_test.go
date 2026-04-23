@@ -107,9 +107,9 @@ func TestMergeLabelsFromCR_FreshMap(t *testing.T) {
 	m1 := mergeLabelsFromCR(base, pi)
 	m2 := mergeLabelsFromCR(base, pi)
 
-	m1["mutation-test"] = "mutated"
+	m1["mutation-test"] = "test-value"
 	if _, ok := m2["mutation-test"]; ok {
-		t.Error("m2 was mutated by m1 — maps share underlying reference")
+		t.Error("m2 was affected by m1 — maps share underlying reference")
 	}
 }
 

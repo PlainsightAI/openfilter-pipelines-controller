@@ -139,3 +139,90 @@ func TestBuildPodLabels(t *testing.T) {
 		t.Errorf("non-whitelisted label must NOT propagate: got %v", labels)
 	}
 }
+
+// TestBuildJob_PropagatesPlainsightLabels is an integration test proving the
+// label whitelist flows end-to-end through buildJob into the resulting Job's
+// pod template. This guards against someone later skipping buildPodLabels /
+// mergeLabelsFromCR in the builder.
+func TestBuildJob_PropagatesPlainsightLabels(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	pi.Labels = map[string]string{
+		"plainsight.ai/pipeline-instance-id": "pi-550e8400",
+		"plainsight.ai/organization-id":      "org-aaa",
+		"plainsight.ai/project-id":           "proj-bbb",
+		"plainsight.ai/request-id":           "should-NOT-propagate",
+	}
+	ps := makeMinimalPipelineSource()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{{Name: "f", Image: "f:latest"}},
+		},
+	}
+
+	job := r.buildJob(t.Context(), pi, pipeline, ps, "test-job")
+
+	podLabels := job.Spec.Template.ObjectMeta.Labels
+	for k, want := range map[string]string{
+		"plainsight.ai/pipeline-instance-id": "pi-550e8400",
+		"plainsight.ai/organization-id":      "org-aaa",
+		"plainsight.ai/project-id":           "proj-bbb",
+	} {
+		if podLabels[k] != want {
+			t.Errorf("job pod template missing %s=%s; got %q (all labels: %v)", k, want, podLabels[k], podLabels)
+		}
+	}
+	if _, ok := podLabels["plainsight.ai/request-id"]; ok {
+		t.Errorf("non-whitelisted label leaked into pod template labels: %v", podLabels)
+	}
+}
+
+// TestBuildStreamingDeployment_PropagatesPlainsightLabels is the streaming
+// counterpart. Validates both the Deployment's ObjectMeta labels and the pod
+// template labels, and confirms the map references are not shared.
+func TestBuildStreamingDeployment_PropagatesPlainsightLabels(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	pi.Labels = map[string]string{
+		"plainsight.ai/pipeline-instance-id": "pi-550e8400",
+		"plainsight.ai/organization-id":      "org-aaa",
+		"plainsight.ai/project-id":           "proj-bbb",
+		"plainsight.ai/build-sha":            "should-NOT-propagate",
+	}
+	ps := makeMinimalPipelineSource()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{{Name: "f", Image: "f:latest"}},
+		},
+	}
+
+	dep := r.buildStreamingDeployment(pi, pipeline, ps, "test-deploy")
+
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+	}{
+		{"deployment", dep.ObjectMeta.Labels},
+		{"pod template", dep.Spec.Template.ObjectMeta.Labels},
+	} {
+		for k, want := range map[string]string{
+			"plainsight.ai/pipeline-instance-id": "pi-550e8400",
+			"plainsight.ai/organization-id":      "org-aaa",
+			"plainsight.ai/project-id":           "proj-bbb",
+		} {
+			if tc.labels[k] != want {
+				t.Errorf("%s: missing %s=%s; got %q (all: %v)", tc.name, k, want, tc.labels[k], tc.labels)
+			}
+		}
+		if _, ok := tc.labels["plainsight.ai/build-sha"]; ok {
+			t.Errorf("%s: non-whitelisted label leaked: %v", tc.name, tc.labels)
+		}
+	}
+
+	// Defensive: mutating the pod template labels must not affect the deployment labels.
+	// This catches the shared-map-reference bug class.
+	dep.Spec.Template.ObjectMeta.Labels["mutation-test"] = "x"
+	if _, ok := dep.ObjectMeta.Labels["mutation-test"]; ok {
+		t.Errorf("deployment labels and pod template labels share the same map")
+	}
+}

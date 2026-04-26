@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 
@@ -60,6 +61,18 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// validateTelemetryFlags ensures the telemetry exporter flags are either both
+// set or both empty. A half-configured state (one set, the other empty) silently
+// disables exporter injection without surfacing the misconfiguration, which is
+// the most common operator footgun: the operator notices traces aren't reaching
+// the collector but the controller logs no error.
+func validateTelemetryFlags(telemetryType, telemetryEndpoint string) error {
+	if (telemetryType == "") != (telemetryEndpoint == "") {
+		return fmt.Errorf("--telemetry-exporter-type and --telemetry-exporter-otlp-endpoint must both be set together to enable tracing injection, or both must be empty to disable it (got type=%q, endpoint=%q)", telemetryType, telemetryEndpoint)
+	}
+	return nil
 }
 
 // parseNodeSelectorLabels parses a comma-separated list of key=value pairs into a map.
@@ -164,6 +177,14 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Reject the half-configured state where exactly one of the telemetry
+	// exporter flags is set. Silently disabling injection in that case would
+	// hide the misconfiguration from the operator.
+	if err := validateTelemetryFlags(telemetryExporterType, telemetryExporterEndpoint); err != nil {
+		setupLog.Error(err, "invalid telemetry exporter configuration")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will

@@ -451,8 +451,10 @@ func TestBuildJob_FilterEnvOverridesTracingEnv(t *testing.T) {
 
 	// Both entries will be present in the env list (Kubernetes does not dedupe);
 	// what matters is that the user-supplied value appears AFTER the
-	// controller-injected one so that the Pod's effective env (last-write-wins
-	// in the API server's eyes for duplicate names) reflects the user choice.
+	// controller-injected one. Per kubelet's effective-env construction: when
+	// a Pod env list contains duplicate entries with the same Name, the last
+	// one with that Name wins on the running container. (This is implementation
+	// behavior of kubelet/CRI, not a documented API guarantee.)
 	var sawController, sawUser bool
 	var userIndex, controllerIndex int
 	for i, e := range env {

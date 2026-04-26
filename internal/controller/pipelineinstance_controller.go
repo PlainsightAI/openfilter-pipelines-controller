@@ -72,6 +72,19 @@ const (
 
 	// FinalizerStreamingCleanup ensures streaming resources (Deployment, Services) are cleaned up on deletion.
 	FinalizerStreamingCleanup = "filter.plainsight.ai/streaming-cleanup"
+
+	// TraceparentAnnotation is the PipelineInstance annotation key carrying the
+	// W3C `traceparent` header that the upstream span context wrote during the
+	// API → controller → filter handoff. The controller copies it into the
+	// TRACEPARENT env var on each filter container so openfilter's OTel SDK
+	// continues the trace. Owned cross-repo with plainsight-deployment-agent
+	// (PLAT-851), which writes the same key.
+	TraceparentAnnotation = "traces.opentelemetry.io/traceparent"
+
+	// TracestateAnnotation is the PipelineInstance annotation key carrying the
+	// W3C `tracestate` header. Propagated as TRACESTATE env var alongside
+	// TRACEPARENT so vendor-specific trace context survives the controller hop.
+	TracestateAnnotation = "traces.opentelemetry.io/tracestate"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations

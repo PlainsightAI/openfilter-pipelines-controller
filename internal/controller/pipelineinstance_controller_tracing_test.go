@@ -38,7 +38,7 @@ func TestBuildJob_TraceparentInjectedFromAnnotation(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
+		TraceparentAnnotation: testTraceparent,
 	}
 	ps := makeMinimalPipelineSource()
 
@@ -74,7 +74,7 @@ func TestBuildJob_TraceparentNotInjectedForEmptyAnnotationValue(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": "",
+		TraceparentAnnotation: "",
 	}
 	ps := makeMinimalPipelineSource()
 
@@ -90,8 +90,8 @@ func TestBuildJob_TracestateInjectedFromAnnotation(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
-		"traces.opentelemetry.io/tracestate":  testTracestate,
+		TraceparentAnnotation: testTraceparent,
+		TracestateAnnotation:  testTracestate,
 	}
 	ps := makeMinimalPipelineSource()
 
@@ -114,7 +114,7 @@ func TestBuildJob_TracestateNotInjectedWithoutAnnotation(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
+		TraceparentAnnotation: testTraceparent,
 	}
 	ps := makeMinimalPipelineSource()
 
@@ -133,8 +133,8 @@ func TestBuildJob_TracestateNotInjectedForEmptyAnnotationValue(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
-		"traces.opentelemetry.io/tracestate":  "",
+		TraceparentAnnotation: testTraceparent,
+		TracestateAnnotation:  "",
 	}
 	ps := makeMinimalPipelineSource()
 
@@ -222,8 +222,8 @@ func TestBuildJob_AllTracingEnvCombined(t *testing.T) {
 	r.TelemetryExporterEndpoint = testExporterEndpoint
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
-		"traces.opentelemetry.io/tracestate":  testTracestate,
+		TraceparentAnnotation: testTraceparent,
+		TracestateAnnotation:  testTracestate,
 	}
 	ps := makeMinimalPipelineSource()
 
@@ -256,7 +256,7 @@ func TestBuildStreamingDeployment_TraceparentInjectedFromAnnotation(t *testing.T
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
+		TraceparentAnnotation: testTraceparent,
 	}
 
 	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
@@ -275,8 +275,8 @@ func TestBuildStreamingDeployment_TracestateInjectedFromAnnotation(t *testing.T)
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
-		"traces.opentelemetry.io/tracestate":  testTracestate,
+		TraceparentAnnotation: testTraceparent,
+		TracestateAnnotation:  testTracestate,
 	}
 
 	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
@@ -297,7 +297,7 @@ func TestBuildStreamingDeployment_TracestateNotInjectedWithoutAnnotation(t *test
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
+		TraceparentAnnotation: testTraceparent,
 	}
 
 	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
@@ -315,8 +315,8 @@ func TestBuildStreamingDeployment_TracestateNotInjectedForEmptyAnnotationValue(t
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
-		"traces.opentelemetry.io/tracestate":  "",
+		TraceparentAnnotation: testTraceparent,
+		TracestateAnnotation:  "",
 	}
 
 	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
@@ -393,8 +393,8 @@ func TestBuildStreamingDeployment_AllTracingEnvCombined(t *testing.T) {
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
-		"traces.opentelemetry.io/tracestate":  testTracestate,
+		TraceparentAnnotation: testTraceparent,
+		TracestateAnnotation:  testTracestate,
 	}
 
 	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
@@ -427,7 +427,7 @@ func TestBuildJob_FilterEnvOverridesTracingEnv(t *testing.T) {
 	r.TelemetryExporterEndpoint = testExporterEndpoint
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
-		"traces.opentelemetry.io/traceparent": testTraceparent,
+		TraceparentAnnotation: testTraceparent,
 	}
 	ps := makeMinimalPipelineSource()
 

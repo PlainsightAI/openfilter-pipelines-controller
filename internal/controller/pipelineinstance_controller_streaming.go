@@ -312,13 +312,13 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 		envVars = append(envVars, corev1.EnvVar{Name: "PIPELINE_INSTANCE_UID", Value: string(pipelineInstance.UID)})
 
 		// Inject traceparent from PipelineInstance CR annotation for distributed tracing
-		if tp, ok := pipelineInstance.Annotations["traces.opentelemetry.io/traceparent"]; ok && tp != "" {
+		if tp, ok := pipelineInstance.Annotations[TraceparentAnnotation]; ok && tp != "" {
 			envVars = append(envVars, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
 		}
 		// Inject tracestate alongside traceparent so the W3C propagator preserves
 		// vendor-specific trace context across the controller hop. Skip empty/missing
 		// annotations — the upstream chain may legitimately have no tracestate.
-		if ts, ok := pipelineInstance.Annotations["traces.opentelemetry.io/tracestate"]; ok && ts != "" {
+		if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
 			envVars = append(envVars, corev1.EnvVar{Name: "TRACESTATE", Value: ts})
 		}
 		if r.TelemetryExporterType != "" {

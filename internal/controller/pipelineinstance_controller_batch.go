@@ -495,36 +495,16 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			}
 		}
 
-		// PIPELINE_ID is intentionally NOT injected here.
-		// On Plainsight clusters, plainsight-deployment-agent owns PIPELINE_ID and
-		// writes the canonical bare instance UUID directly into each filter's env
-		// (see plainsight-deployment-agent/internal/kubernetes/client.go). Injecting
-		// it here as `pipelineInstance.Name` (e.g. "pi-<uuid>") would conflict with
-		// the agent's value, and kubelet's last-write-wins semantics make the result
-		// non-deterministic to reason about. On OSS clusters there is no agent, so
-		// PIPELINE_ID stays unset — openfilter's `pipeline.id` span attribute is
-		// then absent (safe), and OSS users who want it can set it via Filter.Env.
-		// PIPELINE_INSTANCE_UID is unambiguously the k8s UID and has no overlap
-		// with the agent's value, so we keep injecting it.
-		containerEnv = append(containerEnv, corev1.EnvVar{Name: "PIPELINE_INSTANCE_UID", Value: string(pipelineInstance.UID)})
+		// Inject distributed-tracing context and OTel exporter config. See
+		// (*PipelineInstanceReconciler).tracingEnvVars for cross-repo invariants
+		// (annotation keys, env var names, why PIPELINE_ID is intentionally
+		// not set here).
+		containerEnv = append(containerEnv, r.tracingEnvVars(pipelineInstance)...)
 
-		// Inject traceparent from PipelineInstance CR annotation for distributed tracing
-		if tp, ok := pipelineInstance.Annotations[TraceparentAnnotation]; ok && tp != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
-		}
-		// Inject tracestate alongside traceparent so the W3C propagator preserves
-		// vendor-specific trace context across the controller hop. Skip empty/missing
-		// annotations — the upstream chain may legitimately have no tracestate.
-		if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TRACESTATE", Value: ts})
-		}
-		if r.TelemetryExporterType != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
-		}
-		if r.TelemetryExporterOTLPEndpoint != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterOTLPEndpoint})
-		}
-
+		// User-supplied filter.Env appears AFTER controller-injected env so
+		// that kubelet's effective-env construction (last entry with a given
+		// Name wins on the running container) reflects the user's choice for
+		// any duplicated names.
 		containerEnv = append(containerEnv, filter.Env...)
 
 		container := corev1.Container{

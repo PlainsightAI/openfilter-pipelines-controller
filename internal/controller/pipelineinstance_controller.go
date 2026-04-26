@@ -516,6 +516,50 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 	return pipeline, nil
 }
 
+// tracingEnvVars returns the env vars the controller injects into every
+// filter container to propagate distributed-tracing context and configure
+// openfilter's OTel exporter. The slice is appended to the container's env
+// list BEFORE the user-supplied filter.Env, so any user-set entry with the
+// same Name appears later and wins under kubelet's effective-env semantics.
+//
+// Cross-repo invariants kept here:
+//   - TRACEPARENT / TRACESTATE annotation keys are owned jointly with
+//     plainsight-deployment-agent (PLAT-851). See {Traceparent,Tracestate}Annotation.
+//   - Env var names (TRACEPARENT, TRACESTATE, TELEMETRY_EXPORTER_TYPE,
+//     TELEMETRY_EXPORTER_OTLP_ENDPOINT, PIPELINE_INSTANCE_UID) are read
+//     verbatim by openfilter (PLAT-848); do not rename without coordinating
+//     with that repo.
+//   - PIPELINE_ID is intentionally NOT injected here. plainsight-deployment-agent
+//     owns it on Plainsight clusters and writes the canonical bare instance
+//     UUID. On OSS clusters it stays unset; openfilter's `pipeline.id` span
+//     attribute will be absent (safe), and OSS users can set it via Filter.Env
+//     if they want it.
+func (r *PipelineInstanceReconciler) tracingEnvVars(pipelineInstance *pipelinesv1alpha1.PipelineInstance) []corev1.EnvVar {
+	envVars := make([]corev1.EnvVar, 0, 5)
+
+	envVars = append(envVars, corev1.EnvVar{Name: "PIPELINE_INSTANCE_UID", Value: string(pipelineInstance.UID)})
+
+	if tp, ok := pipelineInstance.Annotations[TraceparentAnnotation]; ok && tp != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
+	}
+	// tracestate is propagated only when traceparent is also present (the
+	// W3C propagator requires the parent context to interpret it). Skipping
+	// empty/missing tracestate is intentional — the upstream chain may
+	// legitimately have no vendor-specific state to forward.
+	if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TRACESTATE", Value: ts})
+	}
+
+	if r.TelemetryExporterType != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
+	}
+	if r.TelemetryExporterOTLPEndpoint != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterOTLPEndpoint})
+	}
+
+	return envVars
+}
+
 // setCondition sets or updates a condition in the PipelineInstance status
 func (r *PipelineInstanceReconciler) setCondition(pipelineInstance *pipelinesv1alpha1.PipelineInstance, conditionType string, status metav1.ConditionStatus, reason, message string) {
 	condition := metav1.Condition{

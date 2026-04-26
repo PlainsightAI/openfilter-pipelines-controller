@@ -153,7 +153,13 @@ gpuBinPath: "/usr/local/nvidia/bin"
 # spawns. When non-empty, the controller appends TELEMETRY_EXPORTER_TYPE and
 # TELEMETRY_EXPORTER_OTLP_ENDPOINT to the filter container env so openfilter's
 # OTel client ships spans/metrics to the configured collector. Both empty
-# disables injection (openfilter falls back to its silent exporter).
+# disables injection (openfilter falls back to its silent exporter). The
+# controller validates these on startup: setting one without the other is
+# rejected at boot rather than silently disabling injection.
+#
+# Example to enable (uncomment and adjust to your collector):
+#   telemetryExporterType: otlp_grpc
+#   telemetryExporterEndpoint: otel-collector.monitoring.svc.cluster.local:4317
 telemetryExporterType: ""
 telemetryExporterEndpoint: ""
 

@@ -476,28 +476,27 @@ func TestBuildJob_FilterEnvOverridesTracingEnv(t *testing.T) {
 	}
 }
 
-// PIPELINE_ID and PIPELINE_INSTANCE_UID must always be injected from
-// PipelineInstance CR metadata (unlike TRACEPARENT and TELEMETRY_EXPORTER_*,
-// which are conditional). openfilter's filter-runtime uses PIPELINE_ID to
-// populate the pipeline.id attribute on every process() span, which is how
-// operators group/filter spans by pipeline in Cloud Trace.
-func TestBuildJob_PipelineIDAlwaysInjected(t *testing.T) {
+// PIPELINE_ID is NOT injected by this controller. On Plainsight clusters,
+// plainsight-deployment-agent owns PIPELINE_ID and writes the canonical bare
+// instance UUID directly into each filter's env (see
+// plainsight-deployment-agent/internal/kubernetes/client.go). The controller
+// would otherwise inject `pipelineInstance.Name` (e.g. "pi-<uuid>"), which
+// disagrees with the agent's value and produces non-deterministic kubelet
+// last-write-wins semantics. PIPELINE_INSTANCE_UID has no such conflict and
+// IS always injected from CR metadata.
+func TestBuildJob_PipelineIDNotInjectedByController(t *testing.T) {
 	r := makeMinimalReconciler()
 	// Deliberately leave all optional tracing knobs unset: no TRACEPARENT
-	// annotation, no reconciler telemetry fields. PIPELINE_ID / PIPELINE_INSTANCE_UID
-	// must still be present — they are unconditional from CR metadata.
+	// annotation, no reconciler telemetry fields. PIPELINE_INSTANCE_UID
+	// must still be present — it is unconditional from CR metadata.
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
 	job := r.buildJob(context.Background(), pi, makeTracingFilterPipeline(), ps, "test-job")
 	env := job.Spec.Template.Spec.Containers[0].Env
 
-	pid, ok := findEnvVar(env, "PIPELINE_ID")
-	if !ok {
-		t.Fatal("expected PIPELINE_ID env var to always be injected")
-	}
-	if pid.Value != pi.Name {
-		t.Errorf("expected PIPELINE_ID=%q, got %q", pi.Name, pid.Value)
+	if _, ok := findEnvVar(env, "PIPELINE_ID"); ok {
+		t.Error("expected PIPELINE_ID NOT to be injected by the controller; the deployment-agent owns this env var on Plainsight clusters")
 	}
 
 	uid, ok := findEnvVar(env, "PIPELINE_INSTANCE_UID")
@@ -508,8 +507,7 @@ func TestBuildJob_PipelineIDAlwaysInjected(t *testing.T) {
 		t.Errorf("expected PIPELINE_INSTANCE_UID=%q, got %q", string(pi.UID), uid.Value)
 	}
 
-	// Sanity-check: the optional tracing vars really are absent in this config,
-	// so we know PIPELINE_ID injection doesn't depend on them.
+	// Sanity-check: the optional tracing vars really are absent in this config.
 	if _, ok := findEnvVar(env, "TRACEPARENT"); ok {
 		t.Error("TRACEPARENT should not be set in this test — helper assumption broken")
 	}
@@ -518,19 +516,15 @@ func TestBuildJob_PipelineIDAlwaysInjected(t *testing.T) {
 	}
 }
 
-func TestBuildStreamingDeployment_PipelineIDAlwaysInjected(t *testing.T) {
+func TestBuildStreamingDeployment_PipelineIDNotInjectedByController(t *testing.T) {
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
 
 	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
-	pid, ok := findEnvVar(env, "PIPELINE_ID")
-	if !ok {
-		t.Fatal("expected PIPELINE_ID env var to always be injected")
-	}
-	if pid.Value != pi.Name {
-		t.Errorf("expected PIPELINE_ID=%q, got %q", pi.Name, pid.Value)
+	if _, ok := findEnvVar(env, "PIPELINE_ID"); ok {
+		t.Error("expected PIPELINE_ID NOT to be injected by the controller; the deployment-agent owns this env var on Plainsight clusters")
 	}
 
 	uid, ok := findEnvVar(env, "PIPELINE_INSTANCE_UID")

@@ -495,9 +495,17 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			}
 		}
 
-		// Always inject pipeline identity from CR metadata so filter spans
-		// can be grouped/filtered by pipeline in Cloud Trace.
-		containerEnv = append(containerEnv, corev1.EnvVar{Name: "PIPELINE_ID", Value: pipelineInstance.Name})
+		// PIPELINE_ID is intentionally NOT injected here.
+		// On Plainsight clusters, plainsight-deployment-agent owns PIPELINE_ID and
+		// writes the canonical bare instance UUID directly into each filter's env
+		// (see plainsight-deployment-agent/internal/kubernetes/client.go). Injecting
+		// it here as `pipelineInstance.Name` (e.g. "pi-<uuid>") would conflict with
+		// the agent's value, and kubelet's last-write-wins semantics make the result
+		// non-deterministic to reason about. On OSS clusters there is no agent, so
+		// PIPELINE_ID stays unset — openfilter's `pipeline.id` span attribute is
+		// then absent (safe), and OSS users who want it can set it via Filter.Env.
+		// PIPELINE_INSTANCE_UID is unambiguously the k8s UID and has no overlap
+		// with the agent's value, so we keep injecting it.
 		containerEnv = append(containerEnv, corev1.EnvVar{Name: "PIPELINE_INSTANCE_UID", Value: string(pipelineInstance.UID)})
 
 		// Inject traceparent from PipelineInstance CR annotation for distributed tracing

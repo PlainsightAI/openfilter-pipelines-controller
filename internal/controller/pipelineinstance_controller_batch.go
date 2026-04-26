@@ -521,8 +521,8 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		if r.TelemetryExporterType != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
 		}
-		if r.TelemetryExporterEndpoint != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterEndpoint})
+		if r.TelemetryExporterOTLPEndpoint != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterOTLPEndpoint})
 		}
 
 		containerEnv = append(containerEnv, filter.Env...)

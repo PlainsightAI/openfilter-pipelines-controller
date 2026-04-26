@@ -118,12 +118,12 @@ type PipelineInstanceReconciler struct {
 	GPULibraryPath        string            // Value injected as LD_LIBRARY_PATH for GPU containers; empty string disables injection
 	GPUBinPath            string            // Value injected as OPENFILTER_APPEND_PATH for GPU containers; empty string disables injection
 
-	// TelemetryExporterType and TelemetryExporterEndpoint are injected into filter
-	// containers as TELEMETRY_EXPORTER_TYPE and TELEMETRY_EXPORTER_OTLP_ENDPOINT so
-	// openfilter's OTel client ships spans and metrics to the configured collector.
+	// TelemetryExporterType and TelemetryExporterOTLPEndpoint are injected into
+	// filter containers as TELEMETRY_EXPORTER_TYPE and TELEMETRY_EXPORTER_OTLP_ENDPOINT
+	// so openfilter's OTel client ships spans and metrics to the configured collector.
 	// Both empty disables injection and openfilter falls back to its silent exporter.
-	TelemetryExporterType     string
-	TelemetryExporterEndpoint string
+	TelemetryExporterType         string
+	TelemetryExporterOTLPEndpoint string
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete

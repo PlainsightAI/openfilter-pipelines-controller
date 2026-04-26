@@ -324,8 +324,8 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 		if r.TelemetryExporterType != "" {
 			envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
 		}
-		if r.TelemetryExporterEndpoint != "" {
-			envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterEndpoint})
+		if r.TelemetryExporterOTLPEndpoint != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterOTLPEndpoint})
 		}
 
 		// Add user-defined env vars

@@ -111,7 +111,7 @@ func main() {
 	var gpuLibraryPath string
 	var gpuBinPath string
 	var telemetryExporterType string
-	var telemetryExporterEndpoint string
+	var telemetryExporterOTLPEndpoint string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -150,7 +150,7 @@ func main() {
 		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp_grpc'). "+
 			"Empty string disables injection and openfilter falls back to its silent exporter. "+
 			"Can also be set via TELEMETRY_EXPORTER_TYPE env var.")
-	flag.StringVar(&telemetryExporterEndpoint, "telemetry-exporter-otlp-endpoint",
+	flag.StringVar(&telemetryExporterOTLPEndpoint, "telemetry-exporter-otlp-endpoint",
 		getEnvOrDefault("TELEMETRY_EXPORTER_OTLP_ENDPOINT", ""),
 		"Value injected as TELEMETRY_EXPORTER_OTLP_ENDPOINT into filter containers "+
 			"(e.g. 'otel-collector.monitoring.svc.cluster.local:4317'). Empty string disables injection. "+
@@ -181,7 +181,7 @@ func main() {
 	// Reject the half-configured state where exactly one of the telemetry
 	// exporter flags is set. Silently disabling injection in that case would
 	// hide the misconfiguration from the operator.
-	if err := validateTelemetryFlags(telemetryExporterType, telemetryExporterEndpoint); err != nil {
+	if err := validateTelemetryFlags(telemetryExporterType, telemetryExporterOTLPEndpoint); err != nil {
 		setupLog.Error(err, "invalid telemetry exporter configuration")
 		os.Exit(1)
 	}
@@ -307,8 +307,8 @@ func main() {
 		GPUNodeSelectorLabels:     parseNodeSelectorLabels(gpuNodeSelector),
 		GPULibraryPath:            gpuLibraryPath,
 		GPUBinPath:                gpuBinPath,
-		TelemetryExporterType:     telemetryExporterType,
-		TelemetryExporterEndpoint: telemetryExporterEndpoint,
+		TelemetryExporterType:         telemetryExporterType,
+		TelemetryExporterOTLPEndpoint: telemetryExporterOTLPEndpoint,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")
 		os.Exit(1)

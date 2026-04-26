@@ -166,7 +166,7 @@ func TestBuildJob_NeitherTracingAnnotationInjectsNothing(t *testing.T) {
 func TestBuildJob_TelemetryExporterEnvInjectedWhenReconcilerConfigured(t *testing.T) {
 	r := makeMinimalReconciler()
 	r.TelemetryExporterType = testExporterType
-	r.TelemetryExporterEndpoint = testExporterEndpoint
+	r.TelemetryExporterOTLPEndpoint = testExporterEndpoint
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
@@ -219,7 +219,7 @@ func TestBuildJob_AllTracingEnvCombined(t *testing.T) {
 	// (a) ship spans, and (b) attach them to the parent trace.
 	r := makeMinimalReconciler()
 	r.TelemetryExporterType = testExporterType
-	r.TelemetryExporterEndpoint = testExporterEndpoint
+	r.TelemetryExporterOTLPEndpoint = testExporterEndpoint
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
 		TraceparentAnnotation: testTraceparent,
@@ -346,7 +346,7 @@ func TestBuildStreamingDeployment_NeitherTracingAnnotationInjectsNothing(t *test
 func TestBuildStreamingDeployment_TelemetryExporterEnvInjectedWhenReconcilerConfigured(t *testing.T) {
 	r := &PipelineInstanceReconciler{
 		TelemetryExporterType:     testExporterType,
-		TelemetryExporterEndpoint: testExporterEndpoint,
+		TelemetryExporterOTLPEndpoint: testExporterEndpoint,
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 
@@ -389,7 +389,7 @@ func TestBuildStreamingDeployment_TelemetryExporterEnvNotInjectedByDefault(t *te
 func TestBuildStreamingDeployment_AllTracingEnvCombined(t *testing.T) {
 	r := &PipelineInstanceReconciler{
 		TelemetryExporterType:     testExporterType,
-		TelemetryExporterEndpoint: testExporterEndpoint,
+		TelemetryExporterOTLPEndpoint: testExporterEndpoint,
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 	pi.Annotations = map[string]string{
@@ -424,7 +424,7 @@ func TestBuildStreamingDeployment_AllTracingEnvCombined(t *testing.T) {
 func TestBuildJob_FilterEnvOverridesTracingEnv(t *testing.T) {
 	r := makeMinimalReconciler()
 	r.TelemetryExporterType = testExporterType
-	r.TelemetryExporterEndpoint = testExporterEndpoint
+	r.TelemetryExporterOTLPEndpoint = testExporterEndpoint
 	pi := makeMinimalPipelineInstance()
 	pi.Annotations = map[string]string{
 		TraceparentAnnotation: testTraceparent,

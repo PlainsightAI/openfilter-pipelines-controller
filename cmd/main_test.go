@@ -2,8 +2,62 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestValidateTelemetryFlags(t *testing.T) {
+	tests := []struct {
+		name         string
+		exporterType string
+		endpoint     string
+		wantErr      bool
+	}{
+		{
+			name:         "both empty disables injection — OK",
+			exporterType: "",
+			endpoint:     "",
+			wantErr:      false,
+		},
+		{
+			name:         "both set enables injection — OK",
+			exporterType: "otlp_grpc",
+			endpoint:     "otel-collector.monitoring.svc.cluster.local:4317",
+			wantErr:      false,
+		},
+		{
+			name:         "only type set is rejected (half-configured)",
+			exporterType: "otlp_grpc",
+			endpoint:     "",
+			wantErr:      true,
+		},
+		{
+			name:         "only endpoint set is rejected (half-configured)",
+			exporterType: "",
+			endpoint:     "otel-collector.monitoring.svc.cluster.local:4317",
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTelemetryFlags(tt.exporterType, tt.endpoint)
+			if tt.wantErr && err == nil {
+				t.Errorf("validateTelemetryFlags(%q, %q) expected error, got nil", tt.exporterType, tt.endpoint)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("validateTelemetryFlags(%q, %q) unexpected error: %v", tt.exporterType, tt.endpoint, err)
+			}
+			if tt.wantErr && err != nil {
+				// Ensure error mentions both flag names so operators can find the misconfig fast.
+				msg := err.Error()
+				if !strings.Contains(msg, "telemetry-exporter-type") || !strings.Contains(msg, "telemetry-exporter-otlp-endpoint") {
+					t.Errorf("expected error message to mention both flag names, got: %q", msg)
+				}
+			}
+		})
+	}
+}
 
 func TestParseNodeSelectorLabels(t *testing.T) {
 	tests := []struct {

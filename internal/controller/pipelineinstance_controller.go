@@ -72,6 +72,19 @@ const (
 
 	// FinalizerStreamingCleanup ensures streaming resources (Deployment, Services) are cleaned up on deletion.
 	FinalizerStreamingCleanup = "filter.plainsight.ai/streaming-cleanup"
+
+	// TraceparentAnnotation is the PipelineInstance annotation key carrying the
+	// W3C `traceparent` header that the upstream span context wrote during the
+	// API → controller → filter handoff. The controller copies it into the
+	// TRACEPARENT env var on each filter container so openfilter's OTel SDK
+	// continues the trace. Owned cross-repo with plainsight-deployment-agent
+	// (PLAT-851), which writes the same key.
+	TraceparentAnnotation = "traces.opentelemetry.io/traceparent"
+
+	// TracestateAnnotation is the PipelineInstance annotation key carrying the
+	// W3C `tracestate` header. Propagated as TRACESTATE env var alongside
+	// TRACEPARENT so vendor-specific trace context survives the controller hop.
+	TracestateAnnotation = "traces.opentelemetry.io/tracestate"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations
@@ -104,6 +117,13 @@ type PipelineInstanceReconciler struct {
 	GPUNodeSelectorLabels map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
 	GPULibraryPath        string            // Value injected as LD_LIBRARY_PATH for GPU containers; empty string disables injection
 	GPUBinPath            string            // Value injected as OPENFILTER_APPEND_PATH for GPU containers; empty string disables injection
+
+	// TelemetryExporterType and TelemetryExporterOTLPEndpoint are injected into
+	// filter containers as TELEMETRY_EXPORTER_TYPE and TELEMETRY_EXPORTER_OTLP_ENDPOINT
+	// so openfilter's OTel client ships spans and metrics to the configured collector.
+	// Both empty disables injection and openfilter falls back to its silent exporter.
+	TelemetryExporterType         string
+	TelemetryExporterOTLPEndpoint string
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete
@@ -494,6 +514,50 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 	}
 
 	return pipeline, nil
+}
+
+// tracingEnvVars returns the env vars the controller injects into every
+// filter container to propagate distributed-tracing context and configure
+// openfilter's OTel exporter. The slice is appended to the container's env
+// list BEFORE the user-supplied filter.Env, so any user-set entry with the
+// same Name appears later and wins under kubelet's effective-env semantics.
+//
+// Cross-repo invariants kept here:
+//   - TRACEPARENT / TRACESTATE annotation keys are owned jointly with
+//     plainsight-deployment-agent (PLAT-851). See {Traceparent,Tracestate}Annotation.
+//   - Env var names (TRACEPARENT, TRACESTATE, TELEMETRY_EXPORTER_TYPE,
+//     TELEMETRY_EXPORTER_OTLP_ENDPOINT, PIPELINE_INSTANCE_UID) are read
+//     verbatim by openfilter (PLAT-848); do not rename without coordinating
+//     with that repo.
+//   - PIPELINE_ID is intentionally NOT injected here. plainsight-deployment-agent
+//     owns it on Plainsight clusters and writes the canonical bare instance
+//     UUID. On OSS clusters it stays unset; openfilter's `pipeline.id` span
+//     attribute will be absent (safe), and OSS users can set it via Filter.Env
+//     if they want it.
+func (r *PipelineInstanceReconciler) tracingEnvVars(pipelineInstance *pipelinesv1alpha1.PipelineInstance) []corev1.EnvVar {
+	envVars := make([]corev1.EnvVar, 0, 5)
+
+	envVars = append(envVars, corev1.EnvVar{Name: "PIPELINE_INSTANCE_UID", Value: string(pipelineInstance.UID)})
+
+	if tp, ok := pipelineInstance.Annotations[TraceparentAnnotation]; ok && tp != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
+		// tracestate is propagated only when traceparent is also present (the
+		// W3C propagator requires the parent context to interpret it). Skipping
+		// empty/missing tracestate is intentional — the upstream chain may
+		// legitimately have no vendor-specific state to forward.
+		if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: "TRACESTATE", Value: ts})
+		}
+	}
+
+	if r.TelemetryExporterType != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
+	}
+	if r.TelemetryExporterOTLPEndpoint != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterOTLPEndpoint})
+	}
+
+	return envVars
 }
 
 // setCondition sets or updates a condition in the PipelineInstance status

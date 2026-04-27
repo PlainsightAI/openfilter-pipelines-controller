@@ -298,7 +298,16 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 			}
 		}
 
-		// Add user-defined env vars
+		// Inject distributed-tracing context and OTel exporter config. See
+		// (*PipelineInstanceReconciler).tracingEnvVars for cross-repo invariants
+		// (annotation keys, env var names, why PIPELINE_ID is intentionally
+		// not set here).
+		envVars = append(envVars, r.tracingEnvVars(pipelineInstance)...)
+
+		// User-supplied filter.Env appears AFTER controller-injected env so
+		// that kubelet's effective-env construction (last entry with a given
+		// Name wins on the running container) reflects the user's choice for
+		// any duplicated names.
 		envVars = append(envVars, filter.Env...)
 
 		container.Env = envVars

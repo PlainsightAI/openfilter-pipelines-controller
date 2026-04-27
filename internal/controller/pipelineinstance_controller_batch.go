@@ -495,6 +495,16 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			}
 		}
 
+		// Inject distributed-tracing context and OTel exporter config. See
+		// (*PipelineInstanceReconciler).tracingEnvVars for cross-repo invariants
+		// (annotation keys, env var names, why PIPELINE_ID is intentionally
+		// not set here).
+		containerEnv = append(containerEnv, r.tracingEnvVars(pipelineInstance)...)
+
+		// User-supplied filter.Env appears AFTER controller-injected env so
+		// that kubelet's effective-env construction (last entry with a given
+		// Name wins on the running container) reflects the user's choice for
+		// any duplicated names.
 		containerEnv = append(containerEnv, filter.Env...)
 
 		container := corev1.Container{

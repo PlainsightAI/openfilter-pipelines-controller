@@ -1,6 +1,12 @@
 # Production values for openfilter-pipelines-controller
 # This is a sample configuration for production deployments
 
+# Inject OTel exporter config into every filter container the controller spawns
+# so spans/metrics flow to the in-cluster otel-collector (and from there to
+# Cloud Trace via the googlecloud exporter).
+telemetryExporterType: "otlp_grpc"
+telemetryExporterEndpoint: "otel-collector.monitoring.svc.cluster.local:4317"
+
 replicaCount: 1
 
 image:

@@ -541,13 +541,13 @@ func (r *PipelineInstanceReconciler) tracingEnvVars(pipelineInstance *pipelinesv
 
 	if tp, ok := pipelineInstance.Annotations[TraceparentAnnotation]; ok && tp != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
-	}
-	// tracestate is propagated only when traceparent is also present (the
-	// W3C propagator requires the parent context to interpret it). Skipping
-	// empty/missing tracestate is intentional — the upstream chain may
-	// legitimately have no vendor-specific state to forward.
-	if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "TRACESTATE", Value: ts})
+		// tracestate is propagated only when traceparent is also present (the
+		// W3C propagator requires the parent context to interpret it). Skipping
+		// empty/missing tracestate is intentional — the upstream chain may
+		// legitimately have no vendor-specific state to forward.
+		if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: "TRACESTATE", Value: ts})
+		}
 	}
 
 	if r.TelemetryExporterType != "" {

@@ -298,15 +298,15 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.PipelineInstanceReconciler{
-		Client:                    mgr.GetClient(),
-		Scheme:                    mgr.GetScheme(),
-		ValkeyClient:              valkeyClient,
-		ValkeyAddr:                valkeyAddr,
-		ValkeyNSSecretName:        valkeyNSSecretName,
-		ClaimerImage:              claimerImage,
-		GPUNodeSelectorLabels:     parseNodeSelectorLabels(gpuNodeSelector),
-		GPULibraryPath:            gpuLibraryPath,
-		GPUBinPath:                gpuBinPath,
+		Client:                        mgr.GetClient(),
+		Scheme:                        mgr.GetScheme(),
+		ValkeyClient:                  valkeyClient,
+		ValkeyAddr:                    valkeyAddr,
+		ValkeyNSSecretName:            valkeyNSSecretName,
+		ClaimerImage:                  claimerImage,
+		GPUNodeSelectorLabels:         parseNodeSelectorLabels(gpuNodeSelector),
+		GPULibraryPath:                gpuLibraryPath,
+		GPUBinPath:                    gpuBinPath,
 		TelemetryExporterType:         telemetryExporterType,
 		TelemetryExporterOTLPEndpoint: telemetryExporterOTLPEndpoint,
 	}).SetupWithManager(mgr); err != nil {

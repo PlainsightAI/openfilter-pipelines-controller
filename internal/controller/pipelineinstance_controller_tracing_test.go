@@ -146,6 +146,31 @@ func TestBuildJob_TracestateNotInjectedForEmptyAnnotationValue(t *testing.T) {
 	}
 }
 
+func TestBuildJob_TracestateNotInjectedWithoutTraceparent(t *testing.T) {
+	// Tracestate is meaningless without a parent context for the W3C
+	// propagator to interpret it against. If only TracestateAnnotation is
+	// set (no TraceparentAnnotation), the controller MUST drop tracestate
+	// rather than inject TRACESTATE alone — otherwise the comment in
+	// tracingEnvVars (claiming tracestate rides with traceparent) becomes a
+	// lie and downstream observability tools see orphaned vendor state.
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	pi.Annotations = map[string]string{
+		TracestateAnnotation: testTracestate,
+	}
+	ps := makeMinimalPipelineSource()
+
+	job := r.buildJob(context.Background(), pi, makeTracingFilterPipeline(), ps, "test-job")
+
+	env := job.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "TRACEPARENT"); ok {
+		t.Error("expected TRACEPARENT NOT to be set when only tracestate annotation is present")
+	}
+	if _, ok := findEnvVar(env, "TRACESTATE"); ok {
+		t.Error("expected TRACESTATE NOT to be set when traceparent annotation is absent (tracestate without parent context is meaningless)")
+	}
+}
+
 func TestBuildJob_NeitherTracingAnnotationInjectsNothing(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
@@ -327,6 +352,25 @@ func TestBuildStreamingDeployment_TracestateNotInjectedForEmptyAnnotationValue(t
 	}
 }
 
+func TestBuildStreamingDeployment_TracestateNotInjectedWithoutTraceparent(t *testing.T) {
+	// Mirror of the batch test: tracestate without traceparent is dropped.
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pi.Annotations = map[string]string{
+		TracestateAnnotation: testTracestate,
+	}
+
+	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+	if _, ok := findEnvVar(env, "TRACEPARENT"); ok {
+		t.Error("expected TRACEPARENT NOT to be set when only tracestate annotation is present")
+	}
+	if _, ok := findEnvVar(env, "TRACESTATE"); ok {
+		t.Error("expected TRACESTATE NOT to be set when traceparent annotation is absent (tracestate without parent context is meaningless)")
+	}
+}
+
 func TestBuildStreamingDeployment_NeitherTracingAnnotationInjectsNothing(t *testing.T) {
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
@@ -345,7 +389,7 @@ func TestBuildStreamingDeployment_NeitherTracingAnnotationInjectsNothing(t *test
 
 func TestBuildStreamingDeployment_TelemetryExporterEnvInjectedWhenReconcilerConfigured(t *testing.T) {
 	r := &PipelineInstanceReconciler{
-		TelemetryExporterType:     testExporterType,
+		TelemetryExporterType:         testExporterType,
 		TelemetryExporterOTLPEndpoint: testExporterEndpoint,
 	}
 	pi := makeMinimalStreamingPipelineInstance()
@@ -388,7 +432,7 @@ func TestBuildStreamingDeployment_TelemetryExporterEnvNotInjectedByDefault(t *te
 
 func TestBuildStreamingDeployment_AllTracingEnvCombined(t *testing.T) {
 	r := &PipelineInstanceReconciler{
-		TelemetryExporterType:     testExporterType,
+		TelemetryExporterType:         testExporterType,
 		TelemetryExporterOTLPEndpoint: testExporterEndpoint,
 	}
 	pi := makeMinimalStreamingPipelineInstance()

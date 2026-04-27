@@ -172,6 +172,16 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) error {
 	log := logf.FromContext(ctx)
 
+	// Lazy-init Status.Streaming so callers (and tests) don't have to
+	// pre-seed it. The status sub-resource on a freshly created CR is
+	// zero-valued, and we write Status.Streaming.DeploymentName below
+	// after Create — without this guard, an envtest reconcile that
+	// drives a brand-new CR straight into ensureStreamingDeployment
+	// nil-derefs at the assignment site (caught in #45 envtest run).
+	if pipelineInstance.Status.Streaming == nil {
+		pipelineInstance.Status.Streaming = &pipelinesv1alpha1.StreamingStatus{}
+	}
+
 	deploymentName := pipelineInstance.Name + "-deploy"
 	deployment := &appsv1.Deployment{}
 	err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: pipelineInstance.Namespace}, deployment)

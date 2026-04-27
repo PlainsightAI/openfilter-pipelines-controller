@@ -205,7 +205,15 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	// Deployment label depends on this — pod-template labels ride inside
 	// .Spec.Template and were already covered, but the Deployment
 	// resource itself was previously left with stale labels until the
-	// next recreate). Mirrors the Service update path (~line 569).
+	// next recreate).
+	//
+	// Scope note: the Service update path at line ~569 follows the same
+	// "reassign Labels + Spec, then Patch" shape, but Services are
+	// intentionally out of scope for PLAT-707 CR-label propagation —
+	// their label set is hardcoded to {app, pipelineinstance, filter}
+	// in buildStreamingDeployment's Service builder and never goes
+	// through mergeLabelsFromCR. Only the assignment-then-Patch
+	// ordering is shared.
 	patchBase := client.MergeFrom(deployment.DeepCopy())
 	deployment.Labels = desiredDeployment.Labels
 	deployment.Spec = desiredDeployment.Spec

@@ -252,61 +252,11 @@ func TestBuildStreamingDeployment_PropagatesPlainsightLabels(t *testing.T) {
 	}
 }
 
-// TestStreamingDeployment_UpdateLabelsConverge regression-guards the
-// shingonoide #45 review item: the update branch of ensureStreamingDeployment
-// must reassign deployment.Labels (not just .Spec) so a Deployment created
-// before this PR's labels change converges its outer ObjectMeta.Labels
-// rather than retaining stale labels until recreate.
-//
-// We can't run the full reconcile in a unit test (no envtest scaffolding
-// in this package), but we can lock in the contract: "after the update
-// path's two assignments, the deployment carries the desired Labels."
-// If a future refactor drops `deployment.Labels = desiredDeployment.Labels`
-// from ensureStreamingDeployment, this test still passes — but the
-// `verifyUpdatePathContract` helper documents the exact two-line shape
-// the production code is expected to use, and a `grep` review of that
-// production code lining up against this contract is the regression
-// signal.
-func TestStreamingDeployment_UpdateLabelsConverge(t *testing.T) {
-	r := makeMinimalReconciler()
-	pi := makeMinimalPipelineInstance()
-	pi.Labels = map[string]string{
-		"plainsight.ai/pipeline-instance-id": "pi-NEW",
-		"plainsight.ai/organization-id":      "org-NEW",
-		"plainsight.ai/project-id":           "proj-NEW",
-	}
-	ps := makeMinimalPipelineSource()
-	pipeline := &pipelinesv1alpha1.Pipeline{
-		Spec: pipelinesv1alpha1.PipelineSpec{
-			Filters: []pipelinesv1alpha1.Filter{{Name: "f", Image: "f:latest"}},
-		},
-	}
-
-	// Simulate a Deployment that exists in the cluster from before this
-	// CR was retargeted at a new project: stale plainsight.ai/* values on
-	// the outer ObjectMeta.Labels.
-	existing := r.buildStreamingDeployment(pi, pipeline, ps, "test-deploy")
-	existing.Labels = map[string]string{
-		"app":                                "pipeline-stream",
-		"plainsight.ai/pipeline-instance-id": "pi-OLD",
-		"plainsight.ai/organization-id":      "org-OLD",
-		"plainsight.ai/project-id":           "proj-OLD",
-	}
-
-	// Production update path (ensureStreamingDeployment lines ~199-208):
-	//   deployment.Labels = desiredDeployment.Labels
-	//   deployment.Spec   = desiredDeployment.Spec
-	desired := r.buildStreamingDeployment(pi, pipeline, ps, "test-deploy")
-	existing.Labels = desired.Labels
-	existing.Spec = desired.Spec
-
-	for k, want := range map[string]string{
-		"plainsight.ai/pipeline-instance-id": "pi-NEW",
-		"plainsight.ai/organization-id":      "org-NEW",
-		"plainsight.ai/project-id":           "proj-NEW",
-	} {
-		if existing.Labels[k] != want {
-			t.Errorf("after update path: deployment.Labels[%q] = %q, want %q (this fires if ensureStreamingDeployment forgets to assign deployment.Labels = desiredDeployment.Labels before Patch)", k, existing.Labels[k], want)
-		}
-	}
-}
+// Update-path coverage for ensureStreamingDeployment lives in the envtest
+// spec PipelineInstance streaming update path → "should converge outer
+// Deployment.ObjectMeta.Labels when CR labels change" (see
+// pipelineinstance_streaming_update_test.go). That spec seeds a stale
+// Deployment, mutates the CR's whitelisted plainsight.ai/* labels,
+// re-invokes ensureStreamingDeployment, and re-Gets the Deployment from
+// the API server — catching a future refactor that drops the
+// `deployment.Labels = desiredDeployment.Labels` assignment.

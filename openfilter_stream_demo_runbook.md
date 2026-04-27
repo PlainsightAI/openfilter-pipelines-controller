@@ -1,12 +1,13 @@
 # OpenFilter Pipelines Controller — Stream Mode E2E Demo
 
-This runbook follows the **OpenFilter Pipelines Controller** docs. It shows a full end‑to‑end streaming demo using the repo manifests (`demo/pipeline_rtsp.yaml`, `demo/pipelinerun_rtsp.yaml`) and the demo RTSP server under `hack/rtsp-stream/`.
+This runbook follows the **OpenFilter Pipelines Controller** docs. It shows a full end‑to‑end streaming demo using the repo manifests (`demo/pipeline_rtsp.yaml`, `demo/pipelinesource_rtsp.yaml`, `demo/pipelineinstance_rtsp.yaml`) and the demo RTSP server under `hack/rtsp-stream/`.
 
 **Doc concepts you are demonstrating**
 
-- **Pipeline (recipe):** declares the input source and ordered filter containers.  
-- **PipelineRun (execution):** references a Pipeline and runs it.  
-- **Stream mode:** real‑time RTSP processing via a **single‑replica Deployment** created by the controller. Optional Services expose filter ports.  
+- **Pipeline (recipe):** declares the ordered filter containers and any `services[]` it exposes. The Pipeline does **not** declare the source — sources are a separate CR.
+- **PipelineSource (input):** declares the RTSP/file/bucket input that a run should consume. Lives in its own CR so it can be reused across instances.
+- **PipelineInstance (execution):** references a Pipeline and a PipelineSource (`spec.pipelineRef` + `spec.sourceRef`) and is what the controller reconciles into running workloads.
+- **Stream mode:** real‑time RTSP processing via a **single‑replica Deployment** created by the controller. Optional Services expose filter ports.
 
 ---
 
@@ -29,10 +30,10 @@ RTSP port‑forward
 kubectl -n openfilter-system port-forward svc/rtsp-video-stream 8554:8554
 ```
 
-**What this does:**  
+**What this does:**
 Creates a tunnel from your laptop → in‑cluster RTSP demo Service so your local RTSP publisher can push to it.
 
-**Why the docs need it:**  
+**Why the docs need it:**
 The stream demo requires an RTSP endpoint. This makes the demo RTSP server reachable from your machine.
 
 ---
@@ -41,14 +42,22 @@ The stream demo requires an RTSP endpoint. This makes the demo RTSP server reach
 Publish a live test stream to `/stream`
 
 ```bash
-docker run --rm -it --platform linux/amd64   jrottenberg/ffmpeg:6.1-alpine   -re -f lavfi -i testsrc=size=1280x720:rate=30   -f lavfi -i sine=frequency=1000   -rtsp_transport tcp   -c:v libx264 -tune zerolatency -pix_fmt yuv420p -preset veryfast   -c:a aac   -f rtsp   rtsp://host.docker.internal:8554/stream
+docker run --rm -it --platform linux/amd64 \
+  jrottenberg/ffmpeg:6.1-alpine \
+  -re -f lavfi -i testsrc=size=1280x720:rate=30 \
+  -f lavfi -i sine=frequency=1000 \
+  -rtsp_transport tcp \
+  -c:v libx264 -tune zerolatency -pix_fmt yuv420p -preset veryfast \
+  -c:a aac \
+  -f rtsp \
+  rtsp://host.docker.internal:8554/stream
 ```
 
-**What this does:**  
+**What this does:**
 Continuously publishes a color‑bar test video into the RTSP demo server at path `/stream`.
 
-**Why the docs need it:**  
-Stream mode needs `spec.source.rtsp` to be a real, live RTSP stream. This is your live input.
+**Why the docs need it:**
+Stream mode needs the PipelineSource's RTSP target to be a real, live RTSP stream. This is your live input.
 
 ---
 
@@ -66,7 +75,7 @@ Use this for applying manifests and checking status/logs.
 kubectl -n openfilter-system apply -f hack/rtsp-stream/
 ```
 
-**What this does:**  
+**What this does:**
 Creates the demo RTSP Deployment + Service (`rtsp-video-stream`) inside the cluster.
 
 **Validate:**
@@ -95,7 +104,15 @@ Leave it running.
 **Terminal 2 (keep running):**
 
 ```bash
-docker run --rm -it --platform linux/amd64   jrottenberg/ffmpeg:6.1-alpine   -re -f lavfi -i testsrc=size=1280x720:rate=30   -f lavfi -i sine=frequency=1000   -rtsp_transport tcp   -c:v libx264 -tune zerolatency -pix_fmt yuv420p -preset veryfast   -c:a aac   -f rtsp   rtsp://host.docker.internal:8554/stream
+docker run --rm -it --platform linux/amd64 \
+  jrottenberg/ffmpeg:6.1-alpine \
+  -re -f lavfi -i testsrc=size=1280x720:rate=30 \
+  -f lavfi -i sine=frequency=1000 \
+  -rtsp_transport tcp \
+  -c:v libx264 -tune zerolatency -pix_fmt yuv420p -preset veryfast \
+  -c:a aac \
+  -f rtsp \
+  rtsp://host.docker.internal:8554/stream
 ```
 
 Leave it running.
@@ -111,51 +128,68 @@ Leave it running.
 kubectl -n openfilter-system apply -f demo/pipeline_rtsp.yaml
 ```
 
-**What this does:**  
-Creates a Pipeline CR declaring:
+**What this does:**
+Creates a Pipeline CR (`pipeline-rtsp`) declaring:
 - `spec.mode: stream`
-- RTSP source (`spec.source.rtsp`)
-- ordered filters (`spec.filters[]`), typically:
-  - `video-in` (reads RTSP)
+- ordered filters (`spec.filters[]`):
+  - `video-in` (reads RTSP frames from the source)
   - `face-blur` (processes frames)
   - `webvis` (renders output)
 - `spec.services[]` to expose webvis port 8080
 
+The Pipeline intentionally has **no inline `spec.source.*`** — the input is referenced from a separate PipelineSource CR (next step).
+
 ---
 
-### 5) Apply the **PipelineRun** (execution)
+### 5) Apply the **PipelineSource** (input)
 **Terminal 3:**
 
 ```bash
-kubectl -n openfilter-system apply -f demo/pipelinerun_rtsp.yaml
+kubectl -n openfilter-system apply -f demo/pipelinesource_rtsp.yaml
 ```
 
-**What this does:**  
-Creates a PipelineRun CR that references the Pipeline.  
-The controller reconciles it by creating a Deployment for the run.
+**What this does:**
+Creates a PipelineSource CR (`pipelinesource-rtsp`) declaring the RTSP input the run will consume:
+- `spec.rtsp.host: rtsp-video-stream`
+- `spec.rtsp.port: 8554`
+- `spec.rtsp.path: /stream`
+
+PipelineSource lives in its own CR so multiple PipelineInstances can share the same input wiring (or swap inputs without editing the Pipeline recipe).
 
 ---
 
-### 6) Verify the controller created the stream Deployment + pod
+### 6) Apply the **PipelineInstance** (execution)
 **Terminal 3:**
 
 ```bash
-kubectl -n openfilter-system get deploy pipelinerun-rtsp-deploy
-kubectl -n openfilter-system get pods -l pipelinerun=pipelinerun-rtsp
+kubectl -n openfilter-system apply -f demo/pipelineinstance_rtsp.yaml
 ```
 
-**What this proves (docs):**  
-Stream mode runs as **one single‑replica Deployment per PipelineRun**.
-
-Expected: pod becomes **`3/3 Running`**.
+**What this does:**
+Creates a PipelineInstance CR (`pipelineinstance-rtsp`) that binds the Pipeline (`spec.pipelineRef.name: pipeline-rtsp`) to the PipelineSource (`spec.sourceRef.name: pipelinesource-rtsp`). The controller reconciles it by creating a single‑replica Deployment running the filter chain.
 
 ---
 
-### 7) Verify RTSP ingest is live (frames flowing)
+### 7) Verify the controller created the stream Deployment + pod
 **Terminal 3:**
 
 ```bash
-kubectl -n openfilter-system logs -l pipelinerun=pipelinerun-rtsp -c video-in --tail=20
+kubectl -n openfilter-system get deploy pipelineinstance-rtsp-deploy
+kubectl -n openfilter-system get pods -l pipelineinstance=pipelineinstance-rtsp
+```
+
+**What this proves (docs):**
+Stream mode runs as **one single‑replica Deployment per PipelineInstance**.
+
+Expected: pod becomes **`3/3 Running`** (one container per filter in the chain).
+
+---
+
+### 8) Verify RTSP ingest is live (frames flowing)
+**Terminal 3:**
+
+```bash
+kubectl -n openfilter-system logs -l pipelineinstance=pipelineinstance-rtsp -c video-in --tail=20
 ```
 
 Expected line:
@@ -164,16 +198,16 @@ Expected line:
 video open: rtsp://rtsp-video-stream:8554/stream (30.0 fps)
 ```
 
-**What this proves (docs):**  
-The required `spec.source.rtsp` input is valid and producing frames.
+**What this proves (docs):**
+The PipelineSource referenced by the PipelineInstance is producing frames.
 
 ---
 
-### 8) View end‑to‑end output in WebVis
+### 9) View end‑to‑end output in WebVis
 **Terminal 3 (run while viewing):**
 
 ```bash
-kubectl -n openfilter-system port-forward svc/pipelinerun-rtsp-webvis-0 8080:8080
+kubectl -n openfilter-system port-forward svc/pipelineinstance-rtsp-webvis-0 8080:8080
 ```
 
 Open browser:
@@ -188,7 +222,7 @@ Expected: **moving color bars**.
 - Filters are chained in order (`spec.filters[]`).
 - Stream Deployment is running continuously.
 - `spec.services[]` correctly exposed the webvis port.
-- Frames traveled end‑to‑end:  
+- Frames traveled end‑to‑end:
   RTSP → video‑in → face‑blur → webvis → browser.
 
 ---
@@ -207,7 +241,7 @@ That means the RTSP stream stopped. Fix:
 3. Restart the streaming pod:
 
 ```bash
-kubectl -n openfilter-system delete pod -l pipelinerun=pipelinerun-rtsp
+kubectl -n openfilter-system delete pod -l pipelineinstance=pipelineinstance-rtsp
 ```
 
 The controller will recreate it and it should reconnect.
@@ -221,10 +255,11 @@ Stop terminals in this order:
 2. ffmpeg publisher (Terminal 2)
 3. RTSP port‑forward (Terminal 1)
 
-Delete demo resources:
+Delete demo resources (in dependency order — instance first, then sources/recipes):
 
 ```bash
-kubectl -n openfilter-system delete pipelinerun pipelinerun-rtsp
+kubectl -n openfilter-system delete pipelineinstance pipelineinstance-rtsp
+kubectl -n openfilter-system delete pipelinesource pipelinesource-rtsp
 kubectl -n openfilter-system delete pipeline pipeline-rtsp
 kubectl -n openfilter-system delete -f hack/rtsp-stream/
 ```

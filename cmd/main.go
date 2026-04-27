@@ -70,7 +70,12 @@ func getEnvOrDefault(key, defaultValue string) string {
 // the collector but the controller logs no error.
 func validateTelemetryFlags(telemetryType, telemetryEndpoint string) error {
 	if (telemetryType == "") != (telemetryEndpoint == "") {
-		return fmt.Errorf("--telemetry-exporter-type and --telemetry-exporter-otlp-endpoint must both be set together to enable tracing injection, or both must be empty to disable it (got type=%q, endpoint=%q)", telemetryType, telemetryEndpoint)
+		return fmt.Errorf(
+			"--telemetry-exporter-type and --telemetry-exporter-otlp-endpoint must both be set "+
+				"together to enable tracing injection, or both must be empty to disable it "+
+				"(got type=%q, endpoint=%q)",
+			telemetryType, telemetryEndpoint,
+		)
 	}
 	return nil
 }

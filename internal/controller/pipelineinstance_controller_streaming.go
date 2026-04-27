@@ -196,9 +196,18 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 		return nil
 	}
 
-	// Update existing Deployment using Patch to avoid conflicts
-	// We only patch the spec to avoid race conditions with status updates
+	// Update existing Deployment using Patch to avoid conflicts.
+	// We deliberately patch ObjectMeta.Labels + Spec only — never .Status,
+	// which is owned by the Deployment controller and would race with
+	// status updates if reassigned here. Patching .Labels is necessary so
+	// pre-existing Deployments converge their `plainsight.ai/*` labels
+	// when the CR's whitelisted labels change (Loki log-correlation by
+	// Deployment label depends on this — pod-template labels ride inside
+	// .Spec.Template and were already covered, but the Deployment
+	// resource itself was previously left with stale labels until the
+	// next recreate). Mirrors the Service update path (~line 569).
 	patchBase := client.MergeFrom(deployment.DeepCopy())
+	deployment.Labels = desiredDeployment.Labels
 	deployment.Spec = desiredDeployment.Spec
 	if err := r.Patch(ctx, deployment, patchBase); err != nil {
 		return fmt.Errorf("failed to update deployment: %w", err)

@@ -1234,6 +1234,16 @@ func parseAttempts(value string, fallback int) int {
 // propagatedLabels is the whitelist of plainsight.ai/* labels that are copied
 // from PipelineInstance CR metadata to pod templates. Using a whitelist (not
 // prefix match) prevents unbounded cardinality in Loki from arbitrary labels.
+//
+// AC#4 (`plainsight.ai/filter-name`) decision (recorded after multiple
+// review rounds on PR #45): NOT propagated here. Per-filter identity is
+// captured at the pod/container level by the existing `container` label
+// in Loki's scrape config, plus the filter image/name on the pod spec
+// itself. Adding it as a CR-level whitelisted label would either be
+// redundant (one filter per pod, container label already covers it) or
+// cardinality-explosive (multi-filter pods would need a list value,
+// which Kubernetes labels can't represent). Mirrored on the API side
+// in #693's K8s export labels.
 var propagatedLabels = []string{
 	"plainsight.ai/pipeline-instance-id",
 	"plainsight.ai/organization-id",

@@ -172,6 +172,16 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) error {
 	log := logf.FromContext(ctx)
 
+	// Lazy-init Status.Streaming so callers (and tests) don't have to
+	// pre-seed it. The status sub-resource on a freshly created CR is
+	// zero-valued, and we write Status.Streaming.DeploymentName below
+	// after Create — without this guard, an envtest reconcile that
+	// drives a brand-new CR straight into ensureStreamingDeployment
+	// nil-derefs at the assignment site (caught in #45 envtest run).
+	if pipelineInstance.Status.Streaming == nil {
+		pipelineInstance.Status.Streaming = &pipelinesv1alpha1.StreamingStatus{}
+	}
+
 	deploymentName := pipelineInstance.Name + "-deploy"
 	deployment := &appsv1.Deployment{}
 	err := r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: pipelineInstance.Namespace}, deployment)
@@ -196,9 +206,26 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 		return nil
 	}
 
-	// Update existing Deployment using Patch to avoid conflicts
-	// We only patch the spec to avoid race conditions with status updates
+	// Update existing Deployment using Patch to avoid conflicts.
+	// We deliberately patch ObjectMeta.Labels + Spec only — never .Status,
+	// which is owned by the Deployment controller and would race with
+	// status updates if reassigned here. Patching .Labels is necessary so
+	// pre-existing Deployments converge their `plainsight.ai/*` labels
+	// when the CR's whitelisted labels change (Loki log-correlation by
+	// Deployment label depends on this — pod-template labels ride inside
+	// .Spec.Template and were already covered, but the Deployment
+	// resource itself was previously left with stale labels until the
+	// next recreate).
+	//
+	// Scope note: the Service update path at line ~569 follows the same
+	// "reassign Labels + Spec, then Patch" shape, but Services are
+	// intentionally out of scope for PLAT-707 CR-label propagation —
+	// their label set is hardcoded to {app, pipelineinstance, filter}
+	// in buildStreamingDeployment's Service builder and never goes
+	// through mergeLabelsFromCR. Only the assignment-then-Patch
+	// ordering is shared.
 	patchBase := client.MergeFrom(deployment.DeepCopy())
+	deployment.Labels = desiredDeployment.Labels
 	deployment.Spec = desiredDeployment.Spec
 	if err := r.Patch(ctx, deployment, patchBase); err != nil {
 		return fmt.Errorf("failed to update deployment: %w", err)
@@ -329,14 +356,18 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 		}
 	}
 
+	// Base labels used for deployment/pod selector (MUST stay stable — selector is immutable)
+	streamSelectorLabels := map[string]string{
+		"app":              "pipeline-stream",
+		"pipelineinstance": pipelineInstance.Name,
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deploymentName,
 			Namespace: pipelineInstance.Namespace,
-			Labels: map[string]string{
-				"app":              "pipeline-stream",
-				"pipelineinstance": pipelineInstance.Name,
-			},
+			// Fresh map per call site to avoid shared-map mutation bugs
+			Labels: mergeLabelsFromCR(streamSelectorLabels, pipelineInstance),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -348,17 +379,11 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 				},
 			},
 			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app":              "pipeline-stream",
-					"pipelineinstance": pipelineInstance.Name,
-				},
+				MatchLabels: streamSelectorLabels,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app":              "pipeline-stream",
-						"pipelineinstance": pipelineInstance.Name,
-					},
+					Labels: mergeLabelsFromCR(streamSelectorLabels, pipelineInstance),
 				},
 				Spec: corev1.PodSpec{
 					// No dedicated ServiceAccount required for streaming mode; default SA is sufficient

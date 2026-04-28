@@ -542,10 +542,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
 			Namespace: pipelineInstance.Namespace,
-			Labels: map[string]string{
-				"filter.plainsight.ai/instance":         instanceID,
-				"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
-			},
+			Labels:    buildPodLabels(instanceID, pipelineInstance),
 		},
 		Spec: batchv1.JobSpec{
 			CompletionMode:          ptr.To(batchv1.NonIndexedCompletion),
@@ -555,10 +552,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			TTLSecondsAfterFinished: ptr.To(int32(86400)), // 24 hours
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"filter.plainsight.ai/instance":         instanceID,
-						"filter.plainsight.ai/pipelineinstance": pipelineInstance.Name,
-					},
+					Labels: buildPodLabels(instanceID, pipelineInstance),
 				},
 				Spec: corev1.PodSpec{
 					// No special ServiceAccount required; default SA is sufficient
@@ -1245,4 +1239,48 @@ func parseAttempts(value string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+// propagatedLabels is the whitelist of plainsight.ai/* labels that are copied
+// from PipelineInstance CR metadata to pod templates. Using a whitelist (not
+// prefix match) prevents unbounded cardinality in Loki from arbitrary labels.
+//
+// AC#4 (`plainsight.ai/filter-name`) decision (recorded after multiple
+// review rounds on PR #45): NOT propagated here. Per-filter identity is
+// captured at the pod/container level by the existing `container` label
+// in Loki's scrape config, plus the filter image/name on the pod spec
+// itself. Adding it as a CR-level whitelisted label would either be
+// redundant (one filter per pod, container label already covers it) or
+// cardinality-explosive (multi-filter pods would need a list value,
+// which Kubernetes labels can't represent). Mirrored on the API side
+// in #693's K8s export labels.
+var propagatedLabels = []string{
+	"plainsight.ai/pipeline-instance-id",
+	"plainsight.ai/organization-id",
+	"plainsight.ai/project-id",
+}
+
+// mergeLabelsFromCR returns a fresh map that contains all base labels plus
+// whitelisted plainsight.ai/* labels from the PipelineInstance CR. A fresh
+// map is always returned to avoid shared-map mutation bugs across Deployment
+// metadata, pod template metadata, and selector matchLabels.
+func mergeLabelsFromCR(base map[string]string, pi *pipelinesv1alpha1.PipelineInstance) map[string]string {
+	labels := make(map[string]string, len(base)+len(propagatedLabels))
+	for k, v := range base {
+		labels[k] = v
+	}
+	for _, key := range propagatedLabels {
+		if val, ok := pi.Labels[key]; ok {
+			labels[key] = val
+		}
+	}
+	return labels
+}
+
+// buildPodLabels creates pod labels for the batch controller.
+func buildPodLabels(instanceID string, pi *pipelinesv1alpha1.PipelineInstance) map[string]string {
+	return mergeLabelsFromCR(map[string]string{
+		"filter.plainsight.ai/instance":         instanceID,
+		"filter.plainsight.ai/pipelineinstance": pi.Name,
+	}, pi)
 }

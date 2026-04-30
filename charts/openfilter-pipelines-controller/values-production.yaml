@@ -4,8 +4,14 @@
 # Inject OTel exporter config into every filter container the controller spawns
 # so spans/metrics flow to the in-cluster otel-collector (and from there to
 # Cloud Trace via the googlecloud exporter).
+#
+# Use "otlp" (not "otlp_grpc") here: openfilter's metrics factory
+# (observability/client.py) only matches "otlp" and silently falls through to
+# ConsoleMetricExporter on any other value, while the tracing factory
+# (observability/tracing.py) accepts both — so "otlp" is the only string that
+# wires gRPC for both signals against today's openfilter.
 telemetry:
-  exporterType: "otlp_grpc"
+  exporterType: "otlp"
   exporterOtlpEndpoint: "otel-collector.monitoring.svc.cluster.local:4317"
 
 replicaCount: 1

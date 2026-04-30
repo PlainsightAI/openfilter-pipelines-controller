@@ -525,10 +525,18 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 // Cross-repo invariants kept here:
 //   - TRACEPARENT / TRACESTATE annotation keys are owned jointly with
 //     plainsight-deployment-agent (PLAT-851). See {Traceparent,Tracestate}Annotation.
-//   - Env var names (TRACEPARENT, TRACESTATE, TELEMETRY_EXPORTER_ENABLED,
-//     TELEMETRY_EXPORTER_TYPE, TELEMETRY_EXPORTER_OTLP_ENDPOINT,
-//     PIPELINE_INSTANCE_UID) are read verbatim by openfilter (PLAT-848); do
-//     not rename without coordinating with that repo.
+//   - Env var names TRACEPARENT, TRACESTATE, TELEMETRY_EXPORTER_ENABLED,
+//     TELEMETRY_EXPORTER_TYPE, and TELEMETRY_EXPORTER_OTLP_ENDPOINT are read
+//     verbatim by openfilter (see openfilter/observability/{tracing,client}.py
+//     and openfilter/filter_runtime/filter.py); do not rename without
+//     coordinating with that repo.
+//   - PIPELINE_INSTANCE_UID is reserved for the future PLAT-848 consumer and
+//     is NOT yet read by any in-tree filter image — openfilter currently keys
+//     telemetry off PIPELINE_ID (filter_runtime/filter.py, populating
+//     OpenTelemetryClient(instance_id=self.pipeline_id)). It is pre-shipped
+//     here so the contract surface is set when the consumer lands; remove or
+//     rename it only after confirming nobody downstream has started reading
+//     it.
 //   - TELEMETRY_EXPORTER_ENABLED gates ALL telemetry init (tracer + meter)
 //     in openfilter and defaults to false. It MUST travel with
 //     TELEMETRY_EXPORTER_TYPE / TELEMETRY_EXPORTER_OTLP_ENDPOINT — without

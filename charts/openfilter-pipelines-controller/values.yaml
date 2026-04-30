@@ -157,9 +157,18 @@ gpuBinPath: "/usr/local/nvidia/bin"
 # controller validates these on startup: setting one without the other is
 # rejected at boot rather than silently disabling injection.
 #
+# Accepted exporterType values against today's openfilter:
+#   - "otlp"      — gRPC for both traces AND metrics. Use this for production.
+#   - "otlp_grpc" — gRPC for traces, but openfilter's metrics factory does not
+#                   match this string and silently falls back to a console
+#                   metric exporter (observability/client.py vs. tracing.py).
+#                   Avoid until openfilter aligns the two factories.
+#   - "otlp_http" — HTTP for traces only; metrics also fall back to console.
+#   - "console" / "silent" — debug / no-op exporters.
+#
 # Example to enable (uncomment and adjust to your collector):
 #   telemetry:
-#     exporterType: otlp_grpc
+#     exporterType: otlp
 #     exporterOtlpEndpoint: otel-collector.monitoring.svc.cluster.local:4317
 telemetry:
   exporterType: ""

@@ -214,6 +214,17 @@ func TestBuildJob_TelemetryExporterEnvInjectedWhenReconcilerConfigured(t *testin
 	if ep.Value != testExporterEndpoint {
 		t.Errorf("expected TELEMETRY_EXPORTER_OTLP_ENDPOINT=%q, got %q", testExporterEndpoint, ep.Value)
 	}
+
+	// TELEMETRY_EXPORTER_ENABLED gates openfilter's telemetry init; without
+	// it the exporter env above is a no-op. It MUST be set whenever the
+	// exporter type is set.
+	en, ok := findEnvVar(env, "TELEMETRY_EXPORTER_ENABLED")
+	if !ok {
+		t.Fatal("expected TELEMETRY_EXPORTER_ENABLED to be set whenever TELEMETRY_EXPORTER_TYPE is set")
+	}
+	if en.Value != "true" {
+		t.Errorf("expected TELEMETRY_EXPORTER_ENABLED=%q, got %q", "true", en.Value)
+	}
 }
 
 func TestBuildJob_TelemetryExporterEnvNotInjectedByDefault(t *testing.T) {
@@ -233,6 +244,12 @@ func TestBuildJob_TelemetryExporterEnvNotInjectedByDefault(t *testing.T) {
 	}
 	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_OTLP_ENDPOINT"); ok {
 		t.Error("expected TELEMETRY_EXPORTER_OTLP_ENDPOINT NOT to be set when reconciler field is empty")
+	}
+	// TELEMETRY_EXPORTER_ENABLED rides with the exporter type — neither
+	// should appear when the operator hasn't configured an exporter,
+	// otherwise openfilter would try to init OTel against nothing.
+	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_ENABLED"); ok {
+		t.Error("expected TELEMETRY_EXPORTER_ENABLED NOT to be set when reconciler field is empty")
 	}
 }
 
@@ -261,6 +278,7 @@ func TestBuildJob_AllTracingEnvCombined(t *testing.T) {
 	}{
 		{"TRACEPARENT", testTraceparent},
 		{"TRACESTATE", testTracestate},
+		{"TELEMETRY_EXPORTER_ENABLED", "true"},
 		{"TELEMETRY_EXPORTER_TYPE", testExporterType},
 		{"TELEMETRY_EXPORTER_OTLP_ENDPOINT", testExporterEndpoint},
 	} {
@@ -413,6 +431,17 @@ func TestBuildStreamingDeployment_TelemetryExporterEnvInjectedWhenReconcilerConf
 	if ep.Value != testExporterEndpoint {
 		t.Errorf("expected TELEMETRY_EXPORTER_OTLP_ENDPOINT=%q, got %q", testExporterEndpoint, ep.Value)
 	}
+
+	// TELEMETRY_EXPORTER_ENABLED gates openfilter's telemetry init; without
+	// it the exporter env above is a no-op. It MUST be set whenever the
+	// exporter type is set.
+	en, ok := findEnvVar(env, "TELEMETRY_EXPORTER_ENABLED")
+	if !ok {
+		t.Fatal("expected TELEMETRY_EXPORTER_ENABLED to be set whenever TELEMETRY_EXPORTER_TYPE is set")
+	}
+	if en.Value != "true" {
+		t.Errorf("expected TELEMETRY_EXPORTER_ENABLED=%q, got %q", "true", en.Value)
+	}
 }
 
 func TestBuildStreamingDeployment_TelemetryExporterEnvNotInjectedByDefault(t *testing.T) {
@@ -427,6 +456,11 @@ func TestBuildStreamingDeployment_TelemetryExporterEnvNotInjectedByDefault(t *te
 	}
 	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_OTLP_ENDPOINT"); ok {
 		t.Error("expected TELEMETRY_EXPORTER_OTLP_ENDPOINT NOT to be set when reconciler field is empty")
+	}
+	// TELEMETRY_EXPORTER_ENABLED rides with the exporter type — neither
+	// should appear when the operator hasn't configured an exporter.
+	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_ENABLED"); ok {
+		t.Error("expected TELEMETRY_EXPORTER_ENABLED NOT to be set when reconciler field is empty")
 	}
 }
 
@@ -447,6 +481,7 @@ func TestBuildStreamingDeployment_AllTracingEnvCombined(t *testing.T) {
 	want := map[string]string{
 		"TRACEPARENT":                      testTraceparent,
 		"TRACESTATE":                       testTracestate,
+		"TELEMETRY_EXPORTER_ENABLED":       "true",
 		"TELEMETRY_EXPORTER_TYPE":          testExporterType,
 		"TELEMETRY_EXPORTER_OTLP_ENDPOINT": testExporterEndpoint,
 	}
@@ -560,6 +595,9 @@ func TestBuildJob_PipelineIDNotInjectedByController(t *testing.T) {
 	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_TYPE"); ok {
 		t.Error("TELEMETRY_EXPORTER_TYPE should not be set in this test — helper assumption broken")
 	}
+	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_ENABLED"); ok {
+		t.Error("TELEMETRY_EXPORTER_ENABLED should not be set in this test — helper assumption broken")
+	}
 }
 
 func TestBuildStreamingDeployment_PipelineIDNotInjectedByController(t *testing.T) {
@@ -586,5 +624,8 @@ func TestBuildStreamingDeployment_PipelineIDNotInjectedByController(t *testing.T
 	}
 	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_TYPE"); ok {
 		t.Error("TELEMETRY_EXPORTER_TYPE should not be set in this test — helper assumption broken")
+	}
+	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_ENABLED"); ok {
+		t.Error("TELEMETRY_EXPORTER_ENABLED should not be set in this test — helper assumption broken")
 	}
 }

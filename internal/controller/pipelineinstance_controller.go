@@ -525,17 +525,21 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 // Cross-repo invariants kept here:
 //   - TRACEPARENT / TRACESTATE annotation keys are owned jointly with
 //     plainsight-deployment-agent (PLAT-851). See {Traceparent,Tracestate}Annotation.
-//   - Env var names (TRACEPARENT, TRACESTATE, TELEMETRY_EXPORTER_TYPE,
-//     TELEMETRY_EXPORTER_OTLP_ENDPOINT, PIPELINE_INSTANCE_UID) are read
-//     verbatim by openfilter (PLAT-848); do not rename without coordinating
-//     with that repo.
+//   - Env var names (TRACEPARENT, TRACESTATE, TELEMETRY_EXPORTER_ENABLED,
+//     TELEMETRY_EXPORTER_TYPE, TELEMETRY_EXPORTER_OTLP_ENDPOINT,
+//     PIPELINE_INSTANCE_UID) are read verbatim by openfilter (PLAT-848); do
+//     not rename without coordinating with that repo.
+//   - TELEMETRY_EXPORTER_ENABLED gates ALL telemetry init (tracer + meter)
+//     in openfilter and defaults to false. It MUST travel with
+//     TELEMETRY_EXPORTER_TYPE / TELEMETRY_EXPORTER_OTLP_ENDPOINT — without
+//     it, configuring an exporter is a no-op and no spans/metrics ship.
 //   - PIPELINE_ID is intentionally NOT injected here. plainsight-deployment-agent
 //     owns it on Plainsight clusters and writes the canonical bare instance
 //     UUID. On OSS clusters it stays unset; openfilter's `pipeline.id` span
 //     attribute will be absent (safe), and OSS users can set it via Filter.Env
 //     if they want it.
 func (r *PipelineInstanceReconciler) tracingEnvVars(pipelineInstance *pipelinesv1alpha1.PipelineInstance) []corev1.EnvVar {
-	envVars := make([]corev1.EnvVar, 0, 5)
+	envVars := make([]corev1.EnvVar, 0, 6)
 
 	envVars = append(envVars, corev1.EnvVar{Name: "PIPELINE_INSTANCE_UID", Value: string(pipelineInstance.UID)})
 
@@ -551,6 +555,10 @@ func (r *PipelineInstanceReconciler) tracingEnvVars(pipelineInstance *pipelinesv
 	}
 
 	if r.TelemetryExporterType != "" {
+		// TELEMETRY_EXPORTER_ENABLED gates openfilter's tracer + meter init
+		// (defaults to false); pair it with the exporter config so the two
+		// always travel together. Without this, the exporter env is a no-op.
+		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_ENABLED", Value: "true"})
 		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
 	}
 	if r.TelemetryExporterOTLPEndpoint != "" {

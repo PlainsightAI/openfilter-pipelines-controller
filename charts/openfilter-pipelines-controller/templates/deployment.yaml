@@ -131,13 +131,13 @@ spec:
             - name: GPU_BIN_PATH
               value: {{ .Values.gpuBinPath | quote }}
             {{- end }}
-            {{- if .Values.telemetryExporterType }}
+            {{- if .Values.telemetry.exporterType }}
             - name: TELEMETRY_EXPORTER_TYPE
-              value: {{ .Values.telemetryExporterType | quote }}
+              value: {{ .Values.telemetry.exporterType | quote }}
             {{- end }}
-            {{- if .Values.telemetryExporterEndpoint }}
+            {{- if .Values.telemetry.exporterOtlpEndpoint }}
             - name: TELEMETRY_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.telemetryExporterEndpoint | quote }}
+              value: {{ .Values.telemetry.exporterOtlpEndpoint | quote }}
             {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}

@@ -158,10 +158,12 @@ gpuBinPath: "/usr/local/nvidia/bin"
 # rejected at boot rather than silently disabling injection.
 #
 # Example to enable (uncomment and adjust to your collector):
-#   telemetryExporterType: otlp_grpc
-#   telemetryExporterEndpoint: otel-collector.monitoring.svc.cluster.local:4317
-telemetryExporterType: ""
-telemetryExporterEndpoint: ""
+#   telemetry:
+#     exporterType: otlp_grpc
+#     exporterOtlpEndpoint: otel-collector.monitoring.svc.cluster.local:4317
+telemetry:
+  exporterType: ""
+  exporterOtlpEndpoint: ""
 
 # Environment variables
 env: []

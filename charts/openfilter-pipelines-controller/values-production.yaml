@@ -6,6 +6,9 @@
 # Cloud Trace via the googlecloud exporter).
 telemetryExporterType: "otlp_grpc"
 telemetryExporterEndpoint: "otel-collector.monitoring.svc.cluster.local:4317"
+telemetry:
+  exporterType: "otlp_grpc"
+  exporterOtlpEndpoint: "otel-collector.monitoring.svc.cluster.local:4317"
 
 replicaCount: 1
 

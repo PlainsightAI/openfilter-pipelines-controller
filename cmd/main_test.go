@@ -21,13 +21,13 @@ func TestValidateTelemetryFlags(t *testing.T) {
 		},
 		{
 			name:         "both set enables injection — OK",
-			exporterType: "otlp_grpc",
+			exporterType: "otlp",
 			endpoint:     "otel-collector.monitoring.svc.cluster.local:4317",
 			wantErr:      false,
 		},
 		{
 			name:         "only type set is rejected (half-configured)",
-			exporterType: "otlp_grpc",
+			exporterType: "otlp",
 			endpoint:     "",
 			wantErr:      true,
 		},

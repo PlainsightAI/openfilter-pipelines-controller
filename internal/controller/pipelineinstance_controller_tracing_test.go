@@ -12,8 +12,13 @@ import (
 const (
 	testTraceparent      = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
 	testTracestate       = "rojo=00f067aa0ba902b7,congo=t61rcWkgMzE"
-	testExporterType     = "otlp_grpc"
+	testExporterType     = "otlp"
 	testExporterEndpoint = "otel-collector.monitoring.svc.cluster.local:4317"
+
+	// wantTrue is the env-var value expected for TELEMETRY_EXPORTER_ENABLED
+	// when the exporter is configured. Lifted to a const to keep goconst
+	// happy across the assertions in this file.
+	wantTrue = "true"
 )
 
 // makeTracingFilterPipeline returns a Pipeline with a single CPU filter so the
@@ -222,8 +227,8 @@ func TestBuildJob_TelemetryExporterEnvInjectedWhenReconcilerConfigured(t *testin
 	if !ok {
 		t.Fatal("expected TELEMETRY_EXPORTER_ENABLED to be set whenever TELEMETRY_EXPORTER_TYPE is set")
 	}
-	if en.Value != "true" {
-		t.Errorf("expected TELEMETRY_EXPORTER_ENABLED=%q, got %q", "true", en.Value)
+	if en.Value != wantTrue {
+		t.Errorf("expected TELEMETRY_EXPORTER_ENABLED=%q, got %q", wantTrue, en.Value)
 	}
 }
 
@@ -278,7 +283,7 @@ func TestBuildJob_AllTracingEnvCombined(t *testing.T) {
 	}{
 		{"TRACEPARENT", testTraceparent},
 		{"TRACESTATE", testTracestate},
-		{"TELEMETRY_EXPORTER_ENABLED", "true"},
+		{"TELEMETRY_EXPORTER_ENABLED", wantTrue},
 		{"TELEMETRY_EXPORTER_TYPE", testExporterType},
 		{"TELEMETRY_EXPORTER_OTLP_ENDPOINT", testExporterEndpoint},
 	} {
@@ -439,8 +444,8 @@ func TestBuildStreamingDeployment_TelemetryExporterEnvInjectedWhenReconcilerConf
 	if !ok {
 		t.Fatal("expected TELEMETRY_EXPORTER_ENABLED to be set whenever TELEMETRY_EXPORTER_TYPE is set")
 	}
-	if en.Value != "true" {
-		t.Errorf("expected TELEMETRY_EXPORTER_ENABLED=%q, got %q", "true", en.Value)
+	if en.Value != wantTrue {
+		t.Errorf("expected TELEMETRY_EXPORTER_ENABLED=%q, got %q", wantTrue, en.Value)
 	}
 }
 
@@ -481,7 +486,7 @@ func TestBuildStreamingDeployment_AllTracingEnvCombined(t *testing.T) {
 	want := map[string]string{
 		"TRACEPARENT":                      testTraceparent,
 		"TRACESTATE":                       testTracestate,
-		"TELEMETRY_EXPORTER_ENABLED":       "true",
+		"TELEMETRY_EXPORTER_ENABLED":       wantTrue,
 		"TELEMETRY_EXPORTER_TYPE":          testExporterType,
 		"TELEMETRY_EXPORTER_OTLP_ENDPOINT": testExporterEndpoint,
 	}

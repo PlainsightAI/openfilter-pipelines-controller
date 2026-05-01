@@ -564,12 +564,14 @@ func (r *PipelineInstanceReconciler) tracingEnvVars(pipelineInstance *pipelinesv
 
 	if r.TelemetryExporterType != "" {
 		// TELEMETRY_EXPORTER_ENABLED gates openfilter's tracer + meter init
-		// (defaults to false); pair it with the exporter config so the two
-		// always travel together. Without this, the exporter env is a no-op.
+		// (defaults to false); pair it with the exporter config so the three
+		// env vars always travel together. validateTelemetryFlags rejects the
+		// half-configured state at boot, but gating ENDPOINT under the same
+		// TYPE check is defense-in-depth: a unit test constructing the
+		// reconciler directly would otherwise bypass the boot validation and
+		// emit a partial set of env vars.
 		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_ENABLED", Value: "true"})
 		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
-	}
-	if r.TelemetryExporterOTLPEndpoint != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterOTLPEndpoint})
 	}
 

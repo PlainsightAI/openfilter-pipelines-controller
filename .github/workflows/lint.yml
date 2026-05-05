@@ -21,3 +21,20 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.4.0
+
+  chart-version-parity:
+    name: Chart.yaml version/appVersion parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify version and appVersion match
+        run: |
+          set -eu
+          CHART=charts/openfilter-pipelines-controller/Chart.yaml
+          VERSION=$(awk '/^version:/    {print $2}' "$CHART" | tr -d '"')
+          APPVERSION=$(awk '/^appVersion:/ {print $2}' "$CHART" | tr -d '"')
+          echo "version=$VERSION  appVersion=$APPVERSION"
+          if [ "$VERSION" != "$APPVERSION" ]; then
+            echo "::error file=$CHART::version ($VERSION) and appVersion ($APPVERSION) drifted. The auto-bump workflow keeps these in lockstep on tag-driven releases (.github/workflows/update-helm-version.yml); manual edits must do the same. See PR #48 for the slip this catches."
+            exit 1
+          fi

@@ -152,7 +152,9 @@ func main() {
 			"Can also be set via GPU_BIN_PATH env var.")
 	flag.StringVar(&telemetryExporterType, "telemetry-exporter-type",
 		getEnvOrDefault("TELEMETRY_EXPORTER_TYPE", ""),
-		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp_grpc'). "+
+		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp'). "+
+			"In today's openfilter, 'otlp' selects gRPC for both traces and metrics; "+
+			"'otlp_grpc' selects gRPC for traces only and disables metrics. "+
 			"Empty string disables injection and openfilter falls back to its silent exporter. "+
 			"Can also be set via TELEMETRY_EXPORTER_TYPE env var.")
 	flag.StringVar(&telemetryExporterOTLPEndpoint, "telemetry-exporter-otlp-endpoint",

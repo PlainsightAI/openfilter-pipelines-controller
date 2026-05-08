@@ -170,9 +170,20 @@ gpuBinPath: "/usr/local/nvidia/bin"
 #   telemetry:
 #     exporterType: otlp
 #     exporterOtlpEndpoint: otel-collector.monitoring.svc.cluster.local:4317
+#     # controllerOtlpEndpoint defaults to exporterOtlpEndpoint, so a single
+#     # collector address covers both the controller's reconcile spans and the
+#     # filter pods' spans. Override only when the controller and filters
+#     # should ship to different collectors.
 telemetry:
   exporterType: ""
   exporterOtlpEndpoint: ""
+  # OTLP gRPC endpoint for the CONTROLLER's own reconcile spans (PLAT-1000).
+  # The connection is plaintext gRPC; in-cluster OTel collector receivers do
+  # not terminate TLS. When empty AND exporterOtlpEndpoint is also empty,
+  # tracing is fully disabled and the global tracer stays a noop. Leave empty
+  # to default to exporterOtlpEndpoint (the common case: one collector for
+  # both controller and filter spans).
+  controllerOtlpEndpoint: ""
 
 # Environment variables
 env: []

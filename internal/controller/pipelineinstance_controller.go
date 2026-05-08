@@ -27,6 +27,11 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -42,6 +47,7 @@ import (
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/queue"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
 const (
@@ -301,7 +307,13 @@ func (r *PipelineInstanceReconciler) cleanupNamespaceValkeyCredentials(ctx conte
 // mode-specific reconciliation functions defined in:
 // - pipelineinstance_controller_batch.go: Batch mode reconciliation
 // - pipelineinstance_controller_streaming.go: Streaming mode reconciliation
-func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+//
+// The reconcile body runs under a span rooted at the upstream traceparent the
+// agent stamped onto the CR, so the controller hop sits between the agent's
+// span and the filter pods' spans in the trace waterfall (PLAT-1000). When
+// tracing is disabled (no OTel endpoint configured), the global tracer is a
+// noop and span operations have negligible cost.
+func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
 	log := logf.FromContext(ctx)
 
 	// Fetch the PipelineInstance
@@ -314,6 +326,28 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		log.Error(err, "Failed to get PipelineInstance")
 		return ctrl.Result{}, err
 	}
+
+	// Extract the upstream W3C trace context from CR annotations BEFORE
+	// starting the span so the controller's span is a child of the agent's
+	// span. If no traceparent is present (OSS or pre-instrumented callers),
+	// the controller's span becomes a new root — still useful for operator
+	// debugging.
+	ctx = extractTraceContext(ctx, pipelineInstance)
+	ctx, span := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.Reconcile",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(
+			attribute.String("pipelineinstance.namespace", pipelineInstance.Namespace),
+			attribute.String("pipelineinstance.name", pipelineInstance.Name),
+			attribute.String("pipelineinstance.uid", string(pipelineInstance.UID)),
+		),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	// Handle deletion: process finalizers in order (valkey credentials first, then mode-specific)
 	if !pipelineInstance.DeletionTimestamp.IsZero() {
@@ -514,6 +548,38 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 	}
 
 	return pipeline, nil
+}
+
+// extractTraceContext lifts the W3C traceparent/tracestate that
+// plainsight-deployment-agent (PLAT-851) wrote onto the CR into the supplied
+// context using the globally registered text-map propagator.
+//
+// The annotation keys are normalized to lowercase carrier keys ("traceparent",
+// "tracestate") because the W3C TraceContext propagator's Fields() are defined
+// in lowercase and propagation.MapCarrier is case-sensitive.
+//
+// When neither annotation is present (OSS deployments, eager callers) the
+// returned context is unchanged and the subsequent span becomes a root span —
+// no error, no log, since this is an expected state.
+func extractTraceContext(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) context.Context {
+	if len(pipelineInstance.Annotations) == 0 {
+		return ctx
+	}
+	carrier := propagation.MapCarrier{}
+	if tp, ok := pipelineInstance.Annotations[TraceparentAnnotation]; ok && tp != "" {
+		carrier["traceparent"] = tp
+		// Carry tracestate only when traceparent is present (the W3C
+		// propagator requires the parent context to interpret it; tracestate
+		// alone is meaningless and silently dropped here, matching the
+		// invariant enforced by tracingEnvVars for filter env injection).
+		if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
+			carrier["tracestate"] = ts
+		}
+	}
+	if len(carrier) == 0 {
+		return ctx
+	}
+	return otel.GetTextMapPropagator().Extract(ctx, carrier)
 }
 
 // tracingEnvVars returns the env vars the controller injects into every

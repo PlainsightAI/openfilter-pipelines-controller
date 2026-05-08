@@ -139,6 +139,15 @@ spec:
             - name: TELEMETRY_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.telemetry.exporterOtlpEndpoint | quote }}
             {{- end }}
+            {{- /* OTEL_EXPORTER_OTLP_ENDPOINT drives the controller's OWN
+                   reconcile spans (PLAT-1000), separate from the per-filter
+                   TELEMETRY_EXPORTER_* knobs above. Defaults to the same
+                   collector as the filter pods so a single chart value
+                   covers the common case where one collector serves both. */}}
+            {{- with (or .Values.telemetry.controllerOtlpEndpoint .Values.telemetry.exporterOtlpEndpoint) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

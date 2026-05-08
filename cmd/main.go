@@ -17,11 +17,13 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -40,6 +42,7 @@ import (
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/controller"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/queue"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -117,6 +120,7 @@ func main() {
 	var gpuBinPath string
 	var telemetryExporterType string
 	var telemetryExporterOTLPEndpoint string
+	var otelExporterOTLPEndpoint string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -162,6 +166,14 @@ func main() {
 		"Value injected as TELEMETRY_EXPORTER_OTLP_ENDPOINT into filter containers "+
 			"(e.g. 'otel-collector.monitoring.svc.cluster.local:4317'). Empty string disables injection. "+
 			"Can also be set via TELEMETRY_EXPORTER_OTLP_ENDPOINT env var.")
+	flag.StringVar(&otelExporterOTLPEndpoint, "otel-exporter-otlp-endpoint",
+		getEnvOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		"OTLP gRPC endpoint for the controller's OWN spans "+
+			"(e.g. 'otel-collector.monitoring.svc.cluster.local:4317'). Distinct from "+
+			"--telemetry-exporter-otlp-endpoint, which targets filter containers. "+
+			"The connection is plaintext (insecure) gRPC; in-cluster OTel collector receivers "+
+			"do not terminate TLS. Empty string disables tracing init entirely. "+
+			"Can also be set via OTEL_EXPORTER_OTLP_ENDPOINT env var.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -191,6 +203,26 @@ func main() {
 	if err := validateTelemetryFlags(telemetryExporterType, telemetryExporterOTLPEndpoint); err != nil {
 		setupLog.Error(err, "invalid telemetry exporter configuration")
 		os.Exit(1)
+	}
+
+	// Initialize the controller's own TracerProvider. With an empty endpoint
+	// this is a no-op and the global tracer stays a noop, so unit tests and
+	// OSS deployments without a collector pay no cost.
+	tracingShutdown, err := tracing.InitTracerProvider(context.Background(), otelExporterOTLPEndpoint, "")
+	if err != nil {
+		setupLog.Error(err, "unable to initialize OTel tracer provider")
+		os.Exit(1)
+	}
+	defer func() {
+		// Bound shutdown so a wedged collector can't block the manager exit.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracingShutdown(shutdownCtx); err != nil {
+			setupLog.Error(err, "tracer provider shutdown failed")
+		}
+	}()
+	if otelExporterOTLPEndpoint != "" {
+		setupLog.Info("OTel tracing enabled", "endpoint", otelExporterOTLPEndpoint, "insecure", true)
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled

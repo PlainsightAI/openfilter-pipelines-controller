@@ -411,6 +411,16 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		mode = pipelinesv1alpha1.PipelineModeBatch // default
 	}
 
+	// Stamp domain attributes on the parent reconcile span (PLAT-1028).
+	// Done lazily here — not at span Start — because pipeline.UID and
+	// pipeline.mode are only known once the Pipeline CR has been fetched
+	// and the mode default has been applied; stamping earlier would
+	// either miss the default or require double-fetching.
+	span.SetAttributes(
+		attribute.String("pipeline.id", string(pipeline.UID)),
+		attribute.String("pipeline.mode", string(mode)),
+	)
+
 	if mode == pipelinesv1alpha1.PipelineModeStream {
 		return r.reconcileStreaming(ctx, pipelineInstance, pipeline, pipelineSource)
 	}
@@ -548,6 +558,25 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 	}
 
 	return pipeline, nil
+}
+
+// endPhaseSpan ends a child phase span (PLAT-1028: claim/build/apply
+// granularity inside Reconcile). When err is non-nil, the error is recorded
+// on the span and the span status is set to codes.Error so the per-phase
+// failure attribution survives in Cloud Trace; otherwise the span ends with
+// the default Unset status.
+//
+// Pulled out of every call site instead of inlined as `defer` so the span
+// can be ended deterministically *before* the surrounding error-translation
+// `return fmt.Errorf(...)` runs — keeping span duration tight to the actual
+// phase work and preserving sibling (rather than nested) topology between
+// adjacent phases.
+func endPhaseSpan(span trace.Span, err error) {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
 }
 
 // extractTraceContext lifts the W3C traceparent/tracestate that

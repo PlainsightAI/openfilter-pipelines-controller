@@ -34,6 +34,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
 // reconcileStreaming handles the streaming (Deployment-based) reconciliation path
@@ -190,8 +191,13 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 		return fmt.Errorf("failed to get deployment: %w", err)
 	}
 
-	// Build the desired Deployment spec
+	// Build phase (PLAT-1028): pure CPU work — render the desired
+	// Deployment from the Pipeline + PipelineInstance + PipelineSource.
+	// Held outside the IsNotFound branch so both create and update paths
+	// share one build span sibling to the apply span below.
+	_, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
 	desiredDeployment := r.buildStreamingDeployment(pipelineInstance, pipeline, pipelineSource, deploymentName)
+	endPhaseSpan(buildSpan, nil)
 
 	if apierrors.IsNotFound(err) {
 		// Create the Deployment
@@ -199,8 +205,15 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 		if err := controllerutil.SetControllerReference(pipelineInstance, desiredDeployment, r.Scheme); err != nil {
 			return fmt.Errorf("failed to set controller reference: %w", err)
 		}
-		if err := r.Create(ctx, desiredDeployment); err != nil {
-			return fmt.Errorf("failed to create deployment: %w", err)
+		// Apply phase (PLAT-1028): kube-apiserver round-trip for the
+		// initial Create. Sibling of the build span above. The update
+		// path below has its own apply span so both lifecycles get
+		// equivalent attribution in the trace.
+		applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
+		createErr := r.Create(applyCtx, desiredDeployment)
+		endPhaseSpan(applySpan, createErr)
+		if createErr != nil {
+			return fmt.Errorf("failed to create deployment: %w", createErr)
 		}
 		pipelineInstance.Status.Streaming.DeploymentName = deploymentName
 		return nil
@@ -226,8 +239,15 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	patchBase := client.MergeFrom(deployment.DeepCopy())
 	deployment.Labels = desiredDeployment.Labels
 	deployment.Spec = desiredDeployment.Spec
-	if err := r.Patch(ctx, deployment, patchBase); err != nil {
-		return fmt.Errorf("failed to update deployment: %w", err)
+	// Apply phase (PLAT-1028): the update-path counterpart to the
+	// create-path apply span above. Same span name and parent so the
+	// trace shape is identical regardless of whether the Deployment
+	// was new or pre-existing.
+	applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
+	patchErr := r.Patch(applyCtx, deployment, patchBase)
+	endPhaseSpan(applySpan, patchErr)
+	if patchErr != nil {
+		return fmt.Errorf("failed to update deployment: %w", patchErr)
 	}
 	pipelineInstance.Status.Streaming.DeploymentName = deploymentName
 

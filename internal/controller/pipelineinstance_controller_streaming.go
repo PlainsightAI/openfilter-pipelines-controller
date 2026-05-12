@@ -192,19 +192,27 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	}
 
 	// Build phase (PLAT-1028): pure CPU work — render the desired
-	// Deployment from the Pipeline + PipelineInstance + PipelineSource.
-	// Held outside the IsNotFound branch so both create and update paths
-	// share one build span sibling to the apply span below.
-	_, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
-	desiredDeployment := r.buildStreamingDeployment(pipelineInstance, pipeline, pipelineSource, deploymentName)
-	endPhaseSpan(buildSpan, nil)
+	// Deployment from the Pipeline + PipelineInstance + PipelineSource,
+	// and on the create path stamp the owner reference. Mirrors the
+	// batch path (buildJob) so a SetControllerReference failure flows
+	// into the build span rather than escaping the trace.
+	buildCtx, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
+	desiredDeployment := r.buildStreamingDeployment(buildCtx, pipelineInstance, pipeline, pipelineSource, deploymentName)
 
 	if apierrors.IsNotFound(err) {
-		// Create the Deployment
-		log.Info("Creating streaming deployment", "deployment", deploymentName)
+		// Create the Deployment. SetControllerReference stamps owner
+		// metadata onto the rendered spec — pure CPU, no apiserver
+		// round-trip — so it belongs in the build phase. The update
+		// path below does not restamp the owner ref (it already exists
+		// on the live Deployment) and so closes the build span before
+		// patching.
 		if err := controllerutil.SetControllerReference(pipelineInstance, desiredDeployment, r.Scheme); err != nil {
+			endPhaseSpan(buildSpan, err)
 			return fmt.Errorf("failed to set controller reference: %w", err)
 		}
+		endPhaseSpan(buildSpan, nil)
+
+		log.Info("Creating streaming deployment", "deployment", deploymentName)
 		// Apply phase (PLAT-1028): kube-apiserver round-trip for the
 		// initial Create. Sibling of the build span above. The update
 		// path below has its own apply span so both lifecycles get
@@ -218,6 +226,10 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 		pipelineInstance.Status.Streaming.DeploymentName = deploymentName
 		return nil
 	}
+
+	// Update path: owner ref already exists on the live Deployment, so
+	// nothing more belongs in the build phase. Close it before the patch.
+	endPhaseSpan(buildSpan, nil)
 
 	// Update existing Deployment using Patch to avoid conflicts.
 	// We deliberately patch ObjectMeta.Labels + Spec only — never .Status,
@@ -255,7 +267,10 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 }
 
 // buildStreamingDeployment constructs a Deployment for streaming mode
-func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, deploymentName string) *appsv1.Deployment {
+func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, deploymentName string) *appsv1.Deployment {
+	log := logf.FromContext(ctx)
+	log.V(1).Info("Building streaming deployment", "deployment", deploymentName, "filters", len(pipeline.Spec.Filters))
+
 	replicas := int32(1)
 	maxUnavailable := intstr.FromInt32(0)
 	maxSurge := intstr.FromInt32(1)

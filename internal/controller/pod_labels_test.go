@@ -8,6 +8,7 @@ you may not use this file except in compliance with the License.
 package controller
 
 import (
+	"context"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -213,7 +214,7 @@ func TestBuildStreamingDeployment_PropagatesPlainsightLabels(t *testing.T) {
 		},
 	}
 
-	dep := r.buildStreamingDeployment(pi, pipeline, ps, "test-deploy")
+	dep := r.buildStreamingDeployment(context.Background(), pi, pipeline, ps, "test-deploy")
 
 	for _, tc := range []struct {
 		name   string

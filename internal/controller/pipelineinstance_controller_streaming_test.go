@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -42,7 +43,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_WithGPULimits(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	nodeSelector := deployment.Spec.Template.Spec.NodeSelector
 	if nodeSelector == nil {
@@ -75,7 +76,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_WithGPURequests(t *testing.T) 
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	nodeSelector := deployment.Spec.Template.Spec.NodeSelector
 	if nodeSelector == nil {
@@ -109,7 +110,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_WithoutGPU(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	nodeSelector := deployment.Spec.Template.Spec.NodeSelector
 	if nodeSelector != nil {
@@ -135,7 +136,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_NoResources(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	nodeSelector := deployment.Spec.Template.Spec.NodeSelector
 	if nodeSelector != nil {
@@ -169,7 +170,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_MultipleLabels(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	nodeSelector := deployment.Spec.Template.Spec.NodeSelector
 	if nodeSelector == nil {
@@ -204,7 +205,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_NilLabels(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	if nodeSelector := deployment.Spec.Template.Spec.NodeSelector; nodeSelector != nil {
 		if len(nodeSelector) != 0 {
@@ -234,7 +235,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_EmptyLabels(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	if nodeSelector := deployment.Spec.Template.Spec.NodeSelector; nodeSelector != nil {
 		if len(nodeSelector) != 0 {
@@ -264,7 +265,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_DefensiveCopy(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	// Mutate the returned deployment's NodeSelector
 	deployment.Spec.Template.Spec.NodeSelector["injected-key"] = "injected-value"
@@ -303,7 +304,7 @@ func TestBuildStreamingDeployment_GPUNodeSelector_BothLimitsAndRequests(t *testi
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 
 	nodeSelector := deployment.Spec.Template.Spec.NodeSelector
 	if nodeSelector == nil {
@@ -336,7 +337,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_WithGPULimits(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	containers := deployment.Spec.Template.Spec.Containers
 	if len(containers) == 0 {
 		t.Fatal("expected at least one container")
@@ -379,7 +380,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_ZeroQuantityNotInjected(t *tes
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
@@ -407,7 +408,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NotInjectedForCPUContainer(t *
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
@@ -439,7 +440,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserCanOverride(t *testing.T) 
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	var ldLibVals []string
@@ -482,7 +483,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_PerContainerNotPod(t *testing.
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	containers := deployment.Spec.Template.Spec.Containers
 
 	if len(containers) < 2 {
@@ -518,7 +519,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NilResources(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with nil Resources")
@@ -540,7 +541,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_EmptyResourceRequirements(t *t
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be set for filter with empty ResourceRequirements")
@@ -565,7 +566,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_BothLimitsAndRequestsInjectsOn
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	var count int
@@ -597,7 +598,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_ZeroLimitsNonZeroRequests(t *t
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, ldLibraryPathEnvName); !ok {
 		t.Error("expected LD_LIBRARY_PATH to be injected when Requests has positive GPU (Limits is zero)")
@@ -621,7 +622,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_NegativeQuantityNotInjected(t 
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, ldLibraryPathEnvName); ok {
 		t.Error("expected LD_LIBRARY_PATH NOT to be injected for negative GPU quantity")
@@ -645,7 +646,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_LargeGPUCount(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	ldLib, ok := findEnvVar(env, ldLibraryPathEnvName)
 	if !ok {
@@ -676,7 +677,7 @@ func TestBuildStreamingDeployment_GPUEnvInjection_UserOverridesWithEmptyString(t
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	var ldLibVals []string
@@ -715,7 +716,7 @@ func TestBuildStreamingDeployment_PATHInjection_GPUContainerGetsPATH(t *testing.
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	pathVar, ok := findEnvVar(env, appendPathEnvName)
@@ -747,7 +748,7 @@ func TestBuildStreamingDeployment_PATHInjection_CPUContainerDoesNotGetPATH(t *te
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	if _, ok := findEnvVar(env, appendPathEnvName); ok {
@@ -779,7 +780,7 @@ func TestBuildStreamingDeployment_PATHInjection_UserCanOverride(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	var pathVals []string
@@ -818,7 +819,7 @@ func TestBuildStreamingDeployment_PATHInjection_EmptyGPUBinPathSkipsInjection(t 
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	if _, ok := findEnvVar(env, appendPathEnvName); ok {
@@ -837,7 +838,7 @@ func TestBuildStreamingDeployment_ImagePullSecrets_None(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	if len(deployment.Spec.Template.Spec.ImagePullSecrets) != 0 {
 		t.Errorf("expected no ImagePullSecrets, got %v", deployment.Spec.Template.Spec.ImagePullSecrets)
 	}
@@ -858,7 +859,7 @@ func TestBuildStreamingDeployment_ImagePullSecrets_Propagated(t *testing.T) {
 		},
 	}
 
-	deployment := r.buildStreamingDeployment(pi, pipeline, nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, nil, "test-deployment")
 	secrets := deployment.Spec.Template.Spec.ImagePullSecrets
 	if len(secrets) != 2 {
 		t.Fatalf("expected 2 ImagePullSecrets, got %d", len(secrets))

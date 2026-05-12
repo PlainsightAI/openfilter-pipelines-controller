@@ -56,13 +56,15 @@ func noopShutdown(context.Context) error { return nil }
 // gRPC exporter pointed at endpoint. The connection is plaintext (no TLS).
 //
 // When endpoint is empty the function is a no-op: the global tracer stays a
-// noop, no exporter is dialed, and no resources are leaked. This lets the
-// controller ship with tracing wired but inert until an operator opts in via
-// OTEL_EXPORTER_OTLP_ENDPOINT.
+// noop, no exporter is dialed, and no resources are leaked. In this branch
+// the W3C TraceContext + Baggage propagators are NOT installed, since with a
+// noop tracer there is no span context for the propagators to act on (an
+// extracted traceparent would attach to a dead context).
 //
-// The W3C TraceContext + Baggage propagators are installed globally so the
-// reconciler can extract the upstream traceparent that
-// plainsight-deployment-agent (PLAT-851) writes onto the PipelineInstance CR.
+// When endpoint is non-empty, the W3C TraceContext + Baggage propagators are
+// installed globally so the reconciler can extract the upstream traceparent
+// that plainsight-deployment-agent (PLAT-851) writes onto the PipelineInstance
+// CR.
 //
 // The returned ShutdownFunc must be called on graceful shutdown to flush the
 // span batcher; otherwise in-flight spans are dropped.

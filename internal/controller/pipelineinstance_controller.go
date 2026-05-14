@@ -28,7 +28,6 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -336,9 +335,9 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	ctx, span := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.Reconcile",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
-			attribute.String("pipelineinstance.namespace", pipelineInstance.Namespace),
-			attribute.String("pipelineinstance.name", pipelineInstance.Name),
-			attribute.String("pipelineinstance.uid", string(pipelineInstance.UID)),
+			tracing.PipelineInstanceNamespace(pipelineInstance),
+			tracing.PipelineInstanceName(pipelineInstance),
+			tracing.PipelineInstanceUID(pipelineInstance),
 		),
 	)
 	defer func() {
@@ -417,8 +416,8 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// and the mode default has been applied; stamping earlier would
 	// either miss the default or require double-fetching.
 	span.SetAttributes(
-		attribute.String("pipeline.id", string(pipeline.UID)),
-		attribute.String("pipeline.mode", string(mode)),
+		tracing.PipelineUID(pipeline),
+		tracing.PipelineMode(mode),
 	)
 
 	if mode == pipelinesv1alpha1.PipelineModeStream {

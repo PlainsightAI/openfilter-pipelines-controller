@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -81,12 +82,18 @@ func InitTracerProvider(ctx context.Context, endpoint, serviceVersion string) (S
 	endpoint = strings.TrimPrefix(endpoint, "https://")
 	endpoint = strings.TrimSuffix(endpoint, "/")
 
+	// Gate ServiceVersion so an unset value (the current call-site state
+	// pending ldflags wiring) doesn't ship `service.version=""` as a
+	// present-but-empty attribute on every span. When ldflags lands later
+	// no further change here is needed — the gate just starts passing
+	// through.
+	attrs := []attribute.KeyValue{semconv.ServiceName("openfilter-pipelines-controller")}
+	if serviceVersion != "" {
+		attrs = append(attrs, semconv.ServiceVersion(serviceVersion))
+	}
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewSchemaless(
-			semconv.ServiceName("openfilter-pipelines-controller"),
-			semconv.ServiceVersion(serviceVersion),
-		),
+		resource.NewSchemaless(attrs...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build OTel resource: %w", err)

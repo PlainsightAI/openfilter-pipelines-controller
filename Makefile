@@ -97,8 +97,12 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
+lint: golangci-lint lint-struct ## Run golangci-lint linter and the structlint multichecker
 	$(GOLANGCI_LINT) run
+
+.PHONY: lint-struct
+lint-struct: ## Run the structlint multichecker (canonical OTel attribute keys)
+	go run ./tools/structlint ./...
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes

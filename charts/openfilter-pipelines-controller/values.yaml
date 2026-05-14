@@ -182,7 +182,9 @@ telemetry:
   # not terminate TLS. When empty AND exporterOtlpEndpoint is also empty,
   # tracing is fully disabled and the global tracer stays a noop. Leave empty
   # to default to exporterOtlpEndpoint (the common case: one collector for
-  # both controller and filter spans).
+  # both controller and filter spans). To disable controller tracing while
+  # keeping filter tracing on, override OTEL_EXPORTER_OTLP_ENDPOINT to ""
+  # via .Values.env.
   controllerOtlpEndpoint: ""
 
 # Environment variables

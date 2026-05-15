@@ -638,7 +638,11 @@ func reconcileOutcome(result ctrl.Result, err error) tracing.ReconcileOutcome {
 	switch {
 	case err != nil:
 		return tracing.ReconcileOutcomeError
-	case result.Requeue || result.RequeueAfter > 0:
+	// SA1019: reading the deprecated field is intentional — the
+	// finalizer-bookkeeping call sites in this controller still set
+	// Requeue=true, and skipping the read would silently misreport
+	// those returns as `complete` in the trace facet.
+	case result.Requeue || result.RequeueAfter > 0: //nolint:staticcheck // see comment above
 		return tracing.ReconcileOutcomeRequeue
 	default:
 		return tracing.ReconcileOutcomeComplete

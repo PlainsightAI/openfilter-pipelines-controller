@@ -28,6 +28,8 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -90,6 +92,14 @@ const (
 	// W3C `tracestate` header. Propagated as TRACESTATE env var alongside
 	// TRACEPARENT so vendor-specific trace context survives the controller hop.
 	TracestateAnnotation = "traces.opentelemetry.io/tracestate"
+
+	// BaggageAnnotation is the PipelineInstance annotation key carrying the
+	// W3C `baggage` header. Identity attributes (organization.id, project.id,
+	// user.id, …) ride here so they survive the API → agent → controller hop
+	// even when no traceparent is present (OSS deployments that opt into
+	// identity propagation but not distributed tracing). Owned cross-repo with
+	// plainsight-deployment-agent, which writes the same key.
+	BaggageAnnotation = "traces.opentelemetry.io/baggage"
 )
 
 // ValkeyClientInterface defines the interface for Valkey operations
@@ -330,7 +340,8 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// starting the span so the controller's span is a child of the agent's
 	// span. If no traceparent is present (OSS or pre-instrumented callers),
 	// the controller's span becomes a new root — still useful for operator
-	// debugging.
+	// debugging. Baggage is lifted from the CR independently of traceparent
+	// (extractTraceContext) so identity members survive even on OSS hops.
 	ctx = extractTraceContext(ctx, pipelineInstance)
 	ctx, span := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.Reconcile",
 		trace.WithSpanKind(trace.SpanKindInternal),
@@ -340,7 +351,14 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			tracing.PipelineInstanceUID(pipelineInstance),
 		),
 	)
+	// Lift baggage members onto the reconcile span so cross-service identity
+	// (organization.id, project.id, user.id) is visible in the trace UI as
+	// attributes — baggage members alone don't appear in span data, only in
+	// downstream propagation. Done immediately after Start so the values are
+	// visible across the full span lifetime.
+	stampBaggageOnSpan(ctx, span)
 	defer func() {
+		span.SetAttributes(tracing.ReconcileOutcomeAttr(reconcileOutcome(result, err)))
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -417,6 +435,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// either miss the default or require double-fetching.
 	span.SetAttributes(
 		tracing.PipelineUID(pipeline),
+		tracing.PipelineName(pipeline),
 		tracing.PipelineMode(mode),
 	)
 
@@ -559,6 +578,77 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 	return pipeline, nil
 }
 
+// baggageSpanAllowlist bounds which W3C baggage members stampBaggageOnSpan
+// copies onto the reconcile span. Baggage is a free-form propagation channel
+// — any upstream service can inject arbitrary keys, and Cloud Trace retains
+// span attributes for the full trace retention window — so an unbounded
+// stamp would let a future agent regression accidentally exfiltrate PII
+// (emails, session tokens, …) into trace storage.
+//
+// The set mirrors the identity tuple plainsight-api and
+// plainsight-deployment-agent already stamp onto upstream spans:
+// organization.id, project.id, user.id. New entries here must be coordinated
+// cross-repo with both producers — adding a key the agent isn't yet
+// producing is harmless (just a no-op), but stamping a key the agent
+// produces without a matching entry here silently drops it from the trace UI.
+//
+// Baggage propagation itself is unfiltered — only the span-attribute lift is
+// bounded, so downstream consumers reading baggage from ctx still see
+// whatever the agent put in.
+var baggageSpanAllowlist = map[string]struct{}{
+	"organization.id": {},
+	"project.id":      {},
+	"user.id":         {},
+}
+
+// stampBaggageOnSpan copies allowlisted W3C baggage members from ctx onto
+// the supplied span as string attributes. Non-allowlisted members are
+// dropped (see baggageSpanAllowlist for the rationale). No-op when the
+// context carries no baggage members or no allowlisted ones.
+func stampBaggageOnSpan(ctx context.Context, span trace.Span) {
+	members := baggage.FromContext(ctx).Members()
+	if len(members) == 0 {
+		return
+	}
+	attrs := make([]attribute.KeyValue, 0, len(members))
+	for _, m := range members {
+		if _, ok := baggageSpanAllowlist[m.Key()]; !ok {
+			continue
+		}
+		attrs = append(attrs, attribute.String(m.Key(), m.Value()))
+	}
+	if len(attrs) == 0 {
+		return
+	}
+	span.SetAttributes(attrs...)
+}
+
+// reconcileOutcome categorises a Reconcile return tuple for the
+// reconcile.outcome span attribute. Error trumps requeue (a returned err is a
+// failure even when paired with Requeue) so Cloud Trace's outcome facet doesn't
+// hide retried failures behind the steady "requeue" bucket.
+//
+// Both `Requeue` and `RequeueAfter` count as a requeue. `Requeue` is
+// deprecated in favour of `RequeueAfter`, but controller-runtime still
+// honours it at runtime and the finalizer-bookkeeping paths in this
+// controller still set it to trigger an immediate retry with a fresh
+// resourceVersion. Consulting both fields keeps the trace facet honest
+// regardless of which form a call site uses.
+func reconcileOutcome(result ctrl.Result, err error) tracing.ReconcileOutcome {
+	switch {
+	case err != nil:
+		return tracing.ReconcileOutcomeError
+	// SA1019: reading the deprecated field is intentional — the
+	// finalizer-bookkeeping call sites in this controller still set
+	// Requeue=true, and skipping the read would silently misreport
+	// those returns as `complete` in the trace facet.
+	case result.Requeue || result.RequeueAfter > 0: //nolint:staticcheck // see comment above
+		return tracing.ReconcileOutcomeRequeue
+	default:
+		return tracing.ReconcileOutcomeComplete
+	}
+}
+
 // endPhaseSpan ends a child phase span (PLAT-1028: claim/build/apply
 // granularity inside Reconcile). When err is non-nil, the error is recorded
 // on the span and the span status is set to codes.Error so the per-phase
@@ -578,17 +668,25 @@ func endPhaseSpan(span trace.Span, err error) {
 	span.End()
 }
 
-// extractTraceContext lifts the W3C traceparent/tracestate that
+// extractTraceContext lifts the W3C traceparent/tracestate/baggage that
 // plainsight-deployment-agent (PLAT-851) wrote onto the CR into the supplied
 // context using the globally registered text-map propagator.
 //
 // The annotation keys are normalized to lowercase carrier keys ("traceparent",
-// "tracestate") because the W3C TraceContext propagator's Fields() are defined
-// in lowercase and propagation.MapCarrier is case-sensitive.
+// "tracestate", "baggage") because the W3C TraceContext + Baggage propagators'
+// Fields() are defined in lowercase and propagation.MapCarrier is
+// case-sensitive.
 //
-// When neither annotation is present (OSS deployments, eager callers) the
-// returned context is unchanged and the subsequent span becomes a root span —
-// no error, no log, since this is an expected state.
+// Baggage is lifted independently of traceparent: identity baggage members
+// (organization.id, project.id, user.id, …) are meaningful even on OSS
+// deployments that opt into identity propagation but not distributed tracing.
+// Tracestate, by contrast, is meaningless without traceparent and is dropped
+// when the parent context is absent (matching the invariant enforced by
+// tracingEnvVars for filter env injection).
+//
+// When no annotation is present (OSS deployments, eager callers) the returned
+// context is unchanged and the subsequent span becomes a root span — no error,
+// no log, since this is an expected state.
 func extractTraceContext(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) context.Context {
 	if len(pipelineInstance.Annotations) == 0 {
 		return ctx
@@ -596,13 +694,12 @@ func extractTraceContext(ctx context.Context, pipelineInstance *pipelinesv1alpha
 	carrier := propagation.MapCarrier{}
 	if tp, ok := pipelineInstance.Annotations[TraceparentAnnotation]; ok && tp != "" {
 		carrier["traceparent"] = tp
-		// Carry tracestate only when traceparent is present (the W3C
-		// propagator requires the parent context to interpret it; tracestate
-		// alone is meaningless and silently dropped here, matching the
-		// invariant enforced by tracingEnvVars for filter env injection).
 		if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
 			carrier["tracestate"] = ts
 		}
+	}
+	if bg, ok := pipelineInstance.Annotations[BaggageAnnotation]; ok && bg != "" {
+		carrier["baggage"] = bg
 	}
 	if len(carrier) == 0 {
 		return ctx

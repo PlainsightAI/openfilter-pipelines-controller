@@ -198,6 +198,16 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	// into the build span rather than escaping the trace.
 	buildCtx, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
 	desiredDeployment := r.buildStreamingDeployment(buildCtx, pipelineInstance, pipeline, pipelineSource, deploymentName)
+	desiredContainers := desiredDeployment.Spec.Template.Spec.Containers
+	desiredReplicas := int32(0)
+	if desiredDeployment.Spec.Replicas != nil {
+		desiredReplicas = *desiredDeployment.Spec.Replicas
+	}
+	buildSpan.SetAttributes(
+		tracing.BuildContainerCount(len(desiredContainers)),
+		tracing.BuildGPU(requiresGPU(desiredContainers)),
+		tracing.BuildReplicas(desiredReplicas),
+	)
 
 	if apierrors.IsNotFound(err) {
 		// Create the Deployment. SetControllerReference stamps owner
@@ -219,6 +229,9 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 		// equivalent attribution in the trace.
 		applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
 		createErr := r.Create(applyCtx, desiredDeployment)
+		if createErr == nil {
+			applySpan.SetAttributes(tracing.ApplyResultAttr(tracing.ApplyResultCreated))
+		}
 		endPhaseSpan(applySpan, createErr)
 		if createErr != nil {
 			return fmt.Errorf("failed to create deployment: %w", createErr)
@@ -254,9 +267,15 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	// Apply phase (PLAT-1028): the update-path counterpart to the
 	// create-path apply span above. Same span name and parent so the
 	// trace shape is identical regardless of whether the Deployment
-	// was new or pre-existing.
+	// was new or pre-existing. Stamp `updated` on success — we don't
+	// distinguish a no-op patch from a real mutation here because
+	// MergeFrom-based patches always round-trip, and the kube-apiserver
+	// returns 200 either way.
 	applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
 	patchErr := r.Patch(applyCtx, deployment, patchBase)
+	if patchErr == nil {
+		applySpan.SetAttributes(tracing.ApplyResultAttr(tracing.ApplyResultUpdated))
+	}
 	endPhaseSpan(applySpan, patchErr)
 	if patchErr != nil {
 		return fmt.Errorf("failed to update deployment: %w", patchErr)

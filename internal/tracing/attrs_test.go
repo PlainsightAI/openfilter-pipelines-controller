@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -88,6 +89,87 @@ func TestStamp_AppliesAttributesToActiveSpan(t *testing.T) {
 	for _, c := range cases {
 		if got[c.key] != c.want {
 			t.Errorf("attr %q: got %q, want %q", c.key, got[c.key], c.want)
+		}
+	}
+}
+
+// TestStamp_AppliesPhaseBuildersToActiveSpan mirrors the canonical-key /
+// builder pairing in TestStamp_AppliesAttributesToActiveSpan for the
+// per-phase enrichers introduced for PLAT-1028 (the claim / build / apply
+// children inside Reconcile, plus the Pipeline-name and reconcile-outcome
+// stamps on the root span). A typo in any of the eight new canonical keys,
+// or a builder wiring the wrong constant, fails here in isolation rather
+// than only through controller integration tests.
+func TestStamp_AppliesPhaseBuildersToActiveSpan(t *testing.T) {
+	recorder := withRecordingTracerProvider(t)
+
+	pipeline := &pipelinesv1alpha1.Pipeline{}
+	pipeline.Name = "pipeline-name"
+
+	ctx, span := otel.Tracer("test").Start(context.Background(), "test.stamp_phase")
+	Stamp(ctx,
+		PipelineName(pipeline),
+		ReconcileOutcomeAttr(ReconcileOutcomeRequeue),
+		ClaimAcquired(true),
+		BuildContainerCount(3),
+		BuildGPU(true),
+		BuildReplicas(int32(5)),
+		BuildParallelism(int32(7)),
+		ApplyResultAttr(ApplyResultCreated),
+	)
+	span.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected exactly one ended span, got %d", len(spans))
+	}
+
+	got := map[string]attribute.Value{}
+	for _, a := range spans[0].Attributes() {
+		got[string(a.Key)] = a.Value
+	}
+
+	stringCases := []struct {
+		key  string
+		want string
+	}{
+		{AttrPipelineName, "pipeline-name"},
+		{AttrReconcileOutcome, string(ReconcileOutcomeRequeue)},
+		{AttrApplyResult, string(ApplyResultCreated)},
+	}
+	for _, c := range stringCases {
+		if v := got[c.key].AsString(); v != c.want {
+			t.Errorf("attr %q: got %q, want %q", c.key, v, c.want)
+		}
+	}
+
+	boolCases := []struct {
+		key  string
+		want bool
+	}{
+		{AttrClaimAcquired, true},
+		{AttrBuildGPU, true},
+	}
+	for _, c := range boolCases {
+		if v := got[c.key].AsBool(); v != c.want {
+			t.Errorf("attr %q: got %v, want %v", c.key, v, c.want)
+		}
+	}
+
+	// BuildReplicas / BuildParallelism take int32 at the call site but the
+	// stamp goes through attribute.Int → int64 on the wire; assert the
+	// canonical int64 form to mirror what the trace UI receives.
+	intCases := []struct {
+		key  string
+		want int64
+	}{
+		{AttrBuildContainerCount, 3},
+		{AttrBuildReplicas, 5},
+		{AttrBuildParallelism, 7},
+	}
+	for _, c := range intCases {
+		if v := got[c.key].AsInt64(); v != c.want {
+			t.Errorf("attr %q: got %d, want %d", c.key, v, c.want)
 		}
 	}
 }

@@ -19,6 +19,43 @@ import (
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
 
+// ReconcileOutcome categorises how a Reconcile call returned, stamped on the
+// root reconcile span via AttrReconcileOutcome. The closed set keeps the trace
+// UI's "outcome" facet predictable across services.
+type ReconcileOutcome string
+
+const (
+	// ReconcileOutcomeComplete means the reconcile returned (Result{}, nil)
+	// with no requeue request — the loop is at rest until the next watch
+	// event.
+	ReconcileOutcomeComplete ReconcileOutcome = "complete"
+
+	// ReconcileOutcomeRequeue means the reconcile asked controller-runtime
+	// to re-enter (Requeue or RequeueAfter) without surfacing an error.
+	ReconcileOutcomeRequeue ReconcileOutcome = "requeue"
+
+	// ReconcileOutcomeError means the reconcile returned a non-nil error,
+	// which controller-runtime translates into a backoff requeue.
+	ReconcileOutcomeError ReconcileOutcome = "error"
+)
+
+// ApplyResult categorises how an apply phase mutated (or didn't mutate) the
+// kube-apiserver, stamped via AttrApplyResult. Mirrors controller-runtime's
+// OperationResult vocabulary so traces line up with reconcile logs that quote
+// it directly.
+type ApplyResult string
+
+const (
+	// ApplyResultCreated means the apply call materialised a new object.
+	ApplyResultCreated ApplyResult = "created"
+
+	// ApplyResultUpdated means the apply call patched/updated an existing
+	// object. Apply paths in this controller deliberately stamp `updated`
+	// even for no-op MergeFrom patches (the kube-apiserver returns 200
+	// regardless), so there is intentionally no `unchanged` variant.
+	ApplyResultUpdated ApplyResult = "updated"
+)
+
 // Canonical attribute keys for the cross-domain Cloud Trace queries called
 // out in PLAT-1000 / PLAT-1028. Centralised so a typo in a key string
 // becomes a lint failure here instead of a silent miss in the trace UI.
@@ -69,6 +106,44 @@ const (
 	// "stream"), stamped after defaulting so the trace UI can filter by
 	// effective mode rather than the raw spec field.
 	AttrPipelineMode = "pipeline.mode"
+
+	// AttrPipelineName is the K8s metadata.name of the parent Pipeline CR.
+	// Useful for kubectl cross-referencing from a trace; complements
+	// `pipeline.uid` (the K8s identity) for human-readable lookup.
+	AttrPipelineName = "pipeline.name"
+
+	// AttrReconcileOutcome is the closed-set summary of how a Reconcile
+	// call returned. See ReconcileOutcome for the value vocabulary.
+	AttrReconcileOutcome = "reconcile.outcome"
+
+	// AttrClaimAcquired is true when the reconcile actually performed
+	// per-instance initialization (queue seed + status snapshot) on this
+	// pass; false when the PipelineInstance was already initialized on a
+	// prior reconcile. Lets the trace UI distinguish first-claim spans
+	// from steady-state no-ops without scraping logs.
+	AttrClaimAcquired = "claim.acquired"
+
+	// AttrBuildContainerCount is the number of filter containers in the
+	// rendered pod spec.
+	AttrBuildContainerCount = "build.container.count"
+
+	// AttrBuildGPU is true when at least one rendered filter container
+	// requests a positive nvidia.com/gpu quantity.
+	AttrBuildGPU = "build.gpu"
+
+	// AttrBuildReplicas is the streaming-mode replica count on the
+	// rendered Deployment.
+	AttrBuildReplicas = "build.replicas"
+
+	// AttrBuildParallelism is the batch-mode parallelism on the rendered
+	// Job. Distinct attribute from build.replicas so the trace UI can
+	// facet by mode without overloading a single key.
+	AttrBuildParallelism = "build.parallelism"
+
+	// AttrApplyResult is the closed-set summary of how the apply phase
+	// affected the kube-apiserver. See ApplyResult for the value
+	// vocabulary.
+	AttrApplyResult = "apply.result"
 )
 
 // PipelineInstanceUID builds the canonical pipeline_instance.uid attribute
@@ -101,6 +176,49 @@ func PipelineUID(p *pipelinesv1alpha1.Pipeline) attribute.KeyValue {
 // compile error (the v1alpha1 type has a closed set of values).
 func PipelineMode(mode pipelinesv1alpha1.PipelineMode) attribute.KeyValue {
 	return attribute.String(AttrPipelineMode, string(mode))
+}
+
+// PipelineName builds the canonical pipeline.name attribute from a Pipeline CR.
+func PipelineName(p *pipelinesv1alpha1.Pipeline) attribute.KeyValue {
+	return attribute.String(AttrPipelineName, p.Name)
+}
+
+// ReconcileOutcomeAttr builds the canonical reconcile.outcome attribute.
+// Takes the typed enum (rather than a raw string) so a typo at the call site
+// is a compile error.
+func ReconcileOutcomeAttr(outcome ReconcileOutcome) attribute.KeyValue {
+	return attribute.String(AttrReconcileOutcome, string(outcome))
+}
+
+// ClaimAcquired builds the canonical claim.acquired attribute.
+func ClaimAcquired(acquired bool) attribute.KeyValue {
+	return attribute.Bool(AttrClaimAcquired, acquired)
+}
+
+// BuildContainerCount builds the canonical build.container.count attribute.
+func BuildContainerCount(n int) attribute.KeyValue {
+	return attribute.Int(AttrBuildContainerCount, n)
+}
+
+// BuildGPU builds the canonical build.gpu attribute.
+func BuildGPU(gpu bool) attribute.KeyValue {
+	return attribute.Bool(AttrBuildGPU, gpu)
+}
+
+// BuildReplicas builds the canonical build.replicas attribute (streaming mode).
+func BuildReplicas(n int32) attribute.KeyValue {
+	return attribute.Int(AttrBuildReplicas, int(n))
+}
+
+// BuildParallelism builds the canonical build.parallelism attribute (batch mode).
+func BuildParallelism(n int32) attribute.KeyValue {
+	return attribute.Int(AttrBuildParallelism, int(n))
+}
+
+// ApplyResultAttr builds the canonical apply.result attribute. Takes the
+// typed enum so a typo at the call site is a compile error.
+func ApplyResultAttr(result ApplyResult) attribute.KeyValue {
+	return attribute.String(AttrApplyResult, string(result))
 }
 
 // Stamp sets the given attributes on the active span carried by ctx. It's a

@@ -51,8 +51,17 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 	// Valkey work stream. Time spent here is dominated by S3 LIST latency
 	// and is the biggest single contributor to startup time on cold runs,
 	// so it gets its own child span for waterfall attribution.
+	//
+	// claim.acquired distinguishes the cold-start reconcile (queue seed +
+	// status snapshot) from the steady-state no-op pass. Snapshotted
+	// pre-call because initializePipelineInstance writes StartTime on the
+	// first successful pass; if it was zero on entry and non-zero after a
+	// successful return, this reconcile is the one that did the seeding.
+	hadStartTime := pipelineInstance.Status.StartTime != nil
 	claimCtx, claimSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.claim")
 	initialized, err := r.initializePipelineInstance(claimCtx, pipelineInstance, pipelineSource)
+	claimAcquired := err == nil && !hadStartTime && pipelineInstance.Status.StartTime != nil
+	claimSpan.SetAttributes(tracing.ClaimAcquired(claimAcquired))
 	endPhaseSpan(claimSpan, err)
 	if err != nil {
 		log.Error(err, "Failed to initialize PipelineInstance")
@@ -341,6 +350,16 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 	// reference. Sibling of the apply span below (both rooted at ctx).
 	buildCtx, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
 	job := r.buildJob(buildCtx, pipelineInstance, pipeline, pipelineSource, jobName)
+	containers := job.Spec.Template.Spec.Containers
+	parallelism := int32(0)
+	if job.Spec.Parallelism != nil {
+		parallelism = *job.Spec.Parallelism
+	}
+	buildSpan.SetAttributes(
+		tracing.BuildContainerCount(len(containers)),
+		tracing.BuildGPU(requiresGPU(containers)),
+		tracing.BuildParallelism(parallelism),
+	)
 	if err := controllerutil.SetControllerReference(pipelineInstance, job, r.Scheme); err != nil {
 		endPhaseSpan(buildSpan, err)
 		return fmt.Errorf("failed to set owner reference: %w", err)
@@ -349,9 +368,15 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 
 	// Apply phase (PLAT-1028): the kube-apiserver round-trip. Isolated
 	// from build so the trace cleanly attributes time spent waiting on
-	// the API server (admission webhooks, etcd write).
+	// the API server (admission webhooks, etcd write). The batch path
+	// only Creates here (the existing-Job branch above returns early
+	// without entering the apply span), so apply.result is invariably
+	// `created` on success.
 	applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
 	createErr := r.Create(applyCtx, job)
+	if createErr == nil {
+		applySpan.SetAttributes(tracing.ApplyResultAttr(tracing.ApplyResultCreated))
+	}
 	endPhaseSpan(applySpan, createErr)
 	if createErr != nil {
 		return fmt.Errorf("failed to create job: %w", createErr)

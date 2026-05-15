@@ -26,6 +26,14 @@ var attrkeyCanonical = map[string]string{
 	"pipeline_instance.namespace": "tracing.PipelineInstanceNamespace(pi)",
 	"pipeline.uid":                "tracing.PipelineUID(p)",
 	"pipeline.mode":               "tracing.PipelineMode(mode)",
+	"pipeline.name":               "tracing.PipelineName(p)",
+	"reconcile.outcome":           "tracing.ReconcileOutcomeAttr(outcome)",
+	"claim.acquired":              "tracing.ClaimAcquired(acquired)",
+	"build.container.count":       "tracing.BuildContainerCount(n)",
+	"build.gpu":                   "tracing.BuildGPU(gpu)",
+	"build.replicas":              "tracing.BuildReplicas(n)",
+	"build.parallelism":           "tracing.BuildParallelism(n)",
+	"apply.result":                "tracing.ApplyResultAttr(result)",
 }
 
 // otelAttributePkg is the import path of the OTel attribute package whose

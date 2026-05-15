@@ -628,16 +628,17 @@ func stampBaggageOnSpan(ctx context.Context, span trace.Span) {
 // failure even when paired with Requeue) so Cloud Trace's outcome facet doesn't
 // hide retried failures behind the steady "requeue" bucket.
 //
-// Only `RequeueAfter` is consulted — controller-runtime deprecated the bare
-// `Requeue` boolean. Reconciles that still set the deprecated field will be
-// reported as `complete` until those call sites migrate to `RequeueAfter`,
-// which is acceptable churn for a span attribute (the actual reconcile
-// behaviour is unchanged; only the trace facet shifts).
+// Both `Requeue` and `RequeueAfter` count as a requeue. `Requeue` is
+// deprecated in favour of `RequeueAfter`, but controller-runtime still
+// honours it at runtime and the finalizer-bookkeeping paths in this
+// controller still set it to trigger an immediate retry with a fresh
+// resourceVersion. Consulting both fields keeps the trace facet honest
+// regardless of which form a call site uses.
 func reconcileOutcome(result ctrl.Result, err error) tracing.ReconcileOutcome {
 	switch {
 	case err != nil:
 		return tracing.ReconcileOutcomeError
-	case result.RequeueAfter > 0:
+	case result.Requeue || result.RequeueAfter > 0:
 		return tracing.ReconcileOutcomeRequeue
 	default:
 		return tracing.ReconcileOutcomeComplete

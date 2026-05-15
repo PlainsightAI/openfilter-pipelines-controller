@@ -185,7 +185,9 @@ func TestReconcileOutcome_Categorisation(t *testing.T) {
 	}{
 		{"clean complete", ctrl.Result{}, nil, tracing.ReconcileOutcomeComplete},
 		{"requeue after", ctrl.Result{RequeueAfter: time.Second}, nil, tracing.ReconcileOutcomeRequeue},
-		{"error trumps requeue", ctrl.Result{RequeueAfter: time.Second}, errFakeBoom, tracing.ReconcileOutcomeError},
+		{"bare requeue", ctrl.Result{Requeue: true}, nil, tracing.ReconcileOutcomeRequeue},
+		{"error trumps requeue after", ctrl.Result{RequeueAfter: time.Second}, errFakeBoom, tracing.ReconcileOutcomeError},
+		{"error trumps bare requeue", ctrl.Result{Requeue: true}, errFakeBoom, tracing.ReconcileOutcomeError},
 		{"bare error", ctrl.Result{}, errFakeBoom, tracing.ReconcileOutcomeError},
 	}
 	for _, c := range cases {

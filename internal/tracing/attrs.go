@@ -50,13 +50,10 @@ const (
 	ApplyResultCreated ApplyResult = "created"
 
 	// ApplyResultUpdated means the apply call patched/updated an existing
-	// object.
+	// object. Apply paths in this controller deliberately stamp `updated`
+	// even for no-op MergeFrom patches (the kube-apiserver returns 200
+	// regardless), so there is intentionally no `unchanged` variant.
 	ApplyResultUpdated ApplyResult = "updated"
-
-	// ApplyResultUnchanged means the apply path concluded with no
-	// kube-apiserver mutation (e.g. an idempotent CreateOrUpdate that
-	// returned OperationResultNone).
-	ApplyResultUnchanged ApplyResult = "unchanged"
 )
 
 // Canonical attribute keys for the cross-domain Cloud Trace queries called

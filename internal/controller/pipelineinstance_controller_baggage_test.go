@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel/baggage"
@@ -30,13 +31,7 @@ func baggageOf(t *testing.T, kvs ...string) context.Context {
 	for _, kv := range kvs {
 		// Format is "key=value". Split on the first '=' so values
 		// containing '=' (allowed by the spec) survive.
-		i := -1
-		for j := 0; j < len(kv); j++ {
-			if kv[j] == '=' {
-				i = j
-				break
-			}
-		}
+		i := strings.IndexByte(kv, '=')
 		if i < 0 {
 			t.Fatalf("baggageOf: malformed entry %q (want key=value)", kv)
 		}

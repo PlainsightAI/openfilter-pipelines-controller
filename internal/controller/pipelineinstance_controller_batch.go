@@ -57,6 +57,16 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 	// pre-call because initializePipelineInstance writes StartTime on the
 	// first successful pass; if it was zero on entry and non-zero after a
 	// successful return, this reconcile is the one that did the seeding.
+	//
+	// Intentionally NOT derived from the `initialized` return value: the two
+	// disagree on the corners that matter for cold/steady attribution.
+	//   - Steady-state with work (StartTime preset, TotalFiles > 0):
+	//     initialized=true but no claim happened this pass → snapshot=false (correct).
+	//   - Cold empty bucket: initialized=false but StartTime was just
+	//     stamped → snapshot=true (correct; the claim *did* happen, the
+	//     bucket was just empty).
+	// `initialized` answers "is there work to do?"; claim.acquired answers
+	// "did this reconcile pass do the claim?". They're different questions.
 	hadStartTime := pipelineInstance.Status.StartTime != nil
 	claimCtx, claimSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.claim")
 	initialized, err := r.initializePipelineInstance(claimCtx, pipelineInstance, pipelineSource)

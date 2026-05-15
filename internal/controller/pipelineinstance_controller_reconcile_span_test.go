@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
@@ -269,6 +270,75 @@ func TestReconcileStreaming_Create_BuildAndApplyAreSiblingsOfReconcile(t *testin
 	endReconcile()
 
 	assertBuildAndApplyAreSiblingsOfReconcile(t, recorder.Ended())
+}
+
+// TestReconcile_StampsAllowlistedBaggageOnReconcileSpan drives the full
+// Reconcile() entry point through its finalizer-bootstrap branch (the
+// cheapest path that exits cleanly after the span Start) and asserts that
+// allowlisted baggage members lifted from the CR annotations are stamped
+// on the recorded Reconcile span.
+//
+// Unlike a helper-level test that re-runs the lift loop locally against
+// stampBaggageOnSpan, this exercises the real call site inside Reconcile:
+// extractTraceContext → tracing.Tracer().Start → stampBaggageOnSpan. A
+// future refactor that drops the stamp call, swaps it for a no-op, or
+// silently re-orders it before Start would fail here.
+//
+// Pairs with TestExtractTraceContext_* in pipelineinstance_controller_span_test.go
+// (which exercises the lift primitive in isolation) and the allowlist
+// guard in pipelineinstance_controller_baggage_test.go (which pins which
+// keys are allowed).
+func TestReconcile_StampsAllowlistedBaggageOnReconcileSpan(t *testing.T) {
+	recorder := installRecordingTracerProvider(t)
+
+	sch := reconcileSpanScheme(t)
+
+	pi := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "baggage-pi",
+			Namespace: "default",
+			UID:       types.UID("baggage-pi-uid"),
+			Annotations: map[string]string{
+				TraceparentAnnotation: upstreamTraceparent,
+				BaggageAnnotation:     "user.id=abc,organization.id=xyz",
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().
+		WithScheme(sch).
+		WithStatusSubresource(&pipelinesv1alpha1.PipelineInstance{}).
+		WithObjects(pi).
+		Build()
+
+	r := &PipelineInstanceReconciler{
+		Client:       c,
+		Scheme:       sch,
+		ValkeyClient: &MockValkeyClient{},
+	}
+
+	// The finalizer-bootstrap branch returns Requeue=true after Update; the
+	// outcome stamp on the deferred end path is "requeue". Both are fine —
+	// we only assert on the baggage attributes.
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace},
+	}); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	span := findUniqueSpan(t, recorder.Ended(), reconcileSpanName)
+	got := map[string]string{}
+	for _, attr := range span.Attributes() {
+		got[string(attr.Key)] = attr.Value.AsString()
+	}
+	for k, want := range map[string]string{
+		"user.id":         "abc",
+		"organization.id": "xyz",
+	} {
+		if got[k] != want {
+			t.Errorf("baggage attribute %q on Reconcile span: got %q, want %q", k, got[k], want)
+		}
+	}
 }
 
 // TestReconcileStreaming_Update_BuildAndApplyAreSiblingsOfReconcile drives

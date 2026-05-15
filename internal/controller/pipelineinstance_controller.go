@@ -578,9 +578,33 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 	return pipeline, nil
 }
 
-// stampBaggageOnSpan reads W3C baggage members from ctx and stamps each as a
-// span attribute keyed by the member's baggage key. No-op when the context
-// carries no baggage members (the typical OSS path).
+// baggageSpanAllowlist bounds which W3C baggage members stampBaggageOnSpan
+// copies onto the reconcile span. Baggage is a free-form propagation channel
+// — any upstream service can inject arbitrary keys, and Cloud Trace retains
+// span attributes for the full trace retention window — so an unbounded
+// stamp would let a future agent regression accidentally exfiltrate PII
+// (emails, session tokens, …) into trace storage.
+//
+// The set mirrors the identity tuple plainsight-api and
+// plainsight-deployment-agent already stamp onto upstream spans:
+// organization.id, project.id, user.id. New entries here must be coordinated
+// cross-repo with both producers — adding a key the agent isn't yet
+// producing is harmless (just a no-op), but stamping a key the agent
+// produces without a matching entry here silently drops it from the trace UI.
+//
+// Baggage propagation itself is unfiltered — only the span-attribute lift is
+// bounded, so downstream consumers reading baggage from ctx still see
+// whatever the agent put in.
+var baggageSpanAllowlist = map[string]struct{}{
+	"organization.id": {},
+	"project.id":      {},
+	"user.id":         {},
+}
+
+// stampBaggageOnSpan copies allowlisted W3C baggage members from ctx onto
+// the supplied span as string attributes. Non-allowlisted members are
+// dropped (see baggageSpanAllowlist for the rationale). No-op when the
+// context carries no baggage members or no allowlisted ones.
 func stampBaggageOnSpan(ctx context.Context, span trace.Span) {
 	members := baggage.FromContext(ctx).Members()
 	if len(members) == 0 {
@@ -588,7 +612,13 @@ func stampBaggageOnSpan(ctx context.Context, span trace.Span) {
 	}
 	attrs := make([]attribute.KeyValue, 0, len(members))
 	for _, m := range members {
+		if _, ok := baggageSpanAllowlist[m.Key()]; !ok {
+			continue
+		}
 		attrs = append(attrs, attribute.String(m.Key(), m.Value()))
+	}
+	if len(attrs) == 0 {
+		return
 	}
 	span.SetAttributes(attrs...)
 }

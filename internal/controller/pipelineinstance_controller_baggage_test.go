@@ -21,6 +21,38 @@ import (
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
+// baggageOf returns a context that carries the supplied baggage members.
+// Helper for the stampBaggageOnSpan tests below — bypasses extractTraceContext
+// so the assertion is scoped to the stamp logic, not the lift.
+func baggageOf(t *testing.T, kvs ...string) context.Context {
+	t.Helper()
+	members := make([]baggage.Member, 0, len(kvs))
+	for _, kv := range kvs {
+		// Format is "key=value". Split on the first '=' so values
+		// containing '=' (allowed by the spec) survive.
+		i := -1
+		for j := 0; j < len(kv); j++ {
+			if kv[j] == '=' {
+				i = j
+				break
+			}
+		}
+		if i < 0 {
+			t.Fatalf("baggageOf: malformed entry %q (want key=value)", kv)
+		}
+		m, err := baggage.NewMember(kv[:i], kv[i+1:])
+		if err != nil {
+			t.Fatalf("baggageOf: NewMember(%q, %q): %v", kv[:i], kv[i+1:], err)
+		}
+		members = append(members, m)
+	}
+	bag, err := baggage.New(members...)
+	if err != nil {
+		t.Fatalf("baggageOf: baggage.New: %v", err)
+	}
+	return baggage.ContextWithBaggage(context.Background(), bag)
+}
+
 // TestExtractTraceContext_NoBaggageAnnotationLeavesContextUnchanged covers
 // the OSS / no-identity-propagation path. Without the baggage annotation,
 // baggage.FromContext on the returned context must remain empty.
@@ -124,29 +156,19 @@ func TestExtractTraceContext_BaggageWithoutTraceparent(t *testing.T) {
 	}
 }
 
-// TestReconcileSpan_LiftsBaggageMembersAsAttributes verifies the integration
-// shape: the Reconcile root span MUST carry baggage members as span
-// attributes so cross-service identity (organization.id, user.id) is visible
-// in Cloud Trace's attribute panel without scraping baggage propagation
-// internals.
-//
-// Implementation parity with Reconcile: build a context the same way
-// extractTraceContext would, start a span with the production tracer, and
-// run the same lifting loop. This exercises the lifting code shape rather
-// than driving an envtest reconcile end-to-end.
-func TestReconcileSpan_LiftsBaggageMembersAsAttributes(t *testing.T) {
+// TestStampBaggageOnSpan_AllowlistedMembersAreStamped is the positive
+// half of the bounded-stamping contract: identity members named in
+// baggageSpanAllowlist (organization.id, project.id, user.id) MUST land
+// on the span as string attributes verbatim.
+func TestStampBaggageOnSpan_AllowlistedMembersAreStamped(t *testing.T) {
 	recorder := installRecordingTracerProvider(t)
 
-	pi := &pipelinesv1alpha1.PipelineInstance{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				TraceparentAnnotation: upstreamTraceparent,
-				BaggageAnnotation:     "user.id=abc,organization.id=xyz",
-			},
-		},
-	}
-	ctx := extractTraceContext(context.Background(), pi)
-	ctx, span := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.Reconcile")
+	ctx := baggageOf(t,
+		"organization.id=org-123",
+		"project.id=proj-456",
+		"user.id=user-789",
+	)
+	ctx, span := tracing.Tracer().Start(ctx, "test.stamp.allowlist")
 	stampBaggageOnSpan(ctx, span)
 	span.End()
 
@@ -159,11 +181,71 @@ func TestReconcileSpan_LiftsBaggageMembersAsAttributes(t *testing.T) {
 		got[string(attr.Key)] = attr.Value.AsString()
 	}
 	for k, want := range map[string]string{
-		"user.id":         "abc",
-		"organization.id": "xyz",
+		"organization.id": "org-123",
+		"project.id":      "proj-456",
+		"user.id":         "user-789",
 	} {
 		if got[k] != want {
-			t.Errorf("baggage attribute %q: got %q, want %q", k, got[k], want)
+			t.Errorf("attr %q: got %q, want %q", k, got[k], want)
 		}
+	}
+}
+
+// TestStampBaggageOnSpan_DropsNonAllowlistedMembers is the load-bearing
+// negative half of the bounded-stamping contract: any baggage key NOT in
+// baggageSpanAllowlist must be dropped silently. Guards against an
+// upstream regression (an agent that accidentally puts PII into baggage,
+// a future producer introducing diagnostic keys at scale) landing those
+// values in Cloud Trace attribute storage. Pairs with the allowlist
+// rationale comment in pipelineinstance_controller.go.
+func TestStampBaggageOnSpan_DropsNonAllowlistedMembers(t *testing.T) {
+	recorder := installRecordingTracerProvider(t)
+
+	ctx := baggageOf(t,
+		"user.id=user-789",        // allowlisted, must land
+		"email=alice%40corp.test", // not allowlisted, must be dropped
+		"session.token=opaque",    // not allowlisted, must be dropped
+	)
+	ctx, span := tracing.Tracer().Start(ctx, "test.stamp.dropped")
+	stampBaggageOnSpan(ctx, span)
+	span.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected one ended span, got %d", len(spans))
+	}
+	got := map[string]string{}
+	for _, attr := range spans[0].Attributes() {
+		got[string(attr.Key)] = attr.Value.AsString()
+	}
+	if got["user.id"] != "user-789" {
+		t.Errorf("allowlisted user.id missing: got %q", got["user.id"])
+	}
+	for _, dropped := range []string{"email", "session.token"} {
+		if _, ok := got[dropped]; ok {
+			t.Errorf("non-allowlisted baggage key %q leaked onto span as %q", dropped, got[dropped])
+		}
+	}
+}
+
+// TestStampBaggageOnSpan_AllNonAllowlistedIsNoOp is the empty-attribute
+// guard: when every baggage member is non-allowlisted, the function must
+// not call span.SetAttributes at all (so the span carries no spurious
+// empty-attribute event). Catches a regression where the `if len(attrs)
+// == 0` early-return is removed.
+func TestStampBaggageOnSpan_AllNonAllowlistedIsNoOp(t *testing.T) {
+	recorder := installRecordingTracerProvider(t)
+
+	ctx := baggageOf(t, "email=alice%40corp.test", "session.token=opaque")
+	ctx, span := tracing.Tracer().Start(ctx, "test.stamp.empty")
+	stampBaggageOnSpan(ctx, span)
+	span.End()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected one ended span, got %d", len(spans))
+	}
+	if attrs := spans[0].Attributes(); len(attrs) != 0 {
+		t.Errorf("expected no attributes on the span, got %d: %v", len(attrs), attrs)
 	}
 }

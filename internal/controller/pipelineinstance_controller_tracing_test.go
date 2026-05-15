@@ -307,7 +307,7 @@ func TestBuildStreamingDeployment_TraceparentInjectedFromAnnotation(t *testing.T
 		TraceparentAnnotation: testTraceparent,
 	}
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	tp, ok := findEnvVar(env, "TRACEPARENT")
@@ -327,7 +327,7 @@ func TestBuildStreamingDeployment_TracestateInjectedFromAnnotation(t *testing.T)
 		TracestateAnnotation:  testTracestate,
 	}
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	ts, ok := findEnvVar(env, "TRACESTATE")
@@ -348,7 +348,7 @@ func TestBuildStreamingDeployment_TracestateNotInjectedWithoutAnnotation(t *test
 		TraceparentAnnotation: testTraceparent,
 	}
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, "TRACEPARENT"); !ok {
@@ -367,7 +367,7 @@ func TestBuildStreamingDeployment_TracestateNotInjectedForEmptyAnnotationValue(t
 		TracestateAnnotation:  "",
 	}
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, "TRACESTATE"); ok {
@@ -383,7 +383,7 @@ func TestBuildStreamingDeployment_TracestateNotInjectedWithoutTraceparent(t *tes
 		TracestateAnnotation: testTracestate,
 	}
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, "TRACEPARENT"); ok {
@@ -399,7 +399,7 @@ func TestBuildStreamingDeployment_NeitherTracingAnnotationInjectsNothing(t *test
 	pi := makeMinimalStreamingPipelineInstance()
 	// no tracing annotations at all
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, "TRACEPARENT"); ok {
@@ -417,7 +417,7 @@ func TestBuildStreamingDeployment_TelemetryExporterEnvInjectedWhenReconcilerConf
 	}
 	pi := makeMinimalStreamingPipelineInstance()
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
@@ -453,7 +453,7 @@ func TestBuildStreamingDeployment_TelemetryExporterEnvNotInjectedByDefault(t *te
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 	if _, ok := findEnvVar(env, "TELEMETRY_EXPORTER_TYPE"); ok {
@@ -480,7 +480,7 @@ func TestBuildStreamingDeployment_AllTracingEnvCombined(t *testing.T) {
 		TracestateAnnotation:  testTracestate,
 	}
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	want := map[string]string{
@@ -609,7 +609,7 @@ func TestBuildStreamingDeployment_PipelineIDNotInjectedByController(t *testing.T
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
 
-	deployment := r.buildStreamingDeployment(pi, makeTracingFilterPipeline(), nil, "test-deployment")
+	deployment := r.buildStreamingDeployment(context.Background(), pi, makeTracingFilterPipeline(), nil, "test-deployment")
 	env := deployment.Spec.Template.Spec.Containers[0].Env
 
 	if _, ok := findEnvVar(env, "PIPELINE_ID"); ok {

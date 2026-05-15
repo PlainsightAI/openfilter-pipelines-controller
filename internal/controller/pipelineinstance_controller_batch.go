@@ -35,6 +35,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
 // reconcileBatch handles the batch (Job-based) reconciliation path
@@ -46,7 +47,13 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 		pipelineInstance.Status.Counts = &pipelinesv1alpha1.FileCounts{}
 	}
 
-	initialized, err := r.initializePipelineInstance(ctx, pipelineInstance, pipelineSource)
+	// Claim phase (PLAT-1028): enumerating bucket files and seeding the
+	// Valkey work stream. Time spent here is dominated by S3 LIST latency
+	// and is the biggest single contributor to startup time on cold runs,
+	// so it gets its own child span for waterfall attribution.
+	claimCtx, claimSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.claim")
+	initialized, err := r.initializePipelineInstance(claimCtx, pipelineInstance, pipelineSource)
+	endPhaseSpan(claimSpan, err)
 	if err != nil {
 		log.Error(err, "Failed to initialize PipelineInstance")
 		return ctrl.Result{}, err
@@ -329,17 +336,25 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 	// Generate Job name from PipelineInstance name
 	jobName := fmt.Sprintf("%s-job", pipelineInstance.Name)
 
-	// Build the Job spec
-	job := r.buildJob(ctx, pipelineInstance, pipeline, pipelineSource, jobName)
-
-	// Set PipelineInstance as owner of the Job
+	// Build phase (PLAT-1028): pure CPU work — render the Job spec from
+	// the Pipeline + PipelineInstance + PipelineSource and stamp the owner
+	// reference. Sibling of the apply span below (both rooted at ctx).
+	buildCtx, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
+	job := r.buildJob(buildCtx, pipelineInstance, pipeline, pipelineSource, jobName)
 	if err := controllerutil.SetControllerReference(pipelineInstance, job, r.Scheme); err != nil {
+		endPhaseSpan(buildSpan, err)
 		return fmt.Errorf("failed to set owner reference: %w", err)
 	}
+	endPhaseSpan(buildSpan, nil)
 
-	// Create the Job
-	if err := r.Create(ctx, job); err != nil {
-		return fmt.Errorf("failed to create job: %w", err)
+	// Apply phase (PLAT-1028): the kube-apiserver round-trip. Isolated
+	// from build so the trace cleanly attributes time spent waiting on
+	// the API server (admission webhooks, etcd write).
+	applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
+	createErr := r.Create(applyCtx, job)
+	endPhaseSpan(applySpan, createErr)
+	if createErr != nil {
+		return fmt.Errorf("failed to create job: %w", createErr)
 	}
 
 	log.Info("Created Job for PipelineInstance", "job", jobName)

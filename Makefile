@@ -1,6 +1,8 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
-CLAIMER_IMG ?= claimer:dev
+IMAGE_REGISTRY ?= us-west1-docker.pkg.dev/plainsightai-prod/plainsight-platform
+VERSION ?= $(shell git rev-parse --short HEAD)
+IMG ?= $(IMAGE_REGISTRY)/openfilter-pipelines-controller:$(VERSION)
+CLAIMER_IMG ?= $(IMAGE_REGISTRY)/openfilter-pipelines-claimer:$(VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -145,13 +147,26 @@ docker-build-claimer: ## Build docker image for claimer.
 docker-push-claimer: ## Push docker image for claimer.
 	$(CONTAINER_TOOL) push ${CLAIMER_IMG}
 
+.PHONY: image-tag
+image-tag:
+	@echo $(IMG)
+
+.PHONY: build-image
+build-image: ## Build images (no-op if using buildx in publish-image)
+	@echo "Ready to build $(IMG) and $(CLAIMER_IMG)"
+
+.PHONY: publish-image
+publish-image: ## Build and push multi-platform images
+	$(CONTAINER_TOOL) buildx build --push --platform $(PLATFORMS) --tag ${IMG} -f Dockerfile .
+	$(CONTAINER_TOOL) buildx build --push --platform $(PLATFORMS) --tag ${CLAIMER_IMG} -f cmd/claimer/Dockerfile .
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
 # - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 # - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
+PLATFORMS ?= linux/amd64,linux/arm64
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile

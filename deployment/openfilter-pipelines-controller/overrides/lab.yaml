@@ -1,0 +1,7 @@
+image:
+  tag: "0000000000000000000000000000000000000000" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
+claimerImage:
+  tag: "0000000000000000000000000000000000000000" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
+telemetry:
+  exporterType: otlp
+  exporterOtlpEndpoint: otel-collector.monitoring.svc.cluster.local:4317

@@ -23,7 +23,7 @@ set -o pipefail
 
 SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CRD_SOURCE_DIR="${SCRIPT_ROOT}/config/crd/bases"
-CHART_CRD_DIR="${SCRIPT_ROOT}/charts/openfilter-pipelines-controller/crds"
+CHART_CRD_DIR="${SCRIPT_ROOT}/deployment/openfilter-pipelines-controller/crds"
 
 # Colors for output
 RED='\033[0;31m'

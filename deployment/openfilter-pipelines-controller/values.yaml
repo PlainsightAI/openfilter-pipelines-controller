@@ -136,7 +136,7 @@ volumeMounts: []
 # GPU node selector: comma-separated key=value pairs applied to pods that request
 # nvidia.com/gpu resources (e.g. "cloud.google.com/gke-gpu-driver-version=latest").
 # Leave empty to disable (no node selector is applied).
-gpuNodeSelector: ""
+gpuNodeSelector: "cloud.google.com/gke-gpu-driver-version=latest"
 
 # GPU library path: injected as LD_LIBRARY_PATH into GPU containers.
 # On GKE the device plugin mounts libraries here but does not set LD_LIBRARY_PATH.
@@ -198,7 +198,7 @@ args: []
 valkey:
   # Enable built-in Valkey installation
   # Set to false if using an external Valkey instance
-  enabled: true
+  enabled: false
 
   # Valkey architecture (standalone or replication)
   architecture: standalone
@@ -239,10 +239,10 @@ valkey:
   # External Valkey configuration
   # Use this to connect to an existing Valkey instance instead of deploying one
   externalValkey:
-    enabled: false
-    host: ""
+    enabled: true
+    host: "valkey-pipelines-controller.openfilter-system.svc.cluster.local"
     port: 6379
-    password: false
+    password: true
     # If password is true, specify the secret containing the password
-    existingSecret: ""
-    existingSecretPasswordKey: "password"
+    existingSecret: "openfilter-pipelines-controller"
+    existingSecretPasswordKey: "VALKEY_PASSWORD"

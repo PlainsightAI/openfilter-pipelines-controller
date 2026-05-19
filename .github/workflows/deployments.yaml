@@ -1,0 +1,68 @@
+name: Deployments
+permissions:
+  contents: write
+  id-token: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'deployment/**'
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened, labeled]
+    paths-ignore:
+      - 'deployment/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Publish Docker image to GAR
+        uses: PlainsightAI/gh-actions/publish-docker-image@main
+        env:
+          VERSION: ${{ github.sha }}
+        with:
+          environment: production
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    uses: PlainsightAI/gh-actions/.github/workflows/deploy-service.yaml@main
+    with:
+      service-name: openfilter-pipelines-controller
+      manifests-path: deployment
+    secrets: inherit
+
+  deploy-lab:
+    needs: deploy
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Lab
+        uses: PlainsightAI/gh-actions/deploy-env@main
+        with:
+          environment: lab
+          service-name: openfilter-pipelines-controller
+          manifests-path: deployment
+          gh-bot-user-pat: ${{ secrets.GH_BOT_USER_PAT }}
+
+  preview:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'preview')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Publish Docker image to GAR
+        uses: PlainsightAI/gh-actions/publish-docker-image@main
+        env:
+          VERSION: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+        with:
+          environment: production

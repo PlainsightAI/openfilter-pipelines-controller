@@ -1,0 +1,46 @@
+name: Deployments
+permissions:
+  contents: write
+  id-token: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'deployment/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Publish Docker image to GAR
+        uses: PlainsightAI/gh-actions/publish-docker-image@main
+        env:
+          VERSION: ${{ github.sha }}
+        with:
+          environment: production
+
+  deploy:
+    needs: build
+    uses: PlainsightAI/gh-actions/.github/workflows/deploy-service.yaml@main
+    with:
+      service-name: openfilter-pipelines-controller
+      manifests-path: deployment
+    secrets: inherit
+
+  deploy-lab:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Lab
+        uses: PlainsightAI/gh-actions/deploy-env@main
+        with:
+          environment: lab
+          service-name: openfilter-pipelines-controller
+          manifests-path: deployment
+          gh-bot-user-pat: ${{ secrets.GH_BOT_USER_PAT }}

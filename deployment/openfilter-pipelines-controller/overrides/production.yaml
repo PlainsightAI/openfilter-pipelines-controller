@@ -1,0 +1,44 @@
+image:
+  tag: "0000000000000000000000000000000000000000" # {"$imagepolicy": "production:openfilter-pipelines-controller:tag"}
+claimerImage:
+  tag: "0000000000000000000000000000000000000000" # {"$imagepolicy": "production:openfilter-pipelines-controller:tag"}
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+telemetry:
+  exporterType: otlp
+  exporterOtlpEndpoint: otel-collector.monitoring.svc.cluster.local:4317
+
+# GPU filter pods schedule onto the GKE GPU node pool.
+gpuNodeSelector: "cloud.google.com/gke-gpu-driver-version=latest"
+
+# Connect to the cluster-managed Valkey instead of the bundled subchart.
+# Precondition: the `openfilter-pipelines-controller` Secret (key
+# VALKEY_PASSWORD) must exist in the release namespace.
+valkey:
+  enabled: false
+  externalValkey:
+    enabled: true
+    host: "valkey-pipelines-controller.openfilter-system.svc.cluster.local"
+    port: 6379
+    password: true
+    existingSecret: "openfilter-pipelines-controller"
+    existingSecretPasswordKey: "VALKEY_PASSWORD"

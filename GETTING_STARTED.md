@@ -27,21 +27,20 @@ Versions (repo defaults):
 
 ## Install the Controller (Helm)
 
-The Helm chart is published to GitHub Pages for easy installation:
+The Helm chart lives in this repository under `deployment/openfilter-pipelines-controller`. Clone the repo and install from the local chart:
 
 ```bash
-# Add the Helm repository
-helm repo add openfilter-pipelines https://plainsightai.github.io/openfilter-pipelines-controller
-helm repo update
+git clone https://github.com/PlainsightAI/openfilter-pipelines-controller
+cd openfilter-pipelines-controller
 
 # Install (set your own VALKEY endpoint)
-helm install openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --namespace pipelines-system --create-namespace \
   --set controller.env.VALKEY_ADDR="<host:port>" \
   --set controller.env.VALKEY_PASSWORD=""
 
-# With an in-cluster Valkey (enable the bundled subchart)
-helm install openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
+# With the bundled in-cluster Valkey subchart (the chart default)
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --namespace pipelines-system --create-namespace \
   --set valkey.enabled=true
 ```
@@ -202,19 +201,14 @@ kubectl -n <ns> get deploy,pods -l pipelineinstance=<instance-name>
 We used Helm and kubectl to validate this guide:
 
 ```bash
-# Test the GitHub Pages repository
-helm repo add openfilter-pipelines https://plainsightai.github.io/openfilter-pipelines-controller
-helm repo update
-helm search repo openfilter-pipelines
-
 # For local development: lint the Helm chart — OK
-helm lint charts/openfilter-pipelines-controller
+helm lint deployment/openfilter-pipelines-controller
 
 # For local development: render the chart — OK
-helm template test charts/openfilter-pipelines-controller >/dev/null
+helm template test deployment/openfilter-pipelines-controller >/dev/null
 
 # After installing the chart in your cluster, you can run the demos
-# (these require CRDs to be present, which Helm installs from charts/.../crds)
+# (these require CRDs to be present, which Helm installs from deployment/.../crds)
 kubectl -n <ns> apply -f demo/pipeline_batch.yaml
 kubectl -n <ns> apply -f demo/pipelinesource_batch.yaml
 kubectl -n <ns> create -f demo/pipelineinstance_batch.yaml

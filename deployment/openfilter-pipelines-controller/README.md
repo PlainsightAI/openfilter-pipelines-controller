@@ -9,26 +9,22 @@ A Kubernetes operator for managing Pipeline custom resources in the `filter.plai
 
 ## Installation
 
-### Add the Helm repository (if published)
-
-```bash
-helm repo add plainsight https://charts.plainsight.ai
-helm repo update
-```
+The chart is not published to a Helm repository. Install it from this
+repository's local copy under `deployment/openfilter-pipelines-controller`.
 
 ### Install from local chart
 
 ```bash
 # Install with default values
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller
 
 # Install with custom namespace
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --namespace pipelines-system \
   --create-namespace
 
 # Install with Valkey enabled
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --set valkey.enabled=true
 ```
 
@@ -103,7 +99,7 @@ For a complete list of Valkey parameters, see the [Bitnami Valkey chart document
 ### Install with custom resources
 
 ```bash
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --set resources.limits.cpu=1000m \
   --set resources.limits.memory=256Mi \
   --set resources.requests.cpu=100m \
@@ -113,7 +109,7 @@ helm install openfilter-pipelines-controller charts/openfilter-pipelines-control
 ### Install with Valkey in replication mode
 
 ```bash
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --set valkey.enabled=true \
   --set valkey.architecture=replication \
   --set valkey.replica.replicaCount=3
@@ -122,7 +118,7 @@ helm install openfilter-pipelines-controller charts/openfilter-pipelines-control
 ### Install with custom image
 
 ```bash
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --set image.repository=myregistry.io/openfilter-pipelines-controller \
   --set image.tag=v1.0.0 \
   --set image.pullPolicy=Always
@@ -132,10 +128,10 @@ helm install openfilter-pipelines-controller charts/openfilter-pipelines-control
 
 ```bash
 # Upgrade to a new version
-helm upgrade openfilter-pipelines-controller charts/openfilter-pipelines-controller
+helm upgrade openfilter-pipelines-controller deployment/openfilter-pipelines-controller
 
 # Upgrade with new values
-helm upgrade openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm upgrade openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --set controller.metrics.enabled=false
 ```
 
@@ -166,7 +162,7 @@ make helm-update-crds
 
 This will:
 1. Run `make manifests` to regenerate CRDs in `config/crd/bases/`
-2. Copy the updated CRDs to `charts/openfilter-pipelines-controller/crds/`
+2. Copy the updated CRDs to `deployment/openfilter-pipelines-controller/crds/`
 3. Show git status of the changes
 
 **Manual sync alternative:**
@@ -186,24 +182,24 @@ The project includes a GitHub Actions workflow (`.github/workflows/helm-crd-sync
 ### Update dependencies
 
 ```bash
-cd charts/openfilter-pipelines-controller
+cd deployment/openfilter-pipelines-controller
 helm dependency update
 ```
 
 ### Package the chart
 
 ```bash
-helm package charts/openfilter-pipelines-controller
+helm package deployment/openfilter-pipelines-controller
 ```
 
 ### Test the chart locally
 
 ```bash
 # Template the chart to see rendered manifests
-helm template openfilter-pipelines-controller charts/openfilter-pipelines-controller
+helm template openfilter-pipelines-controller deployment/openfilter-pipelines-controller
 
 # Test installation with dry-run
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --dry-run --debug
 ```
 

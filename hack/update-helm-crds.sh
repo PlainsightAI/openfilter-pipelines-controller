@@ -106,8 +106,8 @@ function main() {
     log_info ""
     log_info "Next steps:"
     echo "  1. Review the changes: git diff ${CHART_CRD_DIR}"
-    echo "  2. Test the chart: helm template test charts/openfilter-pipelines-controller"
-    echo "  3. Lint the chart: cd charts/openfilter-pipelines-controller && helm lint ."
+    echo "  2. Test the chart: helm template test deployment/openfilter-pipelines-controller"
+    echo "  3. Lint the chart: cd deployment/openfilter-pipelines-controller && helm lint ."
     echo "  4. Commit the changes: git add ${CHART_CRD_DIR} && git commit"
 }
 

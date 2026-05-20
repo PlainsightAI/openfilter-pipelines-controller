@@ -94,43 +94,36 @@ the project, i.e.:
 kubectl apply -f https://raw.githubusercontent.com/<org>/openfilter-pipelines-controller/<tag or branch>/dist/install.yaml
 ```
 
-### Using Helm Chart from GitHub Pages
+### Using the Helm Chart
 
-The Helm chart is automatically published to GitHub Pages on each release. To install using Helm:
-
-1. Add the Helm repository:
+The Helm chart lives in this repository under `deployment/openfilter-pipelines-controller`. Clone the repo and install from the local chart:
 
 ```sh
-helm repo add openfilter-pipelines https://plainsightai.github.io/openfilter-pipelines-controller
-helm repo update
-```
+git clone https://github.com/PlainsightAI/openfilter-pipelines-controller
+cd openfilter-pipelines-controller
 
-2. Install the chart:
-
-```sh
-helm install openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --namespace pipelines-system \
   --create-namespace
 ```
 
-3. Install with Valkey enabled (optional):
+Install with the bundled Valkey subchart enabled (optional):
 
 ```sh
-helm install openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --namespace pipelines-system \
   --create-namespace \
   --set valkey.enabled=true
 ```
 
-4. To upgrade an existing installation:
+To upgrade an existing installation:
 
 ```sh
-helm repo update
-helm upgrade openfilter-pipelines-controller openfilter-pipelines/openfilter-pipelines-controller \
+helm upgrade openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --namespace pipelines-system
 ```
 
-For more configuration options, see the [chart values](charts/openfilter-pipelines-controller/values.yaml).
+For more configuration options, see the [chart values](deployment/openfilter-pipelines-controller/values.yaml) and the [chart README](deployment/openfilter-pipelines-controller/README.md).
 
 ## Contributing
 

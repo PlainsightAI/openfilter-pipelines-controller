@@ -1,8 +1,12 @@
-# Image URL to use all building/pushing image targets
-IMAGE_REGISTRY ?= us-west1-docker.pkg.dev/plainsightai-prod/plainsight-platform
+# Image URL to use all building/pushing image targets.
+# IMAGE_REGISTRY is empty by default so `make docker-build` / `make publish-image`
+# produce plain, locally-taggable images for OSS contributors. CI (the
+# publish-docker-image reusable action) sets IMAGE_REGISTRY — or IMG/CLAIMER_IMG
+# directly — via env to push to the Plainsight registry.
+IMAGE_REGISTRY ?=
 VERSION ?= $(shell git rev-parse --short HEAD)
-IMG ?= $(IMAGE_REGISTRY)/openfilter-pipelines-controller:$(VERSION)
-CLAIMER_IMG ?= $(IMAGE_REGISTRY)/openfilter-pipelines-claimer:$(VERSION)
+IMG ?= $(if $(IMAGE_REGISTRY),$(IMAGE_REGISTRY)/)openfilter-pipelines-controller:$(VERSION)
+CLAIMER_IMG ?= $(if $(IMAGE_REGISTRY),$(IMAGE_REGISTRY)/)openfilter-pipelines-claimer:$(VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -157,8 +161,15 @@ build-image: ## Build images (no-op if using buildx in publish-image)
 
 .PHONY: publish-image
 publish-image: ## Build and push multi-platform images
+	# Create/select a dedicated buildx builder so this works on a bare local
+	# docker (without it, buildx --platform fails or uses the wrong builder).
+	# Leading '-' on create/rm makes re-runs idempotent; the build steps are
+	# not '-'-prefixed so a failed push fails the target.
+	- $(CONTAINER_TOOL) buildx create --name openfilter-pipelines-controller-publish-builder
+	$(CONTAINER_TOOL) buildx use openfilter-pipelines-controller-publish-builder
 	$(CONTAINER_TOOL) buildx build --push --platform $(PLATFORMS) --tag ${IMG} -f Dockerfile .
 	$(CONTAINER_TOOL) buildx build --push --platform $(PLATFORMS) --tag ${CLAIMER_IMG} -f cmd/claimer/Dockerfile .
+	- $(CONTAINER_TOOL) buildx rm openfilter-pipelines-controller-publish-builder
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:

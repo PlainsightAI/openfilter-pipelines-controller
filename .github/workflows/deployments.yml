@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Publish Docker image to GAR
-        uses: PlainsightAI/gh-actions/publish-docker-image@main
+        uses: PlainsightAI/gh-actions-public/publish-docker-image@main
         env:
           VERSION: ${{ github.sha }}
         with:
@@ -27,7 +27,7 @@ jobs:
 
   deploy:
     needs: build
-    uses: PlainsightAI/gh-actions/.github/workflows/deploy-service.yaml@main
+    uses: PlainsightAI/gh-actions-public/.github/workflows/deploy-service.yaml@main
     with:
       service-name: openfilter-pipelines-controller
       manifests-path: deployment
@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Lab
-        uses: PlainsightAI/gh-actions/deploy-env@main
+        uses: PlainsightAI/gh-actions-public/deploy-env@main
         with:
           environment: lab
           service-name: openfilter-pipelines-controller

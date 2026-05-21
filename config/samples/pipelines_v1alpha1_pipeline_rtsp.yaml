@@ -17,7 +17,7 @@ spec:
   #   (credentials are auto-substituted at runtime from the Secret)
   filters:
     - name: video-in
-      image: plainsightai/openfilter-video-in:v0.1.10
+      image: plainsightai/openfilter-video-in:1.1.0
       config:
         # Use the injected RTSP_URL environment variable
         # If credentialsSecret is configured, credentials are already embedded in the URL

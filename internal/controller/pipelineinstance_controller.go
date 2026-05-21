@@ -349,6 +349,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			tracing.PipelineInstanceNamespace(pipelineInstance),
 			tracing.PipelineInstanceName(pipelineInstance),
 			tracing.PipelineInstanceUID(pipelineInstance),
+			tracing.PipelineInstanceID(pipelineInstance),
 		),
 	)
 	// Lift baggage members onto the reconcile span so cross-service identity

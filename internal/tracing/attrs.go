@@ -77,12 +77,18 @@ const (
 // from API + agent + controller without per-service casing skew.
 const (
 	// AttrPipelineInstanceUID is the K8s ObjectMeta.UID of the
-	// PipelineInstance CR being reconciled. Distinct from the (currently
-	// unused here) `pipeline_instance.id` which plainsight-api uses for the
-	// canonical business UUID — when those values diverge in practice
-	// (agent-created CRs vs. test-created CRs), querying by `.uid` returns
-	// the K8s identity and querying by `.id` returns the business identity.
+	// PipelineInstance CR being reconciled. Distinct from `pipeline_instance.id`
+	// which plainsight-api uses for the canonical business UUID — when those
+	// values diverge in practice (agent-created CRs vs. test-created CRs),
+	// querying by `.uid` returns the K8s identity and querying by `.id` returns
+	// the business identity.
 	AttrPipelineInstanceUID = "pipeline_instance.uid"
+
+	// AttrPipelineInstanceID is the canonical business UUID used by
+	// plainsight-api, plainsight-deployment-agent, and openfilter for trace
+	// joining. It holds the same value as `pipeline_instance.name` in production
+	// environments.
+	AttrPipelineInstanceID = "pipeline_instance.id"
 
 	// AttrPipelineInstanceName is the K8s metadata.name of the
 	// PipelineInstance CR. Useful for kubectl cross-referencing from a
@@ -152,6 +158,11 @@ const (
 // jsonpath='{.metadata.uid}'` output for cross-referencing from a trace.
 func PipelineInstanceUID(pi *pipelinesv1alpha1.PipelineInstance) attribute.KeyValue {
 	return attribute.String(AttrPipelineInstanceUID, string(pi.UID))
+}
+
+// PipelineInstanceID builds the canonical pipeline_instance.id attribute.
+func PipelineInstanceID(pi *pipelinesv1alpha1.PipelineInstance) attribute.KeyValue {
+	return attribute.String(AttrPipelineInstanceID, pi.Name)
 }
 
 // PipelineInstanceName builds the canonical pipeline_instance.name attribute.

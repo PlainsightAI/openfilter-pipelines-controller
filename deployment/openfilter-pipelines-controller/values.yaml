@@ -168,10 +168,10 @@ gpuBinPath: "/usr/local/nvidia/bin"
 #   - "otlp_http" — HTTP for traces only; metrics also fall back to console.
 #   - "console" / "silent" — debug / no-op exporters.
 #
-# Example to enable (uncomment and adjust to your collector):
+# Example to enable (uncomment and adjust to your collector; the scheme prefix is load-bearing):
 #   telemetry:
 #     exporterType: otlp
-#     exporterOtlpEndpoint: otel-collector.monitoring.svc.cluster.local:4317
+#     exporterOtlpEndpoint: http://otel-collector.monitoring.svc.cluster.local:4317
 #     # controllerOtlpEndpoint defaults to exporterOtlpEndpoint, so a single
 #     # collector address covers both the controller's reconcile spans and the
 #     # filter pods' spans. Override only when the controller and filters

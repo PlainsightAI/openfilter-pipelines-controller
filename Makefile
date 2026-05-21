@@ -1,6 +1,12 @@
-# Image URL to use all building/pushing image targets
-IMG ?= controller:latest
-CLAIMER_IMG ?= claimer:dev
+# Image URL to use all building/pushing image targets.
+# IMAGE_REGISTRY is empty by default so `make docker-build` / `make publish-image`
+# produce plain, locally-taggable images for OSS contributors. CI (the
+# publish-docker-image reusable action) sets IMAGE_REGISTRY — or IMG/CLAIMER_IMG
+# directly — via env to push to the Plainsight registry.
+IMAGE_REGISTRY ?=
+VERSION ?= $(shell git rev-parse --short HEAD)
+IMG ?= $(if $(IMAGE_REGISTRY),$(IMAGE_REGISTRY)/)openfilter-pipelines-controller:$(VERSION)
+CLAIMER_IMG ?= $(if $(IMAGE_REGISTRY),$(IMAGE_REGISTRY)/)openfilter-pipelines-claimer:$(VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -145,13 +151,33 @@ docker-build-claimer: ## Build docker image for claimer.
 docker-push-claimer: ## Push docker image for claimer.
 	$(CONTAINER_TOOL) push ${CLAIMER_IMG}
 
+.PHONY: image-tag
+image-tag:
+	@echo $(IMG)
+
+.PHONY: build-image
+build-image: ## Build images (no-op if using buildx in publish-image)
+	@echo "Ready to build $(IMG) and $(CLAIMER_IMG)"
+
+.PHONY: publish-image
+publish-image: ## Build and push multi-platform images
+	# Create/select a dedicated buildx builder so this works on a bare local
+	# docker (without it, buildx --platform fails or uses the wrong builder).
+	# Leading '-' on create/rm makes re-runs idempotent; the build steps are
+	# not '-'-prefixed so a failed push fails the target.
+	- $(CONTAINER_TOOL) buildx create --name openfilter-pipelines-controller-publish-builder
+	$(CONTAINER_TOOL) buildx use openfilter-pipelines-controller-publish-builder
+	$(CONTAINER_TOOL) buildx build --push --platform $(PLATFORMS) --tag ${IMG} -f Dockerfile .
+	$(CONTAINER_TOOL) buildx build --push --platform $(PLATFORMS) --tag ${CLAIMER_IMG} -f cmd/claimer/Dockerfile .
+	- $(CONTAINER_TOOL) buildx rm openfilter-pipelines-controller-publish-builder
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
 # - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 # - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
+PLATFORMS ?= linux/amd64,linux/arm64
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile

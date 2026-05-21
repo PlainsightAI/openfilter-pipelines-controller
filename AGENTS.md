@@ -114,21 +114,21 @@ make build-installer IMG=<registry>/openfilter-pipelines-controller:tag
 make helm-update-crds
 
 # Install chart locally
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --namespace pipelines-system \
   --create-namespace
 
 # Install with Valkey enabled
-helm install openfilter-pipelines-controller charts/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --namespace pipelines-system \
   --create-namespace \
   --set valkey.enabled=true
 
 # Lint Helm chart
-cd charts/openfilter-pipelines-controller && helm lint .
+cd deployment/openfilter-pipelines-controller && helm lint .
 
 # Update Helm dependencies
-cd charts/openfilter-pipelines-controller && helm dependency update
+cd deployment/openfilter-pipelines-controller && helm dependency update
 ```
 
 ## Architecture
@@ -157,11 +157,12 @@ cd charts/openfilter-pipelines-controller && helm dependency update
   - `config/samples/`: Example Pipeline CR manifests
   - `config/manager/`: Controller deployment manifest
 
-- **charts/**: Helm charts for deployment
-  - `charts/openfilter-pipelines-controller/`: Main Helm chart
-  - `charts/openfilter-pipelines-controller/crds/`: CRD manifests (synced from config/crd/bases)
-  - `charts/openfilter-pipelines-controller/templates/`: Kubernetes resource templates
-  - `charts/openfilter-pipelines-controller/values.yaml`: Default configuration values
+- **deployment/**: Helm chart for deployment
+  - `deployment/openfilter-pipelines-controller/`: Main Helm chart
+  - `deployment/openfilter-pipelines-controller/crds/`: CRD manifests (synced from config/crd/bases)
+  - `deployment/openfilter-pipelines-controller/templates/`: Kubernetes resource templates
+  - `deployment/openfilter-pipelines-controller/overrides/`: Per-environment value overrides (development, lab, staging, production)
+  - `deployment/openfilter-pipelines-controller/values.yaml`: Default configuration values
 
 - **hack/**: Utility scripts
   - `hack/update-helm-crds.sh`: Script to sync CRDs from config/crd/bases to Helm chart

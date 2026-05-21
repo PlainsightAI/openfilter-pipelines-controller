@@ -1,0 +1,29 @@
+image:
+  tag: "0000000000000000000000000000000000000000" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
+claimerImage:
+  tag: "0000000000000000000000000000000000000000" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
+telemetry:
+  # Lab has no monitoring overlay (no controllers/monitoring/overrides/lab.yaml),
+  # so opt out of the base.yaml OTLP export to avoid filter pods retrying
+  # against a non-resolvable otel-collector service every export interval.
+  # Both fields must be cleared together: the chart gates each env var on its
+  # own non-emptiness, and the controller's validateTelemetryFlags rejects the
+  # half-set state at boot.
+  exporterType: ""
+  exporterOtlpEndpoint: ""
+
+# Lab environment: k3s cluster with NVIDIA GPU Operator
+gpuNodeSelector: "nvidia.com/gpu.present=true"
+
+# Connect to the cluster-managed Valkey instead of the bundled subchart.
+# Precondition: the `openfilter-pipelines-controller` Secret (key
+# VALKEY_PASSWORD) must exist in the release namespace.
+valkey:
+  enabled: false
+  externalValkey:
+    enabled: true
+    host: "valkey-pipelines-controller.openfilter-system.svc.cluster.local"
+    port: 6379
+    password: true
+    existingSecret: "openfilter-pipelines-controller"
+    existingSecretPasswordKey: "VALKEY_PASSWORD"

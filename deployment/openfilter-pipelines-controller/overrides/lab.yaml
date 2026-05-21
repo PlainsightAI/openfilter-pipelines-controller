@@ -3,11 +3,17 @@ image:
 claimerImage:
   tag: "0000000000000000000000000000000000000000" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
 telemetry:
-  exporterType: otlp
-  exporterOtlpEndpoint: otel-collector.monitoring.svc.cluster.local:4317
+  # Lab has no monitoring overlay (no controllers/monitoring/overrides/lab.yaml),
+  # so opt out of the base.yaml OTLP export to avoid filter pods retrying
+  # against a non-resolvable otel-collector service every export interval.
+  # Both fields must be cleared together: the chart gates each env var on its
+  # own non-emptiness, and the controller's validateTelemetryFlags rejects the
+  # half-set state at boot.
+  exporterType: ""
+  exporterOtlpEndpoint: ""
 
-# GPU filter pods schedule onto the GKE GPU node pool.
-gpuNodeSelector: "cloud.google.com/gke-gpu-driver-version=latest"
+# Lab environment: k3s cluster with NVIDIA GPU Operator
+gpuNodeSelector: "nvidia.com/gpu.present=true"
 
 # Connect to the cluster-managed Valkey instead of the bundled subchart.
 # Precondition: the `openfilter-pipelines-controller` Secret (key

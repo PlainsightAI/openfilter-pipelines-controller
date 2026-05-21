@@ -25,7 +25,12 @@ securityContext:
 
 telemetry:
   exporterType: otlp
-  exporterOtlpEndpoint: otel-collector.monitoring.svc.cluster.local:4317
+  # Scheme prefix is load-bearing. openfilter ≥ 0.2.1 infers OTLP gRPC TLS
+  # from the URL scheme — bare host:port silently flips to insecure=False
+  # (TLS), and our in-cluster otel-collector terminates plaintext only, so
+  # every export would fail the handshake with WRONG_VERSION_NUMBER. http://
+  # keeps the inference at insecure=True against this plaintext receiver.
+  exporterOtlpEndpoint: http://otel-collector.monitoring.svc.cluster.local:4317
 
 # GPU filter pods schedule onto the GKE GPU node pool.
 gpuNodeSelector: "cloud.google.com/gke-gpu-driver-version=latest"

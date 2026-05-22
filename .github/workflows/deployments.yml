@@ -22,6 +22,7 @@ jobs:
         uses: PlainsightAI/gh-actions-public/publish-docker-image@main
         env:
           VERSION: ${{ github.sha }}
+          IMAGE_REGISTRY: us-west1-docker.pkg.dev/plainsightai-prod/oci
         with:
           environment: production
 

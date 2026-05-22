@@ -17,7 +17,7 @@ telemetry:
 replicaCount: 1
 
 image:
-  repository: plainsightai/openfilter-pipelines-controller
+  repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-controller
   pullPolicy: IfNotPresent
   tag: ""
 

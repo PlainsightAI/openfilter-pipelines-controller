@@ -1,6 +1,8 @@
 image:
+  repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-controller
   tag: "2949155e09bb97b57eca9803761199defc527704" # {"$imagepolicy": "development:openfilter-pipelines-controller:tag"}
 claimerImage:
+  repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-claimer
   tag: "2949155e09bb97b57eca9803761199defc527704" # {"$imagepolicy": "development:openfilter-pipelines-controller:tag"}
 telemetry:
   exporterType: otlp

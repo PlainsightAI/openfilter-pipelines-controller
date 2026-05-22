@@ -31,7 +31,8 @@ jobs:
     with:
       service-name: openfilter-pipelines-controller
       manifests-path: deployment
-    secrets: inherit
+    secrets:
+      GH_BOT_USER_PAT: ${{ secrets.GH_BOT_USER_PAT }}
 
   deploy-lab:
     needs: deploy

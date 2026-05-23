@@ -40,6 +40,8 @@ The following table lists the main configurable parameters of the chart and thei
 | `image.repository` | Controller image repository | `plainsightai/openfilter-pipelines-controller` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `image.tag` | Image tag (defaults to chart appVersion) | `""` |
+| `claimerImage.repository` | Claimer image repository | `plainsightai/openfilter-pipelines-claimer` |
+| `claimerImage.tag` | Claimer image tag (defaults to chart appVersion) | `""` |
 
 ### RBAC Configuration
 

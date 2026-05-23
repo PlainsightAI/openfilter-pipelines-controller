@@ -1,6 +1,14 @@
+# deployments.yml — Continuous deployment for openfilter-pipelines-controller.
+# On every merge to main, build the image and push to GAR.
+#
+# ArgoCD (the openfilter-pipelines-controller ApplicationSet in PlainsightAI/gitops)
+# utilizes the ArgoCD Image Updater in GKE to automatically reconcile and
+# roll out the new image, avoiding any automated "plainsight-bot" commits
+# to this repository.
 name: Deployments
+
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 on:
@@ -8,8 +16,6 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - 'deployment/**'
 
 jobs:
   build:
@@ -25,24 +31,3 @@ jobs:
           IMAGE_REGISTRY: us-west1-docker.pkg.dev/plainsightai-prod/oci
         with:
           environment: production
-
-  deploy:
-    needs: build
-    uses: PlainsightAI/gh-actions-public/.github/workflows/deploy-service.yaml@main
-    with:
-      service-name: openfilter-pipelines-controller
-      manifests-path: deployment
-    secrets:
-      GH_BOT_USER_PAT: ${{ secrets.GH_BOT_USER_PAT }}
-
-  deploy-lab:
-    needs: deploy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy to Lab
-        uses: PlainsightAI/gh-actions-public/deploy-env@main
-        with:
-          environment: lab
-          service-name: openfilter-pipelines-controller
-          manifests-path: deployment
-          gh-bot-user-pat: ${{ secrets.GH_BOT_USER_PAT }}

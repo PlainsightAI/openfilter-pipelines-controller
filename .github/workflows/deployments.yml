@@ -46,7 +46,7 @@ jobs:
         run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push by digest
         id: build
@@ -62,7 +62,8 @@ jobs:
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
-          echo "${{ steps.build.outputs.digest }}" > /tmp/digests/${{ matrix.platform.arch }}
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
         uses: actions/upload-artifact@v4
@@ -87,7 +88,7 @@ jobs:
         with:
           path: /tmp/digests
           pattern: digests-${{ matrix.image }}-*
-          merge-multiple: false
+          merge-multiple: true
 
       - name: Authenticate to Google Cloud
         uses: PlainsightAI/gh-actions-public/google-cloud-auth@main
@@ -99,20 +100,14 @@ jobs:
         run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Create multi-arch manifest
         working-directory: /tmp/digests
         run: |
-          DIGESTS=()
-          for dir in digests-${{ matrix.image }}-*; do
-            arch="${dir##*-}"
-            digest=$(cat "${dir}/${arch}")
-            DIGESTS+=("${IMAGE_REGISTRY}/${{ matrix.image }}@${digest}")
-          done
           docker buildx imagetools create \
             --tag "${IMAGE_REGISTRY}/${{ matrix.image }}:${{ github.sha }}" \
-            "${DIGESTS[@]}"
+            $(printf "${IMAGE_REGISTRY}/${{ matrix.image }}@sha256:%s " *)
 
       - name: Inspect manifest
         run: |

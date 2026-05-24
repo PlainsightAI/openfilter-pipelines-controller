@@ -86,8 +86,9 @@ const (
 
 	// AttrPipelineInstanceID is the canonical business UUID used by
 	// plainsight-api, plainsight-deployment-agent, and openfilter for trace
-	// joining. It holds the same value as `pipeline_instance.name` in production
-	// environments.
+	// joining. Sourced from `pi.Name`, which in production is the canonical
+	// business UUID written by plainsight-deployment-agent; in test/dev
+	// clusters it may be any K8s name.
 	AttrPipelineInstanceID = "pipeline_instance.id"
 
 	// AttrPipelineInstanceName is the K8s metadata.name of the

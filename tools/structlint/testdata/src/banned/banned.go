@@ -7,6 +7,7 @@ import "go.opentelemetry.io/otel/attribute"
 // the suggested helper appear inline so the diagnostic is specific.
 var (
 	_ = attribute.String("pipeline_instance.uid", "x")       // want `pipeline_instance\.uid.*tracing\.PipelineInstanceUID`
+	_ = attribute.String("pipeline_instance.id", "x")        // want `pipeline_instance\.id.*tracing\.PipelineInstanceID`
 	_ = attribute.String("pipeline_instance.name", "x")      // want `pipeline_instance\.name.*tracing\.PipelineInstanceName`
 	_ = attribute.String("pipeline_instance.namespace", "x") // want `pipeline_instance\.namespace.*tracing\.PipelineInstanceNamespace`
 	_ = attribute.String("pipeline.uid", "x")                // want `pipeline\.uid.*tracing\.PipelineUID`

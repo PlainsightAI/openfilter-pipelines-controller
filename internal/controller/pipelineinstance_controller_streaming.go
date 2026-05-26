@@ -638,7 +638,7 @@ func (r *PipelineInstanceReconciler) ensureFilterServices(ctx context.Context, p
 							Protocol:   protocol,
 						},
 					},
-					Type: corev1.ServiceTypeClusterIP,
+					Type: svcPort.Type,
 				},
 			}
 

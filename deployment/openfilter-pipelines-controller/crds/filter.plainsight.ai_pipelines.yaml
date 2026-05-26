@@ -395,6 +395,13 @@ spec:
                       maximum: 65535
                       minimum: 1
                       type: integer
+                    type:
+                      default: TCP
+                      description: service type
+                      enum:
+                      - corev1.ServiceTypeClusterIP
+                      - corev1.ServiceTypeLoadBalancer
+                      type: string
                   required:
                   - name
                   - port

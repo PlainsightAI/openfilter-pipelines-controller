@@ -184,6 +184,11 @@ type Filter struct {
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
+	// envFrom is a source of envs to container
+	// Uses the standard Kubernetes EnvFromSource type for full compatibility
+	// +optional
+	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
+
 	// args are the command arguments to pass to the container
 	// +optional
 	Args []string `json:"args,omitempty"`

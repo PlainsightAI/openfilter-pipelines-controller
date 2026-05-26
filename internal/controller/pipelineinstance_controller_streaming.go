@@ -337,6 +337,7 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *
 		envVars = append(envVars, filter.Env...)
 
 		container.Env = envVars
+		container.EnvFrom = filter.EnvFrom
 
 		if filter.Resources != nil {
 			container.Resources = *filter.Resources

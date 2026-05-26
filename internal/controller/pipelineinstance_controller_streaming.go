@@ -34,6 +34,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
 // reconcileStreaming handles the streaming (Deployment-based) reconciliation path
@@ -190,21 +191,58 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 		return fmt.Errorf("failed to get deployment: %w", err)
 	}
 
-	// Build the desired Deployment spec
-	desiredDeployment := r.buildStreamingDeployment(pipelineInstance, pipeline, pipelineSource, deploymentName)
+	// Build phase (PLAT-1028): pure CPU work — render the desired
+	// Deployment from the Pipeline + PipelineInstance + PipelineSource,
+	// and on the create path stamp the owner reference. Mirrors the
+	// batch path (buildJob) so a SetControllerReference failure flows
+	// into the build span rather than escaping the trace.
+	buildCtx, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
+	desiredDeployment := r.buildStreamingDeployment(buildCtx, pipelineInstance, pipeline, pipelineSource, deploymentName)
+	desiredContainers := desiredDeployment.Spec.Template.Spec.Containers
+	desiredReplicas := int32(0)
+	if desiredDeployment.Spec.Replicas != nil {
+		desiredReplicas = *desiredDeployment.Spec.Replicas
+	}
+	buildSpan.SetAttributes(
+		tracing.BuildContainerCount(len(desiredContainers)),
+		tracing.BuildGPU(requiresGPU(desiredContainers)),
+		tracing.BuildReplicas(desiredReplicas),
+	)
 
 	if apierrors.IsNotFound(err) {
-		// Create the Deployment
-		log.Info("Creating streaming deployment", "deployment", deploymentName)
+		// Create the Deployment. SetControllerReference stamps owner
+		// metadata onto the rendered spec — pure CPU, no apiserver
+		// round-trip — so it belongs in the build phase. The update
+		// path below does not restamp the owner ref (it already exists
+		// on the live Deployment) and so closes the build span before
+		// patching.
 		if err := controllerutil.SetControllerReference(pipelineInstance, desiredDeployment, r.Scheme); err != nil {
+			endPhaseSpan(buildSpan, err)
 			return fmt.Errorf("failed to set controller reference: %w", err)
 		}
-		if err := r.Create(ctx, desiredDeployment); err != nil {
-			return fmt.Errorf("failed to create deployment: %w", err)
+		endPhaseSpan(buildSpan, nil)
+
+		log.Info("Creating streaming deployment", "deployment", deploymentName)
+		// Apply phase (PLAT-1028): kube-apiserver round-trip for the
+		// initial Create. Sibling of the build span above. The update
+		// path below has its own apply span so both lifecycles get
+		// equivalent attribution in the trace.
+		applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
+		createErr := r.Create(applyCtx, desiredDeployment)
+		if createErr == nil {
+			applySpan.SetAttributes(tracing.ApplyResultAttr(tracing.ApplyResultCreated))
+		}
+		endPhaseSpan(applySpan, createErr)
+		if createErr != nil {
+			return fmt.Errorf("failed to create deployment: %w", createErr)
 		}
 		pipelineInstance.Status.Streaming.DeploymentName = deploymentName
 		return nil
 	}
+
+	// Update path: owner ref already exists on the live Deployment, so
+	// nothing more belongs in the build phase. Close it before the patch.
+	endPhaseSpan(buildSpan, nil)
 
 	// Update existing Deployment using Patch to avoid conflicts.
 	// We deliberately patch ObjectMeta.Labels + Spec only — never .Status,
@@ -226,8 +264,21 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	patchBase := client.MergeFrom(deployment.DeepCopy())
 	deployment.Labels = desiredDeployment.Labels
 	deployment.Spec = desiredDeployment.Spec
-	if err := r.Patch(ctx, deployment, patchBase); err != nil {
-		return fmt.Errorf("failed to update deployment: %w", err)
+	// Apply phase (PLAT-1028): the update-path counterpart to the
+	// create-path apply span above. Same span name and parent so the
+	// trace shape is identical regardless of whether the Deployment
+	// was new or pre-existing. Stamp `updated` on success — we don't
+	// distinguish a no-op patch from a real mutation here because
+	// MergeFrom-based patches always round-trip, and the kube-apiserver
+	// returns 200 either way.
+	applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
+	patchErr := r.Patch(applyCtx, deployment, patchBase)
+	if patchErr == nil {
+		applySpan.SetAttributes(tracing.ApplyResultAttr(tracing.ApplyResultUpdated))
+	}
+	endPhaseSpan(applySpan, patchErr)
+	if patchErr != nil {
+		return fmt.Errorf("failed to update deployment: %w", patchErr)
 	}
 	pipelineInstance.Status.Streaming.DeploymentName = deploymentName
 
@@ -235,7 +286,10 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 }
 
 // buildStreamingDeployment constructs a Deployment for streaming mode
-func (r *PipelineInstanceReconciler) buildStreamingDeployment(pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, deploymentName string) *appsv1.Deployment {
+func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, deploymentName string) *appsv1.Deployment {
+	log := logf.FromContext(ctx)
+	log.V(1).Info("Building streaming deployment", "deployment", deploymentName, "filters", len(pipeline.Spec.Filters))
+
 	replicas := int32(1)
 	maxUnavailable := intstr.FromInt32(0)
 	maxSurge := intstr.FromInt32(1)

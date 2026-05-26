@@ -367,6 +367,10 @@ spec:
                   description: ServicePort defines a port to expose as a Kubernetes
                     Service for a filter
                   properties:
+                    isFilter:
+                      default: false
+                      description: if isFilter expose port +1
+                      type: boolean
                     name:
                       description: |-
                         name is the name of the filter to expose

@@ -158,6 +158,12 @@ type ServicePort struct {
 	// +kubebuilder:default=TCP
 	// +kubebuilder:validation:Enum=TCP;UDP
 	Protocol corev1.Protocol `json:"protocol,omitempty"`
+
+	// if isFilter expose port +1
+	// +optional
+	// +kubebuilder:default=false
+	// +kubebuilder:validation:Bool=true;false
+	IsFilter bool `json:"isFilter,omitempty"`
 }
 
 // Filter defines a containerized processing step in the pipeline

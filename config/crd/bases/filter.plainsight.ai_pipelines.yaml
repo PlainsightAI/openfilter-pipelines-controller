@@ -396,11 +396,11 @@ spec:
                       minimum: 1
                       type: integer
                     type:
-                      default: corev1.ServiceTypeClusterIP
+                      default: ClusterIP
                       description: service type
                       enum:
-                      - corev1.ServiceTypeClusterIP
-                      - corev1.ServiceTypeLoadBalancer
+                      - ClusterIP
+                      - LoadBalancer
                       type: string
                   required:
                   - name

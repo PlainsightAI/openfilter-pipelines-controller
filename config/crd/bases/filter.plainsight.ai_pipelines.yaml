@@ -397,7 +397,8 @@ spec:
                       type: integer
                     type:
                       default: ClusterIP
-                      description: service type
+                      description: type is  the type of Kubernetes Service to create
+                        (ClusterIP or LoadBalancer)
                       enum:
                       - ClusterIP
                       - LoadBalancer

@@ -159,9 +159,8 @@ type ServicePort struct {
 	// +kubebuilder:validation:Enum=TCP;UDP
 	Protocol corev1.Protocol `json:"protocol,omitempty"`
 
-	// if isFilter expose port +1
-	// +optional
-	// +kubebuilder:default=false
+	// isFilter indicates that this service port is for a filter
+	// and additional port should be exposed
 	// +kubebuilder:validation:Bool=true;false
 	IsFilter bool `json:"isFilter,omitempty"`
 }

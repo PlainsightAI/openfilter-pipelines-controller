@@ -368,8 +368,9 @@ spec:
                     Service for a filter
                   properties:
                     isFilter:
-                      default: false
-                      description: if isFilter expose port +1
+                      description: |-
+                        isFilter indicates that this service port is for a filter
+                        and additional port should be exposed
                       type: boolean
                     name:
                       description: |-

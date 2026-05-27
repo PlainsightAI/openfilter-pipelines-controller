@@ -244,8 +244,10 @@ spec:
                       type: array
                     envFrom:
                       description: |-
-                        envFrom is a source of envs to container
+                        envFrom is a list of sources to populate environment variables in the container.
                         Uses the standard Kubernetes EnvFromSource type for full compatibility
+                        Note: values defined in env (including those injected by the controller)
+                        take precedence over values from envFrom, regardless of ordering.
                       items:
                         description: EnvFromSource represents the source of a set
                           of ConfigMaps or Secrets

@@ -184,7 +184,7 @@ type Filter struct {
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
-	// envFrom is a list of sources to populate environment variables in the container. 
+	// envFrom is a list of sources to populate environment variables in the container.
 	// Uses the standard Kubernetes EnvFromSource type for full compatibility
 	// Note: values defined in env (including those injected by the controller)
 	// take precedence over values from envFrom, regardless of ordering.

@@ -161,8 +161,8 @@ type ServicePort struct {
 
 	// service type
 	// +optional
-	// +kubebuilder:default=corev1.ServiceTypeClusterIP
-	// +kubebuilder:validation:Enum=corev1.ServiceTypeClusterIP;corev1.ServiceTypeLoadBalancer
+	// +kubebuilder:default=ClusterIP
+	// +kubebuilder:validation:Enum=ClusterIP;LoadBalancer
 	Type corev1.ServiceType `json:"type,omitempty"`
 }
 

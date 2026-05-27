@@ -159,7 +159,7 @@ type ServicePort struct {
 	// +kubebuilder:validation:Enum=TCP;UDP
 	Protocol corev1.Protocol `json:"protocol,omitempty"`
 
-	// service type
+	// type is  the type of Kubernetes Service to create (ClusterIP or LoadBalancer)
 	// +optional
 	// +kubebuilder:default=ClusterIP
 	// +kubebuilder:validation:Enum=ClusterIP;LoadBalancer

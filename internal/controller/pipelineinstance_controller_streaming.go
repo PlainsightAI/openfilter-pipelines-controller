@@ -615,6 +615,12 @@ func (r *PipelineInstanceReconciler) ensureFilterServices(ctx context.Context, p
 				protocol = svcPort.Protocol
 			}
 
+			// Apply ClusterIP as the default service type if not specified
+			serviceType := svcPort.Type
+			if serviceType == "" {
+				serviceType = corev1.ServiceTypeClusterIP
+			}
+
 			desiredService := &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      serviceName,
@@ -638,7 +644,7 @@ func (r *PipelineInstanceReconciler) ensureFilterServices(ctx context.Context, p
 							Protocol:   protocol,
 						},
 					},
-					Type: svcPort.Type,
+					Type: serviceType,
 				},
 			}
 

@@ -367,11 +367,22 @@ spec:
                   description: ServicePort defines a port to expose as a Kubernetes
                     Service for a filter
                   properties:
-                    isFilter:
+                    appProtocol:
+                      allOf:
+                      - enum:
+                        - tcp
+                        - openfilter
+                      - enum:
+                        - tcp
+                        - openfilter
+                      default: tcp
                       description: |-
-                        isFilter indicates that this service port is for a filter
-                        and additional port should be exposed
-                      type: boolean
+                        appProtocol declares the application protocol carried over this port.
+                        The controller uses this to apply protocol-specific exposure logic.
+                          - "tcp"        (default): single port, no special handling
+                          - "openfilter" : OpenFilter ZMQ stream — also exposes `port + 1`
+                                           (PUSH/PULL reply channel paired with the PUB/SUB data port)
+                      type: string
                     name:
                       description: |-
                         name is the name of the filter to expose
@@ -384,6 +395,11 @@ spec:
                       maximum: 65535
                       minimum: 1
                       type: integer
+                      x-kubernetes-validations:
+                      - message: When appProtocol='openfilter', port must be <= 65534
+                          to leave room for the reply channel on port+1
+                        rule: '!(has(self.appProtocol) && self.appProtocol == ''openfilter'')
+                          || (self.port <= 65534)'
                     protocol:
                       default: TCP
                       description: protocol is the network protocol for this port

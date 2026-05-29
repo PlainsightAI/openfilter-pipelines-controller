@@ -132,6 +132,17 @@ const (
 	PipelineModeStream PipelineMode = "stream"
 )
 
+// AppProtocol declares the application protocol carried over this port
+// +kubebuilder:validation:Enum=tcp;openfilter
+type AppProtocol string
+
+const (
+	// AppProtocol use the single port, no special handling
+	AppProtocolTCP AppProtocol = "tcp"
+	// AppProtocol use OpenFilter ZMQ stream — also exposes `port + 1`
+	AppProtocolOpenFilter AppProtocol = "openfilter"
+)
+
 // ServicePort defines a port to expose as a Kubernetes Service for a filter
 type ServicePort struct {
 	// name is the name of the filter to expose
@@ -144,6 +155,7 @@ type ServicePort struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:validation:XValidation:rule="!(has(self.appProtocol) && self.appProtocol == 'openfilter') || (self.port <= 65534)", message="When appProtocol='openfilter', port must be <= 65534 to leave room for the reply channel on port+1"
 	Port int32 `json:"port"`
 
 	// targetPort is the port on the container to forward to
@@ -159,10 +171,15 @@ type ServicePort struct {
 	// +kubebuilder:validation:Enum=TCP;UDP
 	Protocol corev1.Protocol `json:"protocol,omitempty"`
 
-	// isFilter indicates that this service port is for a filter
-	// and additional port should be exposed
-	// +kubebuilder:validation:Bool=true;false
-	IsFilter bool `json:"isFilter,omitempty"`
+	// appProtocol declares the application protocol carried over this port.
+	// The controller uses this to apply protocol-specific exposure logic.
+	//   - "tcp"        (default): single port, no special handling
+	//   - "openfilter" : OpenFilter ZMQ stream — also exposes `port + 1`
+	//                    (PUSH/PULL reply channel paired with the PUB/SUB data port)
+	// +optional
+	// +kubebuilder:default=tcp
+	// +kubebuilder:validation:Enum=tcp;openfilter
+	AppProtocol AppProtocol `json:"appProtocol,omitempty"`
 }
 
 // Filter defines a containerized processing step in the pipeline

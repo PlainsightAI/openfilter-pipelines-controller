@@ -137,9 +137,10 @@ const (
 type AppProtocol string
 
 const (
-	// AppProtocol use the single port, no special handling
+	// AppProtocolTCP uses a single port with no special handling.
 	AppProtocolTCP AppProtocol = "tcp"
-	// AppProtocol use OpenFilter ZMQ stream — also exposes `port + 1`
+	// AppProtocolOpenFilter uses the OpenFilter ZMQ stream — also exposes port+1
+	// (PUSH/PULL reply channel paired with the PUB/SUB data port).
 	AppProtocolOpenFilter AppProtocol = "openfilter"
 )
 
@@ -178,7 +179,6 @@ type ServicePort struct {
 	//                    (PUSH/PULL reply channel paired with the PUB/SUB data port)
 	// +optional
 	// +kubebuilder:default=tcp
-	// +kubebuilder:validation:Enum=tcp;openfilter
 	AppProtocol AppProtocol `json:"appProtocol,omitempty"`
 }
 

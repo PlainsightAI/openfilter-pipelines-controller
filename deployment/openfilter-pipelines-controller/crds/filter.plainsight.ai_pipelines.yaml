@@ -368,13 +368,6 @@ spec:
                     Service for a filter
                   properties:
                     appProtocol:
-                      allOf:
-                      - enum:
-                        - tcp
-                        - openfilter
-                      - enum:
-                        - tcp
-                        - openfilter
                       default: tcp
                       description: |-
                         appProtocol declares the application protocol carried over this port.
@@ -382,6 +375,9 @@ spec:
                           - "tcp"        (default): single port, no special handling
                           - "openfilter" : OpenFilter ZMQ stream — also exposes `port + 1`
                                            (PUSH/PULL reply channel paired with the PUB/SUB data port)
+                      enum:
+                      - tcp
+                      - openfilter
                       type: string
                     name:
                       description: |-

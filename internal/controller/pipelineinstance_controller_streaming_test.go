@@ -944,7 +944,7 @@ func makeReconcilerWithFakeClient() (*PipelineInstanceReconciler, error) {
 }
 
 func TestEnsureFilterServices_OpenFilterAddsReplyPortWithExplicitTargetPort(t *testing.T) {
-	ctx = context.Background()
+	ctx := context.Background()
 	r, err := makeReconcilerWithFakeClient()
 	if err != nil {
 		t.Fatalf("failed to create reconciler with fake client: %v", err)
@@ -1007,7 +1007,7 @@ func TestEnsureFilterServices_OpenFilterAddsReplyPortWithExplicitTargetPort(t *t
 }
 
 func TestEnsureFilterServices_DefaultProtocolDoesNotAddReplyPort(t *testing.T) {
-	ctx = context.Background()
+	ctx := context.Background()
 	r, err := makeReconcilerWithFakeClient()
 	if err != nil {
 		t.Fatalf("failed to create reconciler with fake client: %v", err)

@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -54,6 +55,24 @@ type PipelineInstanceSpec struct {
 	// execution defines how the pipeline should be executed
 	// +optional
 	Execution *ExecutionConfig `json:"execution,omitempty"`
+
+	// nodeSelector pins the pipeline pod to a specific node class. When set, it
+	// merges with the controller-wide GPUNodeSelectorLabels (instance keys win
+	// on conflict). When the pipeline does not request GPU resources, the
+	// controller-wide labels are not applied and only this map is used.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// tolerations are appended to the pod spec, alongside any controller-injected
+	// tolerations. Allows the pipeline pod to schedule onto nodes with matching
+	// taints (e.g., dedicated GPU nodes).
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// affinity is passed through to the pod spec verbatim. Not surfaced by the
+	// API or UI in v1; lives in the CRD so power users can POST it directly.
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
 }
 
 // PipelineReference defines a reference to a Pipeline resource

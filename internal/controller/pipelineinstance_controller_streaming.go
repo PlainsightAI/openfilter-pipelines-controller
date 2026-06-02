@@ -399,15 +399,20 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 		containers = append(containers, container)
 	}
 
-	// Apply configured GPU node selector labels when any container requests nvidia.com/gpu resources.
-	// Copy the map to prevent downstream mutation from corrupting the reconciler's shared state.
-	var nodeSelector map[string]string
-	if len(r.GPUNodeSelectorLabels) > 0 && requiresGPU(containers) {
-		nodeSelector = make(map[string]string, len(r.GPUNodeSelectorLabels))
-		for k, v := range r.GPUNodeSelectorLabels {
-			nodeSelector[k] = v
-		}
+	// Reshape GPU-requesting containers so that exactly one container holds the
+	// nvidia.com/gpu limit (the lead) and every GPU-requesting container can
+	// see the allocated device(s) via NVIDIA_VISIBLE_DEVICES=all. CPU-only
+	// containers are left alone. See applyGPUContainerSharing for the rationale.
+	pipelineRequiresGPU := requiresGPU(containers)
+	if pipelineRequiresGPU {
+		applyGPUContainerSharing(containers, instanceGPUCount(pipelineInstance.Spec))
 	}
+
+	// Build the effective nodeSelector: controller-wide GPU labels (only when
+	// the pipeline requires GPU) merged with the per-instance NodeSelector,
+	// with instance values winning on conflict. The returned map is always a
+	// fresh allocation, preserving the previous defensive-copy behavior.
+	nodeSelector := mergeNodeSelector(r.GPUNodeSelectorLabels, pipelineInstance.Spec.NodeSelector, pipelineRequiresGPU)
 
 	// Base labels used for deployment/pod selector (MUST stay stable — selector is immutable)
 	streamSelectorLabels := map[string]string{
@@ -448,6 +453,11 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 			},
 		},
 	}
+
+	// Append per-instance Tolerations and pass Affinity through verbatim.
+	// Tolerations append (never replace) so any controller-injected toleration
+	// stays in place; Affinity has no controller-side baseline today.
+	applyInstanceScheduling(&deployment.Spec.Template.Spec, pipelineInstance.Spec)
 
 	return deployment
 }

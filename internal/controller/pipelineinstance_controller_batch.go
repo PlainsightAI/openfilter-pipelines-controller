@@ -576,14 +576,21 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		filterContainers = append(filterContainers, container)
 	}
 
-	// Apply configured GPU node selector labels when any container requests nvidia.com/gpu resources.
-	// Copy the map to prevent downstream mutation from corrupting the reconciler's shared state.
-	var nodeSelector map[string]string
-	if len(r.GPUNodeSelectorLabels) > 0 && requiresGPU(filterContainers) {
-		nodeSelector = make(map[string]string, len(r.GPUNodeSelectorLabels))
-		for k, v := range r.GPUNodeSelectorLabels {
-			nodeSelector[k] = v
-		}
+	// Reshape GPU-requesting containers so that exactly one container holds the
+	// nvidia.com/gpu limit (the lead) and every GPU-requesting container can
+	// see the allocated device(s) via NVIDIA_VISIBLE_DEVICES=all. CPU-only
+	// containers are left alone. See applyGPUContainerSharing for the rationale.
+	pipelineRequiresGPU := requiresGPU(filterContainers)
+	if pipelineRequiresGPU {
+		applyGPUContainerSharing(filterContainers, instanceGPUCount(pipelineInstance.Spec))
+	}
+
+	// Build the effective nodeSelector: controller-wide GPU labels (only when
+	// the pipeline requires GPU) merged with the per-instance NodeSelector,
+	// with instance values winning on conflict. The returned map is always a
+	// fresh allocation, preserving the previous defensive-copy behavior.
+	nodeSelector := mergeNodeSelector(r.GPUNodeSelectorLabels, pipelineInstance.Spec.NodeSelector, pipelineRequiresGPU)
+	if pipelineRequiresGPU && len(r.GPUNodeSelectorLabels) > 0 {
 		log.V(1).Info("GPU resources detected, applying GPU node selector", "pipelineInstance", pipelineInstance.Name, "nodeSelector", nodeSelector)
 	}
 
@@ -632,6 +639,11 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			},
 		},
 	}
+
+	// Append per-instance Tolerations and pass Affinity through verbatim.
+	// Tolerations append (never replace) so any controller-injected toleration
+	// stays in place; Affinity has no controller-side baseline today.
+	applyInstanceScheduling(&job.Spec.Template.Spec, pipelineInstance.Spec)
 
 	log.Info("Built Job spec", "job", jobName, "completions", totalFiles, "parallelism", parallelism)
 	return job

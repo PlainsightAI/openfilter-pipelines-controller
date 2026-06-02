@@ -1,9 +1,9 @@
 image:
   repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-controller
-  tag: "edf76983cec5954e80deb64ffe841bc4d5ce8e46" # {"$imagepolicy": "production:openfilter-pipelines-controller:tag"}
+  tag: "cfdcbbb735b9abbdb7b0769f475e0a2f5e10ce9e" # {"$imagepolicy": "production:openfilter-pipelines-controller:tag"}
 claimerImage:
   repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-claimer
-  tag: "edf76983cec5954e80deb64ffe841bc4d5ce8e46" # {"$imagepolicy": "production:openfilter-pipelines-controller:tag"}
+  tag: "cfdcbbb735b9abbdb7b0769f475e0a2f5e10ce9e" # {"$imagepolicy": "production:openfilter-pipelines-controller:tag"}
 resources:
   requests:
     cpu: "100m"

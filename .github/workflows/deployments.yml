@@ -11,23 +11,111 @@ on:
     paths-ignore:
       - 'deployment/**'
 
+env:
+  IMAGE_REGISTRY: us-west1-docker.pkg.dev/plainsightai-prod/oci
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: openfilter-pipelines-controller
+            context: .
+            dockerfile: Dockerfile
+          - name: openfilter-pipelines-claimer
+            context: .
+            dockerfile: cmd/claimer/Dockerfile
+        platform:
+          - arch: amd64
+            runner: blacksmith-2vcpu-ubuntu-2404
+          - arch: arm64
+            runner: blacksmith-2vcpu-ubuntu-2204-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Publish Docker image to GAR
-        uses: PlainsightAI/gh-actions-public/publish-docker-image@main
-        env:
-          VERSION: ${{ github.sha }}
-          IMAGE_REGISTRY: us-west1-docker.pkg.dev/plainsightai-prod/oci
+      - name: Authenticate to Google Cloud
+        uses: PlainsightAI/gh-actions-public/google-cloud-auth@main
         with:
           environment: production
 
-  deploy:
+      - name: Configure Docker for GAR
+        shell: bash
+        run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/${{ matrix.platform.arch }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          outputs: type=image,name=${{ env.IMAGE_REGISTRY }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
     needs: build
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - openfilter-pipelines-controller
+          - openfilter-pipelines-claimer
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - name: Authenticate to Google Cloud
+        uses: PlainsightAI/gh-actions-public/google-cloud-auth@main
+        with:
+          environment: production
+
+      - name: Configure Docker for GAR
+        shell: bash
+        run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_REGISTRY}/${{ matrix.image }}:${{ github.sha }}" \
+            $(printf "${IMAGE_REGISTRY}/${{ matrix.image }}@sha256:%s " *)
+
+      - name: Inspect manifest
+        run: |
+          docker buildx imagetools inspect \
+            "${IMAGE_REGISTRY}/${{ matrix.image }}:${{ github.sha }}"
+
+  deploy:
+    needs: merge
     uses: PlainsightAI/gh-actions-public/.github/workflows/deploy-service.yaml@main
     with:
       service-name: openfilter-pipelines-controller

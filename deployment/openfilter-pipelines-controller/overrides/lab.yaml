@@ -1,9 +1,9 @@
 image:
   repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-controller
-  tag: "703af6a7413ed0167fc0d0ed59f243cc6ed5faa9" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
+  tag: "97a1d48ec5a2de10af92c6044ca9dd5b6b3debb0" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
 claimerImage:
   repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-claimer
-  tag: "703af6a7413ed0167fc0d0ed59f243cc6ed5faa9" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
+  tag: "97a1d48ec5a2de10af92c6044ca9dd5b6b3debb0" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
 telemetry:
   # Lab has no monitoring overlay (no controllers/monitoring/overrides/lab.yaml),
   # so opt out of the base.yaml OTLP export to avoid filter pods retrying

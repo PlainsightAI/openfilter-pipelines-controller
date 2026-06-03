@@ -78,8 +78,15 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 		pipelineInstance.Status.Streaming = &pipelinesv1alpha1.StreamingStatus{}
 	}
 
-	// Set start time if not already set
-	if pipelineInstance.Status.StartTime == nil {
+	// Set start time if not already set. Stamp claim.acquired on the active
+	// reconcile span the same way the batch claim phase does: true on the
+	// cold-start pass that performs per-instance initialization (here, writing
+	// StartTime), false on every steady-state pass thereafter. Reusing the
+	// canonical attribute gives streaming reconciles equivalent trace coverage
+	// to batch without inventing a streaming-only key.
+	streamingClaimAcquired := pipelineInstance.Status.StartTime == nil
+	tracing.Stamp(ctx, tracing.ClaimAcquired(streamingClaimAcquired))
+	if streamingClaimAcquired {
 		now := metav1.Now()
 		pipelineInstance.Status.StartTime = &now
 		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
@@ -196,14 +203,14 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	// and on the create path stamp the owner reference. Mirrors the
 	// batch path (buildJob) so a SetControllerReference failure flows
 	// into the build span rather than escaping the trace.
-	buildCtx, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
+	buildCtx, endBuild := tracing.StartSpan(ctx, spanBuild)
 	desiredDeployment := r.buildStreamingDeployment(buildCtx, pipelineInstance, pipeline, pipelineSource, deploymentName)
 	desiredContainers := desiredDeployment.Spec.Template.Spec.Containers
 	desiredReplicas := int32(0)
 	if desiredDeployment.Spec.Replicas != nil {
 		desiredReplicas = *desiredDeployment.Spec.Replicas
 	}
-	buildSpan.SetAttributes(
+	tracing.Stamp(buildCtx,
 		tracing.BuildContainerCount(len(desiredContainers)),
 		tracing.BuildGPU(requiresGPU(desiredContainers)),
 		tracing.BuildReplicas(desiredReplicas),
@@ -217,22 +224,22 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 		// on the live Deployment) and so closes the build span before
 		// patching.
 		if err := controllerutil.SetControllerReference(pipelineInstance, desiredDeployment, r.Scheme); err != nil {
-			endPhaseSpan(buildSpan, err)
+			endPhase(buildCtx, endBuild, err)
 			return fmt.Errorf("failed to set controller reference: %w", err)
 		}
-		endPhaseSpan(buildSpan, nil)
+		endPhase(buildCtx, endBuild, nil)
 
 		log.Info("Creating streaming deployment", "deployment", deploymentName)
 		// Apply phase (PLAT-1028): kube-apiserver round-trip for the
 		// initial Create. Sibling of the build span above. The update
 		// path below has its own apply span so both lifecycles get
 		// equivalent attribution in the trace.
-		applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
+		applyCtx, endApply := tracing.StartSpan(ctx, spanApply)
 		createErr := r.Create(applyCtx, desiredDeployment)
 		if createErr == nil {
-			applySpan.SetAttributes(tracing.ApplyResultAttr(tracing.ApplyResultCreated))
+			tracing.Stamp(applyCtx, tracing.ApplyResultAttr(tracing.ApplyResultCreated))
 		}
-		endPhaseSpan(applySpan, createErr)
+		endPhase(applyCtx, endApply, createErr)
 		if createErr != nil {
 			return fmt.Errorf("failed to create deployment: %w", createErr)
 		}
@@ -242,7 +249,7 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 
 	// Update path: owner ref already exists on the live Deployment, so
 	// nothing more belongs in the build phase. Close it before the patch.
-	endPhaseSpan(buildSpan, nil)
+	endPhase(buildCtx, endBuild, nil)
 
 	// Update existing Deployment using Patch to avoid conflicts.
 	// We deliberately patch ObjectMeta.Labels + Spec only — never .Status,
@@ -271,12 +278,12 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	// distinguish a no-op patch from a real mutation here because
 	// MergeFrom-based patches always round-trip, and the kube-apiserver
 	// returns 200 either way.
-	applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
+	applyCtx, endApply := tracing.StartSpan(ctx, spanApply)
 	patchErr := r.Patch(applyCtx, deployment, patchBase)
 	if patchErr == nil {
-		applySpan.SetAttributes(tracing.ApplyResultAttr(tracing.ApplyResultUpdated))
+		tracing.Stamp(applyCtx, tracing.ApplyResultAttr(tracing.ApplyResultUpdated))
 	}
-	endPhaseSpan(applySpan, patchErr)
+	endPhase(applyCtx, endApply, patchErr)
 	if patchErr != nil {
 		return fmt.Errorf("failed to update deployment: %w", patchErr)
 	}

@@ -182,8 +182,8 @@ func TestExtractTraceContext_EmptyTraceparentValueIsTreatedAsAbsent(t *testing.T
 func TestEndPhaseSpan_RecordsErrorAndStatus(t *testing.T) {
 	recorder := installRecordingTracerProvider(t)
 
-	_, span := tracing.Tracer().Start(context.Background(), "test.phase.error")
-	endPhaseSpan(span, errors.New("boom"))
+	ctx, end := tracing.StartSpan(context.Background(), "test.phase.error")
+	endPhase(ctx, end, errors.New("boom"))
 
 	spans := recorder.Ended()
 	if len(spans) != 1 {
@@ -211,8 +211,8 @@ func TestEndPhaseSpan_RecordsErrorAndStatus(t *testing.T) {
 func TestEndPhaseSpan_SuccessLeavesStatusUnset(t *testing.T) {
 	recorder := installRecordingTracerProvider(t)
 
-	_, span := tracing.Tracer().Start(context.Background(), "test.phase.ok")
-	endPhaseSpan(span, nil)
+	ctx, end := tracing.StartSpan(context.Background(), "test.phase.ok")
+	endPhase(ctx, end, nil)
 
 	spans := recorder.Ended()
 	if len(spans) != 1 {

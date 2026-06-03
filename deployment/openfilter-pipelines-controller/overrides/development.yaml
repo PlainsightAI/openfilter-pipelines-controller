@@ -1,9 +1,9 @@
 image:
   repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-controller
-  tag: "2214d64827848f6cd2fb8ee84c3936317718f661" # {"$imagepolicy": "development:openfilter-pipelines-controller:tag"}
+  tag: "62146d3f171083e027f2638fee27db767d50b4ff" # {"$imagepolicy": "development:openfilter-pipelines-controller:tag"}
 claimerImage:
   repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-claimer
-  tag: "2214d64827848f6cd2fb8ee84c3936317718f661" # {"$imagepolicy": "development:openfilter-pipelines-controller:tag"}
+  tag: "62146d3f171083e027f2638fee27db767d50b4ff" # {"$imagepolicy": "development:openfilter-pipelines-controller:tag"}
 telemetry:
   exporterType: otlp
   # Scheme prefix is load-bearing. openfilter ≥ 0.2.1 infers OTLP gRPC TLS

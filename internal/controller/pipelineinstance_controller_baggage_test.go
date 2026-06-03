@@ -164,7 +164,7 @@ func TestStampBaggageOnSpan_AllowlistedMembersAreStamped(t *testing.T) {
 		"user.id=user-789",
 	)
 	ctx, span := tracing.Tracer().Start(ctx, "test.stamp.allowlist")
-	stampBaggageOnSpan(ctx, span)
+	tracing.LiftBaggageToSpan(ctx, baggageSpanAllowlist)
 	span.End()
 
 	spans := recorder.Ended()
@@ -202,7 +202,7 @@ func TestStampBaggageOnSpan_DropsNonAllowlistedMembers(t *testing.T) {
 		"session.token=opaque",    // not allowlisted, must be dropped
 	)
 	ctx, span := tracing.Tracer().Start(ctx, "test.stamp.dropped")
-	stampBaggageOnSpan(ctx, span)
+	tracing.LiftBaggageToSpan(ctx, baggageSpanAllowlist)
 	span.End()
 
 	spans := recorder.Ended()
@@ -233,7 +233,7 @@ func TestStampBaggageOnSpan_AllNonAllowlistedIsNoOp(t *testing.T) {
 
 	ctx := baggageOf(t, "email=alice%40corp.test", "session.token=opaque")
 	ctx, span := tracing.Tracer().Start(ctx, "test.stamp.empty")
-	stampBaggageOnSpan(ctx, span)
+	tracing.LiftBaggageToSpan(ctx, baggageSpanAllowlist)
 	span.End()
 
 	spans := recorder.Ended()

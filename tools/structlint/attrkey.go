@@ -22,6 +22,7 @@ import (
 // on identical key strings without per-service casing skew.
 var attrkeyCanonical = map[string]string{
 	"pipeline_instance.uid":       "tracing.PipelineInstanceUID(pi)",
+	"pipeline_instance.id":        "tracing.PipelineInstanceID(pi)",
 	"pipeline_instance.name":      "tracing.PipelineInstanceName(pi)",
 	"pipeline_instance.namespace": "tracing.PipelineInstanceNamespace(pi)",
 	"pipeline.uid":                "tracing.PipelineUID(p)",

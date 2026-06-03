@@ -68,11 +68,11 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 	// `initialized` answers "is there work to do?"; claim.acquired answers
 	// "did this reconcile pass do the claim?". They're different questions.
 	hadStartTime := pipelineInstance.Status.StartTime != nil
-	claimCtx, claimSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.claim")
+	claimCtx, endClaim := tracing.StartSpan(ctx, spanClaim)
 	initialized, err := r.initializePipelineInstance(claimCtx, pipelineInstance, pipelineSource)
 	claimAcquired := err == nil && !hadStartTime && pipelineInstance.Status.StartTime != nil
-	claimSpan.SetAttributes(tracing.ClaimAcquired(claimAcquired))
-	endPhaseSpan(claimSpan, err)
+	tracing.Stamp(claimCtx, tracing.ClaimAcquired(claimAcquired))
+	endPhase(claimCtx, endClaim, err)
 	if err != nil {
 		log.Error(err, "Failed to initialize PipelineInstance")
 		return ctrl.Result{}, err
@@ -358,23 +358,23 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 	// Build phase (PLAT-1028): pure CPU work — render the Job spec from
 	// the Pipeline + PipelineInstance + PipelineSource and stamp the owner
 	// reference. Sibling of the apply span below (both rooted at ctx).
-	buildCtx, buildSpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.build")
+	buildCtx, endBuild := tracing.StartSpan(ctx, spanBuild)
 	job := r.buildJob(buildCtx, pipelineInstance, pipeline, pipelineSource, jobName)
 	containers := job.Spec.Template.Spec.Containers
 	parallelism := int32(0)
 	if job.Spec.Parallelism != nil {
 		parallelism = *job.Spec.Parallelism
 	}
-	buildSpan.SetAttributes(
+	tracing.Stamp(buildCtx,
 		tracing.BuildContainerCount(len(containers)),
 		tracing.BuildGPU(requiresGPU(containers)),
 		tracing.BuildParallelism(parallelism),
 	)
 	if err := controllerutil.SetControllerReference(pipelineInstance, job, r.Scheme); err != nil {
-		endPhaseSpan(buildSpan, err)
+		endPhase(buildCtx, endBuild, err)
 		return fmt.Errorf("failed to set owner reference: %w", err)
 	}
-	endPhaseSpan(buildSpan, nil)
+	endPhase(buildCtx, endBuild, nil)
 
 	// Apply phase (PLAT-1028): the kube-apiserver round-trip. Isolated
 	// from build so the trace cleanly attributes time spent waiting on
@@ -382,12 +382,12 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 	// only Creates here (the existing-Job branch above returns early
 	// without entering the apply span), so apply.result is invariably
 	// `created` on success.
-	applyCtx, applySpan := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.apply")
+	applyCtx, endApply := tracing.StartSpan(ctx, spanApply)
 	createErr := r.Create(applyCtx, job)
 	if createErr == nil {
-		applySpan.SetAttributes(tracing.ApplyResultAttr(tracing.ApplyResultCreated))
+		tracing.Stamp(applyCtx, tracing.ApplyResultAttr(tracing.ApplyResultCreated))
 	}
-	endPhaseSpan(applySpan, createErr)
+	endPhase(applyCtx, endApply, createErr)
 	if createErr != nil {
 		return fmt.Errorf("failed to create job: %w", createErr)
 	}

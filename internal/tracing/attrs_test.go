@@ -59,6 +59,7 @@ func TestStamp_AppliesAttributesToActiveSpan(t *testing.T) {
 	ctx, span := otel.Tracer("test").Start(context.Background(), "test.stamp")
 	Stamp(ctx,
 		PipelineInstanceUID(pi),
+		PipelineInstanceID(pi),
 		PipelineInstanceName(pi),
 		PipelineInstanceNamespace(pi),
 		PipelineUID(pipeline),
@@ -81,6 +82,7 @@ func TestStamp_AppliesAttributesToActiveSpan(t *testing.T) {
 		want string
 	}{
 		{AttrPipelineInstanceUID, "pi-uid-1234"},
+		{AttrPipelineInstanceID, "pi-name"},
 		{AttrPipelineInstanceName, "pi-name"},
 		{AttrPipelineInstanceNamespace, "pi-ns"},
 		{AttrPipelineUID, "pipeline-uid-5678"},

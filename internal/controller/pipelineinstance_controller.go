@@ -27,12 +27,6 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/baggage"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -343,27 +337,24 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// debugging. Baggage is lifted from the CR independently of traceparent
 	// (extractTraceContext) so identity members survive even on OSS hops.
 	ctx = extractTraceContext(ctx, pipelineInstance)
-	ctx, span := tracing.Tracer().Start(ctx, "PipelineInstanceReconciler.Reconcile",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithAttributes(
-			tracing.PipelineInstanceNamespace(pipelineInstance),
-			tracing.PipelineInstanceName(pipelineInstance),
-			tracing.PipelineInstanceUID(pipelineInstance),
-		),
+	ctx, endSpan := tracing.StartSpan(ctx, spanReconcile,
+		tracing.PipelineInstanceNamespace(pipelineInstance),
+		tracing.PipelineInstanceName(pipelineInstance),
+		tracing.PipelineInstanceUID(pipelineInstance),
+		tracing.PipelineInstanceID(pipelineInstance),
 	)
 	// Lift baggage members onto the reconcile span so cross-service identity
 	// (organization.id, project.id, user.id) is visible in the trace UI as
 	// attributes — baggage members alone don't appear in span data, only in
-	// downstream propagation. Done immediately after Start so the values are
-	// visible across the full span lifetime.
-	stampBaggageOnSpan(ctx, span)
+	// downstream propagation. Done immediately after the span opens so the
+	// values are visible across the full span lifetime.
+	tracing.LiftBaggageToSpan(ctx, baggageSpanAllowlist)
 	defer func() {
-		span.SetAttributes(tracing.ReconcileOutcomeAttr(reconcileOutcome(result, err)))
+		tracing.Stamp(ctx, tracing.ReconcileOutcomeAttr(reconcileOutcome(result, err)))
 		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
+			tracing.SpanError(ctx, err, err.Error())
 		}
-		span.End()
+		endSpan()
 	}()
 
 	// Handle deletion: process finalizers in order (valkey credentials first, then mode-specific)
@@ -433,7 +424,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// pipeline.mode are only known once the Pipeline CR has been fetched
 	// and the mode default has been applied; stamping earlier would
 	// either miss the default or require double-fetching.
-	span.SetAttributes(
+	tracing.Stamp(ctx,
 		tracing.PipelineUID(pipeline),
 		tracing.PipelineName(pipeline),
 		tracing.PipelineMode(mode),
@@ -601,28 +592,6 @@ var baggageSpanAllowlist = map[string]struct{}{
 	"user.id":         {},
 }
 
-// stampBaggageOnSpan copies allowlisted W3C baggage members from ctx onto
-// the supplied span as string attributes. Non-allowlisted members are
-// dropped (see baggageSpanAllowlist for the rationale). No-op when the
-// context carries no baggage members or no allowlisted ones.
-func stampBaggageOnSpan(ctx context.Context, span trace.Span) {
-	members := baggage.FromContext(ctx).Members()
-	if len(members) == 0 {
-		return
-	}
-	attrs := make([]attribute.KeyValue, 0, len(members))
-	for _, m := range members {
-		if _, ok := baggageSpanAllowlist[m.Key()]; !ok {
-			continue
-		}
-		attrs = append(attrs, attribute.String(m.Key(), m.Value()))
-	}
-	if len(attrs) == 0 {
-		return
-	}
-	span.SetAttributes(attrs...)
-}
-
 // reconcileOutcome categorises a Reconcile return tuple for the
 // reconcile.outcome span attribute. Error trumps requeue (a returned err is a
 // failure even when paired with Requeue) so Cloud Trace's outcome facet doesn't
@@ -649,25 +618,6 @@ func reconcileOutcome(result ctrl.Result, err error) tracing.ReconcileOutcome {
 	}
 }
 
-// endPhaseSpan ends a child phase span (PLAT-1028: claim/build/apply
-// granularity inside Reconcile). When err is non-nil, the error is recorded
-// on the span and the span status is set to codes.Error so the per-phase
-// failure attribution survives in Cloud Trace; otherwise the span ends with
-// the default Unset status.
-//
-// Pulled out of every call site instead of inlined as `defer` so the span
-// can be ended deterministically *before* the surrounding error-translation
-// `return fmt.Errorf(...)` runs — keeping span duration tight to the actual
-// phase work and preserving sibling (rather than nested) topology between
-// adjacent phases.
-func endPhaseSpan(span trace.Span, err error) {
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-	}
-	span.End()
-}
-
 // extractTraceContext lifts the W3C traceparent/tracestate/baggage that
 // plainsight-deployment-agent (PLAT-851) wrote onto the CR into the supplied
 // context using the globally registered text-map propagator.
@@ -691,7 +641,7 @@ func extractTraceContext(ctx context.Context, pipelineInstance *pipelinesv1alpha
 	if len(pipelineInstance.Annotations) == 0 {
 		return ctx
 	}
-	carrier := propagation.MapCarrier{}
+	carrier := map[string]string{}
 	if tp, ok := pipelineInstance.Annotations[TraceparentAnnotation]; ok && tp != "" {
 		carrier["traceparent"] = tp
 		if ts, ok := pipelineInstance.Annotations[TracestateAnnotation]; ok && ts != "" {
@@ -701,10 +651,25 @@ func extractTraceContext(ctx context.Context, pipelineInstance *pipelinesv1alpha
 	if bg, ok := pipelineInstance.Annotations[BaggageAnnotation]; ok && bg != "" {
 		carrier["baggage"] = bg
 	}
-	if len(carrier) == 0 {
-		return ctx
+	return tracing.ContextFromCarrier(ctx, carrier)
+}
+
+// endPhase ends a child phase span (PLAT-1028: claim/build/apply granularity
+// inside Reconcile) deterministically. When err is non-nil the error is
+// recorded on the span and its status set to Error so per-phase failure
+// attribution survives in Cloud Trace; otherwise the span ends Unset.
+//
+// spanCtx is the phase span's context (from tracing.StartSpan) and end is its
+// returned closure. Pulled out of every call site instead of inlined as a
+// `defer` so the span ends *before* the surrounding error-translation
+// `return fmt.Errorf(...)` runs — keeping span duration tight to the actual
+// phase work and preserving sibling (rather than nested) topology between
+// adjacent phases.
+func endPhase(spanCtx context.Context, end func(), err error) {
+	if err != nil {
+		tracing.SpanError(spanCtx, err, err.Error())
 	}
-	return otel.GetTextMapPropagator().Extract(ctx, carrier)
+	end()
 }
 
 // tracingEnvVars returns the env vars the controller injects into every

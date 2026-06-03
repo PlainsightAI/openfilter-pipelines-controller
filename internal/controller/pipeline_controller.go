@@ -46,6 +46,10 @@ type PipelineReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.1/pkg/reconcile
+//
+// spancov:none: unimplemented kubebuilder scaffold — the body has no logic to
+// trace yet. Remove this directive and open a span via tracing.StartSpan when
+// real reconcile logic lands here.
 func (r *PipelineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = logf.FromContext(ctx)
 

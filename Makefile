@@ -107,7 +107,7 @@ lint: golangci-lint lint-struct ## Run golangci-lint linter and the structlint m
 	$(GOLANGCI_LINT) run
 
 .PHONY: lint-struct
-lint-struct: ## Run the structlint multichecker (canonical OTel attribute keys)
+lint-struct: ## Run the structlint multichecker (canonical attr keys, ctx chain, span coverage/names/idiom, span-root no-op guard)
 	go run ./tools/structlint ./...
 
 .PHONY: lint-fix

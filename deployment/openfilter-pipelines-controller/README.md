@@ -17,8 +17,11 @@ directly — no `helm repo add` is needed:
 ```bash
 helm install openfilter-pipelines-controller \
   oci://registry-1.docker.io/plainsightai/openfilter-pipelines-controller \
-  --version 0.5.1
+  --version <version>
 ```
+
+Replace `<version>` with the desired release (e.g. `0.5.2`); the published
+tags match the git tags on this repository (`vX.Y.Z` → chart `X.Y.Z`).
 
 Container images:
 [`plainsightai/openfilter-pipelines-controller`](https://hub.docker.com/r/plainsightai/openfilter-pipelines-controller)

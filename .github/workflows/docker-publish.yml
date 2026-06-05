@@ -203,6 +203,8 @@ jobs:
     needs: deploy
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Deploy to Lab
         uses: PlainsightAI/gh-actions-public/deploy-env@main

@@ -1,0 +1,213 @@
+name: Build and Push Docker Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+    paths-ignore:
+      - "deployment/**"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "deployment/**"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  DOCKERHUB_USERNAME: plainsightai
+
+jobs:
+  build-and-push:
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: openfilter-pipelines-controller, dockerfile: Dockerfile,             context: . }
+          - { name: openfilter-pipelines-claimer,    dockerfile: cmd/claimer/Dockerfile, context: . }
+        arch:
+          - { name: amd64, runner: blacksmith-2vcpu-ubuntu-2404 }
+          - { name: arm64, runner: blacksmith-2vcpu-ubuntu-2204-arm }
+    runs-on: ${{ matrix.arch.runner }}
+    permissions:
+      contents: read
+    steps:
+      - name: Validate secrets configuration
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_ACCESS_TOKEN }}" ]; then
+            echo "ERROR: DOCKERHUB_ACCESS_TOKEN secret not configured"
+            echo "Add secret via: Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to DockerHub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
+
+      - name: Extract image labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: plainsightai/${{ matrix.image.name }}
+
+      - name: Build and push image by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/${{ matrix.arch.name }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=plainsightai/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.arch.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.arch.name }}
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image.name }}-${{ matrix.arch.name }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build-and-push
+    if: github.event_name != 'pull_request'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - openfilter-pipelines-controller
+          - openfilter-pipelines-claimer
+    steps:
+      - name: Validate secrets configuration
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_ACCESS_TOKEN }}" ]; then
+            echo "ERROR: DOCKERHUB_ACCESS_TOKEN secret not configured"
+            echo "Add secret via: Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
+
+      - name: Extract metadata (tags)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: plainsightai/${{ matrix.image }}
+          tags: |
+            type=ref,event=pr
+            type=sha,format=long,prefix=
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'plainsightai/${{ matrix.image }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect plainsightai/${{ matrix.image }}:${{ steps.meta.outputs.version }}
+
+  publish-chart:
+    needs: merge
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Add chart dependency repos
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
+      - name: Update Helm dependencies
+        run: |
+          cd deployment/openfilter-pipelines-controller
+          helm dependency update
+
+      - name: Log in to DockerHub (Helm OCI)
+        run: echo "${{ secrets.DOCKERHUB_ACCESS_TOKEN }}" | helm registry login registry-1.docker.io -u ${{ env.DOCKERHUB_USERNAME }} --password-stdin
+
+      - name: Package Helm chart
+        run: |
+          helm package deployment/openfilter-pipelines-controller \
+            --version ${{ steps.version.outputs.version }} \
+            --app-version ${{ steps.version.outputs.version }}
+
+      - name: Push Helm chart to DockerHub OCI
+        run: |
+          helm push openfilter-pipelines-controller-${{ steps.version.outputs.version }}.tgz \
+            oci://registry-1.docker.io/plainsightai
+
+  deploy:
+    needs: merge
+    if: github.ref == 'refs/heads/main'
+    uses: PlainsightAI/gh-actions-public/.github/workflows/deploy-service.yaml@main
+    with:
+      service-name: openfilter-pipelines-controller
+      manifests-path: deployment
+    secrets: inherit
+
+  deploy-lab:
+    needs: deploy
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Lab
+        uses: PlainsightAI/gh-actions-public/deploy-env@main
+        with:
+          environment: lab
+          service-name: openfilter-pipelines-controller
+          manifests-path: deployment
+          gh-bot-user-pat: ${{ secrets.GH_BOT_USER_PAT }}

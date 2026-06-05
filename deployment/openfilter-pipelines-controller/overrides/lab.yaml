@@ -1,8 +1,8 @@
 image:
-  repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-controller
+  repository: plainsightai/openfilter-pipelines-controller
   tag: "62146d3f171083e027f2638fee27db767d50b4ff" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
 claimerImage:
-  repository: us-west1-docker.pkg.dev/plainsightai-prod/oci/openfilter-pipelines-claimer
+  repository: plainsightai/openfilter-pipelines-claimer
   tag: "62146d3f171083e027f2638fee27db767d50b4ff" # {"$imagepolicy": "lab:openfilter-pipelines-controller:tag"}
 telemetry:
   # Lab has no monitoring overlay (no controllers/monitoring/overrides/lab.yaml),

@@ -3,7 +3,6 @@ image:
   tag: "fe613cc832bc53753274fb6e1a178dd8d00d2c33" # {"$imagepolicy": "staging:openfilter-pipelines-controller:tag"}
 claimerImage:
   repository: plainsightai/openfilter-pipelines-claimer
-  tag: "fe613cc832bc53753274fb6e1a178dd8d00d2c33" # {"$imagepolicy": "staging:openfilter-pipelines-controller:tag"}
 telemetry:
   exporterType: otlp
   # Scheme prefix is load-bearing. openfilter ≥ 0.2.1 infers OTLP gRPC TLS

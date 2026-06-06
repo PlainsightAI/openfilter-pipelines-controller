@@ -1,12 +1,13 @@
-# Image URL to use all building/pushing image targets.
-# IMAGE_REGISTRY is empty by default so `make docker-build` / `make publish-image`
-# produce plain, locally-taggable images for OSS contributors. CI (the
-# publish-docker-image reusable action) sets IMAGE_REGISTRY — or IMG/CLAIMER_IMG
-# directly — via env to push to the Plainsight registry.
-IMAGE_REGISTRY ?=
+# Image URLs to use for all building/pushing image targets.
+# Defaults pin to Docker Hub under the plainsightai org — that is where both
+# images are published from the docker-publish.yml workflow and where
+# image-policy-applier looks up tags for the env overrides. Override IMG /
+# CLAIMER_IMG directly if you need to push elsewhere.
+IMAGE = plainsightai/openfilter-pipelines-controller
+CLAIMER_IMAGE = plainsightai/openfilter-pipelines-claimer
 VERSION ?= $(shell git rev-parse --short HEAD)
-IMG ?= $(if $(IMAGE_REGISTRY),$(IMAGE_REGISTRY)/)openfilter-pipelines-controller:$(VERSION)
-CLAIMER_IMG ?= $(if $(IMAGE_REGISTRY),$(IMAGE_REGISTRY)/)openfilter-pipelines-claimer:$(VERSION)
+IMG ?= $(IMAGE):$(VERSION)
+CLAIMER_IMG ?= $(CLAIMER_IMAGE):$(VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))

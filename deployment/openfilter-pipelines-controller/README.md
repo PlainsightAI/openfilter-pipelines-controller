@@ -9,10 +9,29 @@ A Kubernetes operator for managing Pipeline custom resources in the `filter.plai
 
 ## Installation
 
-The chart is not published to a Helm repository. Install it from this
-repository's local copy under `deployment/openfilter-pipelines-controller`.
+### Install from Docker Hub (recommended)
 
-### Install from local chart
+The chart is published as an OCI artifact to Docker Hub. Helm 3.8+ supports OCI
+directly — no `helm repo add` is needed:
+
+```bash
+helm install openfilter-pipelines-controller \
+  oci://registry-1.docker.io/plainsightai/openfilter-pipelines-controller \
+  --version <version>
+```
+
+Replace `<version>` with the desired release (e.g. `0.5.2`); the published
+tags match the git tags on this repository (`vX.Y.Z` → chart `X.Y.Z`).
+
+Container images:
+[`plainsightai/openfilter-pipelines-controller`](https://hub.docker.com/r/plainsightai/openfilter-pipelines-controller)
+and
+[`plainsightai/openfilter-pipelines-claimer`](https://hub.docker.com/r/plainsightai/openfilter-pipelines-claimer).
+
+### Install from a local chart copy
+
+You can also install directly from this repository's local copy under
+`deployment/openfilter-pipelines-controller`.
 
 ```bash
 # Install with default values

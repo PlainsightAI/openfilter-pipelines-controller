@@ -3,7 +3,6 @@ image:
   tag: "fe613cc832bc53753274fb6e1a178dd8d00d2c33" # {"$imagepolicy": "production:openfilter-pipelines-controller:tag"}
 claimerImage:
   repository: plainsightai/openfilter-pipelines-claimer
-  tag: "fe613cc832bc53753274fb6e1a178dd8d00d2c33" # {"$imagepolicy": "production:openfilter-pipelines-controller:tag"}
 resources:
   requests:
     cpu: "100m"

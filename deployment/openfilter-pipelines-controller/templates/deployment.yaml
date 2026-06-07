@@ -118,7 +118,12 @@ spec:
             {{- end }}
             {{- end }}
             - name: CLAIMER_IMAGE
-              value: "{{ .Values.claimerImage.repository }}:{{ .Values.claimerImage.tag | default .Chart.AppVersion }}"
+              # Fall through to image.tag when claimerImage.tag is unset so
+              # ArgoCD Image Updater (which only rewrites image.tag from the
+              # gitops `image-list` annotation) keeps the controller + claimer
+              # in lockstep. AppVersion is the last-resort floor for fresh
+              # installs that haven't been bumped yet.
+              value: "{{ .Values.claimerImage.repository }}:{{ .Values.claimerImage.tag | default .Values.image.tag | default .Chart.AppVersion }}"
             {{- if .Values.gpuNodeSelector }}
             - name: GPU_NODE_SELECTOR
               value: {{ .Values.gpuNodeSelector | quote }}

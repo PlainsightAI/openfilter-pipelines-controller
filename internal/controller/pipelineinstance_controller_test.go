@@ -646,6 +646,12 @@ var _ = Describe("PipelineInstance Controller", func() {
 		})
 
 		It("should handle Pipeline not found error", func() {
+			// Bypass the grace period so a fresh PipelineInstance whose Pipeline
+			// is missing flips to Degraded immediately instead of requeueing.
+			// The grace-period path is exercised by the "requeues without"
+			// test below.
+			reconciler.PipelineRefGracePeriod = 1 * time.Nanosecond
+
 			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pipelineInstanceName,
@@ -683,6 +689,116 @@ var _ = Describe("PipelineInstance Controller", func() {
 				}
 				degradedCond := meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded)
 				return degradedCond != nil && degradedCond.Status == metav1.ConditionTrue
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("requeues without setting Degraded when Pipeline is missing within the grace period", func() {
+			// With the default grace period (30s) the PipelineInstance is
+			// considered freshly-created and a missing Pipeline must be
+			// treated as a transient cache miss, not a hard failure.
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: "nonexistent-pipeline",
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			// First reconcile adds finalizer
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile: Pipeline still missing, but within grace period.
+			// Expect a requeue (RequeueAfter set) and no error.
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(pipelineRefMissingRequeueAfter))
+
+			// Assert no Degraded condition was written.
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)).To(Succeed())
+			Expect(meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded)).To(BeNil())
+		})
+
+		It("clears a stale Degraded/PipelineNotFound condition once the Pipeline becomes visible", func() {
+			// Step 1: simulate the race-induced false-positive by flipping the
+			// grace period to a nanosecond so a missing Pipeline flips Degraded,
+			// then assert it lands.
+			reconciler.PipelineRefGracePeriod = 1 * time.Nanosecond
+
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName, // points at a Pipeline we'll create in step 2
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Note: the referenced Pipeline was created in BeforeEach for the
+			// happy-path tests in this context. We delete it here to make the
+			// "stale Degraded" condition concrete, then re-create it to drive
+			// the recovery path.
+			pipeline := &pipelinesv1alpha1.Pipeline{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pipelineName, Namespace: namespace}, pipeline)).To(Succeed())
+			pipelineCopy := pipeline.DeepCopy()
+			Expect(k8sClient.Delete(ctx, pipeline)).To(Succeed())
+
+			// Reconcile while Pipeline is missing → Degraded/PipelineNotFound.
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Eventually(func() bool {
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)).To(Succeed())
+				cond := meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded)
+				return cond != nil && cond.Status == metav1.ConditionTrue && cond.Reason == ReasonPipelineNotFound
+			}, timeout, interval).Should(BeTrue())
+
+			// Step 2: re-create the Pipeline and drive another reconcile; the
+			// stale Degraded condition must be cleared.
+			pipelineCopy.ResourceVersion = ""
+			Expect(k8sClient.Create(ctx, pipelineCopy)).To(Succeed())
+
+			// Reset grace period to the default so the rest of the reconcile
+			// path runs as it would in prod.
+			reconciler.PipelineRefGracePeriod = 0
+
+			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+
+			Eventually(func() bool {
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)).To(Succeed())
+				cond := meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded)
+				// The condition should either be gone entirely, or have been
+				// replaced by an unrelated reason (the batch path in this
+				// test's mock setup eventually reports JobFailed). What
+				// matters for the recovery contract is that the stale
+				// PipelineNotFound reason is no longer the active one.
+				return cond == nil || cond.Reason != ReasonPipelineNotFound
 			}, timeout, interval).Should(BeTrue())
 		})
 

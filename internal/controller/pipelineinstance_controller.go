@@ -440,6 +440,14 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// flipping Degraded. A complementary Watches mapping (see SetupWithManager)
 	// re-enqueues this PipelineInstance the moment its Pipeline appears in
 	// the cache, so RequeueAfter is the floor, not the typical wake latency.
+	//
+	// The grace window is measured against pipelineInstance.CreationTimestamp,
+	// not the first getPipeline call. The finalizer-add path above can return
+	// and requeue once or twice before we reach this lookup, and under a
+	// controller restart even more wall-clock can pass — so a fraction of the
+	// 30s default is already spent before the first lookup. At 30s this gap
+	// is well within the budget and the watch-driven wake usually fires
+	// long before the floor; if the default ever shrinks, revisit this.
 	pipeline, err := r.getPipeline(ctx, pipelineInstance)
 	if err != nil {
 		if apierrors.IsNotFound(err) && time.Since(pipelineInstance.CreationTimestamp.Time) < r.pipelineRefGracePeriod() {
@@ -863,6 +871,17 @@ func (r *PipelineInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // PipelineInstance in the Pipeline's namespace that references it by name.
 // Wired in SetupWithManager so a Pipeline-CR create/update event wakes any
 // PipelineInstance waiting on its Pipeline reference to resolve.
+//
+// Scope: same-namespace only. The list is bounded to pipeline.Namespace so a
+// PipelineInstance living in namespace A that references a Pipeline in
+// namespace B is never returned here when B's Pipeline event fires. Cross-
+// namespace pipelineRefs are supported by the schema but not produced by
+// plainsight-deployment-agent (it always co-locates the two CRs), so the
+// optimization isn't worth the cost of a cluster-wide list. Cross-ns refs
+// still recover correctly via the 1s requeue floor inside the grace window
+// — just without the watch-driven instant wake. If cross-ns ever becomes
+// common, switch to a field-indexed cross-namespace list keyed by
+// pipelineRef.{namespace,name}.
 func (r *PipelineInstanceReconciler) pipelineInstancesForPipeline(ctx context.Context, obj client.Object) []reconcile.Request {
 	pipeline, ok := obj.(*pipelinesv1alpha1.Pipeline)
 	if !ok {

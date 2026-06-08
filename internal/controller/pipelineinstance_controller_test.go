@@ -768,9 +768,12 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(k8sClient.Delete(ctx, pipeline)).To(Succeed())
 
 			// Reconcile while Pipeline is missing → Degraded/PipelineNotFound.
-			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
+			// We expect an error here (getPipeline NotFound past grace=1ns),
+			// but the meaningful assertion is the condition that lands below.
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
 			})
+			Expect(err).To(HaveOccurred())
 			Eventually(func() bool {
 				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance)).To(Succeed())
 				cond := meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded)
@@ -778,14 +781,21 @@ var _ = Describe("PipelineInstance Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 
 			// Step 2: re-create the Pipeline and drive another reconcile; the
-			// stale Degraded condition must be cleared.
+			// stale Degraded condition must be cleared. Clear UID and
+			// ResourceVersion explicitly — the API server assigns fresh ones
+			// on Create and would reject the request otherwise.
 			pipelineCopy.ResourceVersion = ""
+			pipelineCopy.UID = ""
 			Expect(k8sClient.Create(ctx, pipelineCopy)).To(Succeed())
 
 			// Reset grace period to the default so the rest of the reconcile
 			// path runs as it would in prod.
 			reconciler.PipelineRefGracePeriod = 0
 
+			// The recovery reconcile may return non-nil from downstream paths
+			// (the batch mock setup eventually trips JobFailed), but we only
+			// care that the PipelineNotFound condition no longer pins
+			// Degraded.
 			_, _ = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
 			})
@@ -800,6 +810,71 @@ var _ = Describe("PipelineInstance Controller", func() {
 				// PipelineNotFound reason is no longer the active one.
 				return cond == nil || cond.Reason != ReasonPipelineNotFound
 			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("pipelineInstancesForPipeline returns same-namespace, matching-name requests only", func() {
+			// Three PipelineInstances exist alongside the canonical one from
+			// BeforeEach:
+			//   * matching name in the same namespace          → enqueued
+			//   * different name in the same namespace         → ignored
+			//   * matching name but PipelineRef.Namespace set
+			//     to a different namespace                     → ignored
+			matchName := fmt.Sprintf("%s-mapper-match", pipelineInstanceName)
+			missName := fmt.Sprintf("%s-mapper-miss", pipelineInstanceName)
+			crossNSName := fmt.Sprintf("%s-mapper-cross", pipelineInstanceName)
+			// otherNS must differ from `namespace` so the cross-ref case
+			// actually crosses namespaces. The PipelineInstance lives in
+			// `namespace`; only its spec.pipelineRef.namespace points
+			// elsewhere — the target namespace doesn't have to exist.
+			otherNS := "elsewhere-ns"
+
+			matchPI := &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: matchName, Namespace: namespace},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipelineName},
+					SourceRef:   pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
+				},
+			}
+			missPI := &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: missName, Namespace: namespace},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "some-other-pipeline"},
+					SourceRef:   pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
+				},
+			}
+			crossPI := &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: crossNSName, Namespace: namespace},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name:      pipelineName,
+						Namespace: &otherNS,
+					},
+					SourceRef: pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, matchPI)).To(Succeed())
+			Expect(k8sClient.Create(ctx, missPI)).To(Succeed())
+			Expect(k8sClient.Create(ctx, crossPI)).To(Succeed())
+			defer func() {
+				_ = k8sClient.Delete(ctx, matchPI)
+				_ = k8sClient.Delete(ctx, missPI)
+				_ = k8sClient.Delete(ctx, crossPI)
+			}()
+
+			// Non-Pipeline objects are ignored.
+			Expect(reconciler.pipelineInstancesForPipeline(ctx, pipelineSource)).To(BeNil())
+
+			// Same-namespace match — exactly matchPI is enqueued.
+			Expect(reconciler.pipelineInstancesForPipeline(ctx, pipeline)).To(ConsistOf(
+				reconcile.Request{NamespacedName: types.NamespacedName{Namespace: namespace, Name: matchName}},
+			))
+
+			// A Pipeline in a *different* namespace must not enqueue any of
+			// the same-namespace PipelineInstances above.
+			otherPipeline := &pipelinesv1alpha1.Pipeline{
+				ObjectMeta: metav1.ObjectMeta{Name: pipelineName, Namespace: otherNS},
+			}
+			Expect(reconciler.pipelineInstancesForPipeline(ctx, otherPipeline)).To(BeEmpty())
 		})
 
 		It("should handle PipelineSource not found error", func() {

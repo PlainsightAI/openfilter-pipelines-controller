@@ -461,8 +461,22 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// see the recovery. Without this, a transient NotFound that flipped
 	// Degraded before the grace-period guard was in place would otherwise
 	// linger and be read as a terminal failure.
+	//
+	// If the Status().Update conflicts (concurrent writer bumped the
+	// resourceVersion between our Get and our Update), bail out and let
+	// controller-runtime requeue with fresh state — continuing would just
+	// have the rest of this reconcile's Status().Update calls hit the same
+	// conflict against an in-memory object whose Conditions slice has
+	// already been mutated. Non-conflict errors propagate the same way the
+	// other Status().Update sites in this file do.
 	if err := r.clearDegradedReason(ctx, pipelineInstance, ReasonPipelineNotFound); err != nil {
+		if apierrors.IsConflict(err) {
+			log.V(1).Info("Status update conflict while clearing stale Degraded; requeueing",
+				"reason", ReasonPipelineNotFound)
+			return ctrl.Result{Requeue: true}, nil
+		}
 		log.Error(err, "Failed to clear stale Degraded condition")
+		return ctrl.Result{}, err
 	}
 
 	// Get the PipelineSource resource

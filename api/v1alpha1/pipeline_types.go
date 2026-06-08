@@ -145,6 +145,7 @@ const (
 )
 
 // ServicePort defines a port to expose as a Kubernetes Service for a filter
+// +kubebuilder:validation:XValidation:rule="self.appProtocol != 'openfilter' || self.port <= 65534", message="When appProtocol='openfilter', port must be <= 65534 to leave room for the reply channel on port+1"
 type ServicePort struct {
 	// name is the name of the filter to expose
 	// Must match one of the filter names in the pipeline
@@ -156,7 +157,6 @@ type ServicePort struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	// +kubebuilder:validation:XValidation:rule="!(has(self.appProtocol) && self.appProtocol == 'openfilter') || (self.port <= 65534)", message="When appProtocol='openfilter', port must be <= 65534 to leave room for the reply channel on port+1"
 	Port int32 `json:"port"`
 
 	// targetPort is the port on the container to forward to

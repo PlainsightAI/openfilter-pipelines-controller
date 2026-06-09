@@ -214,7 +214,7 @@ func TestBuildStreamingDeployment_PropagatesPlainsightLabels(t *testing.T) {
 		},
 	}
 
-	dep := r.buildStreamingDeployment(context.Background(), pi, pipeline, ps, "test-deploy")
+	dep := r.buildStreamingDeployment(context.Background(), pi, pipeline, []ResolvedSourceBinding{{Source: ps}}, "test-deploy")
 
 	for _, tc := range []struct {
 		name   string

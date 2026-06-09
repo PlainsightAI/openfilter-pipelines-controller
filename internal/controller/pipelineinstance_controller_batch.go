@@ -38,8 +38,25 @@ import (
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
-// reconcileBatch handles the batch (Job-based) reconciliation path
-func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) (ctrl.Result, error) {
+// reconcileBatch handles the batch (Job-based) reconciliation path.
+//
+// V1 scope (PLAT-1071): batch mode currently supports a single source
+// binding. Multi-source batch — used for benchmarking multi-camera
+// pipelines against per-media GT — needs N parallel init claimers and a
+// reshaped work-queue model. That work is tracked as a focused follow-up;
+// today multi-source batch is rejected at the top of this function with a
+// clear operator-actionable error. Single-source batch (legacy SourceRef
+// or a one-entry Sources array) keeps working exactly as before.
+func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding) (ctrl.Result, error) {
+	if len(sourceBindings) > 1 {
+		err := fmt.Errorf("batch mode does not yet support multi-source pipelines (%d sources bound); please reduce to one source or use streaming mode", len(sourceBindings))
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "MultiSourceBatchUnsupported", err.Error())
+		if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
+			logf.FromContext(ctx).Error(statusErr, "Failed to update status after multi-source batch rejection")
+		}
+		return ctrl.Result{}, err
+	}
+	pipelineSource := sourceBindings[0].Source
 	log := logf.FromContext(ctx)
 
 	// Ensure counts object exists before initialization

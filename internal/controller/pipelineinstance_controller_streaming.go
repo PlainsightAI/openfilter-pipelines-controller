@@ -37,8 +37,13 @@ import (
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
-// reconcileStreaming handles the streaming (Deployment-based) reconciliation path
-func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) (ctrl.Result, error) {
+// reconcileStreaming handles the streaming (Deployment-based) reconciliation
+// path. `sourceBindings` is the resolved list of (filterName, source) pairs;
+// for legacy single-source `Spec.SourceRef` PipelineInstances the list has
+// one entry with FilterName="" (broadcast). For multi-source `Spec.Sources`
+// PipelineInstances the list has one entry per binding and the controller
+// targets the matching filter container by name.
+func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Handle deletion (finalizer cleanup) before any status initialization
@@ -106,7 +111,7 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 	}
 
 	// Step 1: Ensure Deployment exists
-	if err := r.ensureStreamingDeployment(ctx, pipelineInstance, pipeline, pipelineSource); err != nil {
+	if err := r.ensureStreamingDeployment(ctx, pipelineInstance, pipeline, sourceBindings); err != nil {
 		log.Error(err, "Failed to ensure streaming deployment")
 		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "DeploymentCreationFailed", err.Error())
 		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
@@ -131,9 +136,14 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 		// Don't fail reconciliation, just log and continue
 	}
 
-	// Step 3: Check for idle timeout
-	if pipelineSource != nil && pipelineSource.Spec.RTSP != nil && pipelineSource.Spec.RTSP.IdleTimeout != nil {
-		if shouldComplete, reason := r.checkIdleTimeout(pipelineInstance, pipelineSource); shouldComplete {
+	// Step 3: Check for idle timeout. Multi-source pipelines anchor the
+	// idle-timeout policy to the first binding's source for V1 — the
+	// semantic of "ANY source idle vs ALL sources idle" is not yet
+	// well-defined for multi-camera. Operators who need per-source idle
+	// budgets can author multiple PipelineInstances today.
+	idleSource := sourceBindings[0].Source
+	if idleSource != nil && idleSource.Spec.RTSP != nil && idleSource.Spec.RTSP.IdleTimeout != nil {
+		if shouldComplete, reason := r.checkIdleTimeout(pipelineInstance, idleSource); shouldComplete {
 			log.Info("Streaming run idle timeout reached, marking as complete", "reason", reason)
 			r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionTrue, "IdleTimeout", reason)
 			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "IdleTimeout", reason)
@@ -176,8 +186,10 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 	return ctrl.Result{RequeueAfter: StatusUpdateInterval}, nil
 }
 
-// ensureStreamingDeployment creates or updates the Deployment for streaming mode
-func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) error {
+// ensureStreamingDeployment creates or updates the Deployment for streaming
+// mode. `sourceBindings` carries the per-filter source bindings; for legacy
+// single-source CRs there is one entry with FilterName="" (broadcast).
+func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding) error {
 	log := logf.FromContext(ctx)
 
 	// Lazy-init Status.Streaming so callers (and tests) don't have to
@@ -204,7 +216,7 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	// batch path (buildJob) so a SetControllerReference failure flows
 	// into the build span rather than escaping the trace.
 	buildCtx, endBuild := tracing.StartSpan(ctx, spanBuild)
-	desiredDeployment := r.buildStreamingDeployment(buildCtx, pipelineInstance, pipeline, pipelineSource, deploymentName)
+	desiredDeployment := r.buildStreamingDeployment(buildCtx, pipelineInstance, pipeline, sourceBindings, deploymentName)
 	desiredContainers := desiredDeployment.Spec.Template.Spec.Containers
 	desiredReplicas := int32(0)
 	if desiredDeployment.Spec.Replicas != nil {
@@ -292,14 +304,35 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 	return nil
 }
 
-// buildStreamingDeployment constructs a Deployment for streaming mode
-func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, deploymentName string) *appsv1.Deployment {
+// buildStreamingDeployment constructs a Deployment for streaming mode.
+//
+// `sourceBindings` carries the per-filter source bindings (PLAT-1071). For
+// each filter container we look up the matching binding by name and inject
+// the source-derived env vars (RTSP_URL plus, when credentials are present,
+// _RTSP_USERNAME / _RTSP_PASSWORD) into only that container. Legacy CRs that
+// use the deprecated singular `Spec.SourceRef` resolve to one binding with
+// FilterName="" which broadcasts the env vars to every filter container —
+// preserving today's behavior.
+func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding, deploymentName string) *appsv1.Deployment {
 	log := logf.FromContext(ctx)
-	log.V(1).Info("Building streaming deployment", "deployment", deploymentName, "filters", len(pipeline.Spec.Filters))
+	log.V(1).Info("Building streaming deployment", "deployment", deploymentName, "filters", len(pipeline.Spec.Filters), "bindings", len(sourceBindings))
 
 	replicas := int32(1)
 	maxUnavailable := intstr.FromInt32(0)
 	maxSurge := intstr.FromInt32(1)
+
+	// Split bindings into per-filter (FilterName!="") and broadcast (FilterName=="").
+	// The per-filter map gives O(1) lookup inside the container loop; the
+	// broadcast slice is applied to every container after the per-filter env.
+	bindingsByFilter := make(map[string]*pipelinesv1alpha1.PipelineSource, len(sourceBindings))
+	broadcastSources := make([]*pipelinesv1alpha1.PipelineSource, 0, 1)
+	for i := range sourceBindings {
+		if sourceBindings[i].FilterName == "" {
+			broadcastSources = append(broadcastSources, sourceBindings[i].Source)
+		} else {
+			bindingsByFilter[sourceBindings[i].FilterName] = sourceBindings[i].Source
+		}
+	}
 
 	// Build filter containers
 	containers := make([]corev1.Container, 0, len(pipeline.Spec.Filters))
@@ -317,14 +350,35 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 			container.Args = filter.Args
 		}
 
-		// Inject RTSP environment variables first so they can be referenced in filter config
+		// Resolve the source(s) feeding THIS container. Order is:
+		//   1. The per-filter binding whose `filterName` matches this
+		//      container's name (multi-source path). At most one because
+		//      `Sources` is listType=map keyed on filterName.
+		//   2. Any broadcast bindings (legacy `Spec.SourceRef` path, exactly
+		//      one entry). These are injected into every container.
+		// In the multi-source path, containers without a matching binding
+		// receive NO source env vars — they're downstream filters whose
+		// `sources: tcp://localhost:...` config wires them to siblings.
+		var perContainerSources []*pipelinesv1alpha1.PipelineSource
+		if src, ok := bindingsByFilter[filter.Name]; ok {
+			perContainerSources = append(perContainerSources, src)
+		}
+		perContainerSources = append(perContainerSources, broadcastSources...)
+
+		// Inject RTSP environment variables first so they can be referenced
+		// in filter config (filter authors write `sources: "$(RTSP_URL)"`).
+		// If multiple sources end up applied to one container — only happens
+		// when a legacy SourceRef coexists with a Sources entry that targets
+		// this container, which validation rejects — the last write wins.
 		var envVars []corev1.EnvVar
-		if pipelineSource != nil && pipelineSource.Spec.RTSP != nil {
+		for _, src := range perContainerSources {
+			if src == nil || src.Spec.RTSP == nil {
+				continue
+			}
 			// If credentials are provided, inject internal env vars for username/password
 			// and build URL with embedded credentials
-			if pipelineSource.Spec.RTSP.CredentialsSecret != nil {
-				secretName := pipelineSource.Spec.RTSP.CredentialsSecret.Name
-				// Internal env vars for credential substitution
+			if src.Spec.RTSP.CredentialsSecret != nil {
+				secretName := src.Spec.RTSP.CredentialsSecret.Name
 				envVars = append(envVars,
 					corev1.EnvVar{
 						Name: "_RTSP_USERNAME",
@@ -345,15 +399,13 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 						},
 					},
 				)
-				// Build URL with credential placeholders
-				rtspURL := buildRTSPURLWithCredentials(pipelineSource.Spec.RTSP)
+				rtspURL := buildRTSPURLWithCredentials(src.Spec.RTSP)
 				envVars = append(envVars, corev1.EnvVar{
 					Name:  "RTSP_URL",
 					Value: rtspURL,
 				})
 			} else {
-				// No credentials, build simple URL
-				rtspURL := buildRTSPURL(pipelineSource.Spec.RTSP)
+				rtspURL := buildRTSPURL(src.Spec.RTSP)
 				envVars = append(envVars, corev1.EnvVar{
 					Name:  "RTSP_URL",
 					Value: rtspURL,

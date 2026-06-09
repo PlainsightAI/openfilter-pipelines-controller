@@ -1,0 +1,29 @@
+# Multi-source streaming PipelineInstance (PLAT-1071).
+#
+# Each entry under `spec.sources` binds a PipelineSource to a specific filter
+# container in the referenced Pipeline by name. The controller injects
+# RTSP_URL into ONLY the named container — so a Pipeline with two `video-in`
+# filters (front_cam + back_cam) and a downstream `webvis` can serve two
+# distinct RTSP streams, one per camera, in a single Pod.
+#
+# This sample assumes:
+#   - A Pipeline named `pipeline-rtsp-multi` whose filters[] contains containers
+#     named `front_cam`, `back_cam`, and `webvis`.
+#   - Two PipelineSources named `pipelinesource-front` and `pipelinesource-back`.
+#
+# Use `sourceRef` for single-source pipelines instead — `sources` is for the
+# multi-camera case.
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineInstance
+metadata:
+  name: pipelineinstance-rtsp-multisource
+spec:
+  pipelineRef:
+    name: pipeline-rtsp-multi
+  sources:
+    - filterName: front_cam
+      sourceRef:
+        name: pipelinesource-front
+    - filterName: back_cam
+      sourceRef:
+        name: pipelinesource-back

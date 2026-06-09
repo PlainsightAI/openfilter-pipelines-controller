@@ -487,10 +487,12 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Get the PipelineSource resource
-	pipelineSource, err := r.getPipelineSource(ctx, pipelineInstance)
+	// Resolve all source bindings (legacy single SourceRef → one ResolvedSourceBinding
+	// with empty FilterName for broadcast; new Sources → one binding per entry,
+	// each scoped to a specific filter container).
+	resolvedSources, err := r.resolveSourceBindings(ctx, pipelineInstance)
 	if err != nil {
-		log.Error(err, "Failed to get PipelineSource")
+		log.Error(err, "Failed to resolve source bindings")
 		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonPipelineSourceNotFound, err.Error())
 		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
@@ -516,11 +518,11 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	)
 
 	if mode == pipelinesv1alpha1.PipelineModeStream {
-		return r.reconcileStreaming(ctx, pipelineInstance, pipeline, pipelineSource)
+		return r.reconcileStreaming(ctx, pipelineInstance, pipeline, resolvedSources)
 	}
 
 	// Default: Batch mode
-	return r.reconcileBatch(ctx, pipelineInstance, pipeline, pipelineSource)
+	return r.reconcileBatch(ctx, pipelineInstance, pipeline, resolvedSources)
 }
 
 // Helper functions shared between batch and streaming modes are defined below.
@@ -528,22 +530,50 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 // - pipelineinstance_controller_batch.go
 // - pipelineinstance_controller_streaming.go
 
-// getPipelineSource retrieves the PipelineSource resource referenced by the PipelineInstance
-func (r *PipelineInstanceReconciler) getPipelineSource(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (*pipelinesv1alpha1.PipelineSource, error) {
-	namespace := pipelineInstance.Namespace
-	if pipelineInstance.Spec.SourceRef.Namespace != nil {
-		namespace = *pipelineInstance.Spec.SourceRef.Namespace
+// ResolvedSourceBinding pairs a target filter name with the PipelineSource that
+// feeds it. FilterName=="" is the legacy "broadcast to every filter container"
+// sentinel produced when the PipelineInstance uses the deprecated singular
+// `sourceRef` field. Non-empty FilterName targets the container whose
+// `pipeline.spec.filters[].name` matches exactly.
+type ResolvedSourceBinding struct {
+	FilterName string
+	Source     *pipelinesv1alpha1.PipelineSource
+}
+
+// resolveSourceBindings normalizes `Spec.SourceRef` (legacy, broadcast) and
+// `Spec.Sources` (multi-source) into a uniform list of (filterName, source)
+// pairs. The first error from any Get is returned with the binding context so
+// the caller surfaces an operator-actionable message.
+func (r *PipelineInstanceReconciler) resolveSourceBindings(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) ([]ResolvedSourceBinding, error) {
+	effective := pipelineInstance.Spec.EffectiveSources()
+	if len(effective) == 0 {
+		// Validation should catch this at admission, but a defensive error
+		// here avoids a downstream nil-deref in the reconciler.
+		return nil, fmt.Errorf("PipelineInstance has neither sourceRef nor sources set")
 	}
 
-	pipelineSource := &pipelinesv1alpha1.PipelineSource{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      pipelineInstance.Spec.SourceRef.Name,
-		Namespace: namespace,
-	}, pipelineSource); err != nil {
-		return nil, fmt.Errorf("failed to get pipeline source: %w", err)
+	bindings := make([]ResolvedSourceBinding, 0, len(effective))
+	for _, ref := range effective {
+		namespace := pipelineInstance.Namespace
+		if ref.SourceRef.Namespace != nil {
+			namespace = *ref.SourceRef.Namespace
+		}
+		src := &pipelinesv1alpha1.PipelineSource{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      ref.SourceRef.Name,
+			Namespace: namespace,
+		}, src); err != nil {
+			if ref.FilterName == "" {
+				return nil, fmt.Errorf("failed to get pipeline source %q: %w", ref.SourceRef.Name, err)
+			}
+			return nil, fmt.Errorf("failed to get pipeline source %q (bound to filter %q): %w", ref.SourceRef.Name, ref.FilterName, err)
+		}
+		bindings = append(bindings, ResolvedSourceBinding{
+			FilterName: ref.FilterName,
+			Source:     src,
+		})
 	}
-
-	return pipelineSource, nil
+	return bindings, nil
 }
 
 // getCredentials retrieves S3 credentials for the pipelineSource bucket secret, if configured.

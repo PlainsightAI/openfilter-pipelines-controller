@@ -654,7 +654,7 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 	return pipeline, nil
 }
 
-// baggageSpanAllowlist bounds which W3C baggage members stampBaggageOnSpan
+// baggageSpanAllowlist bounds which W3C baggage members tracing.LiftBaggageToSpan
 // copies onto the reconcile span. Baggage is a free-form propagation channel
 // — any upstream service can inject arbitrary keys, and Cloud Trace retains
 // span attributes for the full trace retention window — so an unbounded

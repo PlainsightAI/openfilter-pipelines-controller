@@ -23,8 +23,9 @@ import (
 )
 
 // baggageOf returns a context that carries the supplied baggage members.
-// Helper for the stampBaggageOnSpan tests below — bypasses extractTraceContext
-// so the assertion is scoped to the stamp logic, not the lift.
+// Helper for the tracing.LiftBaggageToSpan tests below — bypasses
+// extractTraceContext so the assertion is scoped to the stamp logic, not
+// the lift.
 func baggageOf(t *testing.T, kvs ...string) context.Context {
 	t.Helper()
 	members := make([]baggage.Member, 0, len(kvs))

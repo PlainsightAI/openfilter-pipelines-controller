@@ -38,7 +38,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/queue"
@@ -59,8 +61,30 @@ const (
 	ConditionTypeSucceeded   = "Succeeded"
 	ConditionTypeDegraded    = "Degraded"
 
+	// Degraded condition reasons
+	ReasonPipelineNotFound       = "PipelineNotFound"
+	ReasonPipelineSourceNotFound = "PipelineSourceNotFound"
+
 	// Reconciliation intervals
 	StatusUpdateInterval = 30 * time.Second
+
+	// DefaultPipelineRefGracePeriod is the window after a PipelineInstance is
+	// created during which a NotFound on its referenced Pipeline CR is treated
+	// as a transient informer-cache miss (requeue) rather than a hard Degraded
+	// condition. The deployment-agent creates Pipeline and PipelineInstance
+	// CRs back-to-back; the controller's cache for the new Pipeline can lag the
+	// new PipelineInstance's reconcile by hundreds of ms — enough to write a
+	// false-positive Degraded that the agent's status poller then treats as
+	// terminal. See pipelineInstancesForPipeline (watch-driven requeue) for the
+	// complementary mechanism that wakes a waiting PipelineInstance the moment
+	// its Pipeline appears in the cache.
+	DefaultPipelineRefGracePeriod = 30 * time.Second
+
+	// pipelineRefMissingRequeueAfter is how long to wait before re-checking
+	// after a transient Pipeline NotFound when we're still inside the grace
+	// period. Short enough to feel snappy; the watch-driven requeue below
+	// usually wins anyway.
+	pipelineRefMissingRequeueAfter = 1 * time.Second
 
 	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not overridden.
 	DefaultVideoInputPath = "/ws/input.mp4"
@@ -133,6 +157,22 @@ type PipelineInstanceReconciler struct {
 	// Both empty disables injection and openfilter falls back to its silent exporter.
 	TelemetryExporterType         string
 	TelemetryExporterOTLPEndpoint string
+
+	// PipelineRefGracePeriod overrides DefaultPipelineRefGracePeriod. Zero means
+	// "use the default". Set to a small non-zero value (e.g. 1*time.Nanosecond)
+	// in tests that need to assert the post-grace Degraded path without waiting
+	// for wall-clock time to elapse.
+	PipelineRefGracePeriod time.Duration
+}
+
+// pipelineRefGracePeriod returns the configured grace period or the default
+// when unset. Kept private so callers don't accidentally read the zero value
+// directly.
+func (r *PipelineInstanceReconciler) pipelineRefGracePeriod() time.Duration {
+	if r.PipelineRefGracePeriod > 0 {
+		return r.PipelineRefGracePeriod
+	}
+	return DefaultPipelineRefGracePeriod
 }
 
 // +kubebuilder:rbac:groups=filter.plainsight.ai,resources=pipelineinstances,verbs=get;list;watch;create;update;patch;delete
@@ -392,13 +432,58 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Get the Pipeline resource
 	// Note: deletion is fully handled above (before reaching this point),
 	// so DeletionTimestamp will always be zero here.
+	//
+	// r.Get reads through the manager's informer cache. The deployment-agent
+	// creates Pipeline and PipelineInstance CRs back-to-back, so the first
+	// reconcile here can fire before the Pipeline-CR cache has caught up.
+	// Treat a NotFound during the grace window as transient: requeue without
+	// flipping Degraded. A complementary Watches mapping (see SetupWithManager)
+	// re-enqueues this PipelineInstance the moment its Pipeline appears in
+	// the cache, so RequeueAfter is the floor, not the typical wake latency.
+	//
+	// The grace window is measured against pipelineInstance.CreationTimestamp,
+	// not the first getPipeline call. The finalizer-add path above can return
+	// and requeue once or twice before we reach this lookup, and under a
+	// controller restart even more wall-clock can pass — so a fraction of the
+	// 30s default is already spent before the first lookup. At 30s this gap
+	// is well within the budget and the watch-driven wake usually fires
+	// long before the floor; if the default ever shrinks, revisit this.
 	pipeline, err := r.getPipeline(ctx, pipelineInstance)
 	if err != nil {
+		if apierrors.IsNotFound(err) && time.Since(pipelineInstance.CreationTimestamp.Time) < r.pipelineRefGracePeriod() {
+			log.V(1).Info("Pipeline not yet visible in cache, requeueing",
+				"pipelineRef", pipelineInstance.Spec.PipelineRef.Name,
+				"age", time.Since(pipelineInstance.CreationTimestamp.Time))
+			return ctrl.Result{RequeueAfter: pipelineRefMissingRequeueAfter}, nil
+		}
 		log.Error(err, "Failed to get Pipeline")
-		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "PipelineNotFound", err.Error())
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonPipelineNotFound, err.Error())
 		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
 		}
+		return ctrl.Result{}, err
+	}
+
+	// Pipeline is now observable — clear any prior Degraded/PipelineNotFound
+	// condition so external watchers (the deployment-agent's status poller)
+	// see the recovery. Without this, a transient NotFound that flipped
+	// Degraded before the grace-period guard was in place would otherwise
+	// linger and be read as a terminal failure.
+	//
+	// If the Status().Update conflicts (concurrent writer bumped the
+	// resourceVersion between our Get and our Update), bail out and let
+	// controller-runtime requeue with fresh state — continuing would just
+	// have the rest of this reconcile's Status().Update calls hit the same
+	// conflict against an in-memory object whose Conditions slice has
+	// already been mutated. Non-conflict errors propagate the same way the
+	// other Status().Update sites in this file do.
+	if err := r.clearDegradedReason(ctx, pipelineInstance, ReasonPipelineNotFound); err != nil {
+		if apierrors.IsConflict(err) {
+			log.V(1).Info("Status update conflict while clearing stale Degraded; requeueing",
+				"reason", ReasonPipelineNotFound)
+			return ctrl.Result{Requeue: true}, nil
+		}
+		log.Error(err, "Failed to clear stale Degraded condition")
 		return ctrl.Result{}, err
 	}
 
@@ -406,7 +491,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	pipelineSource, err := r.getPipelineSource(ctx, pipelineInstance)
 	if err != nil {
 		log.Error(err, "Failed to get PipelineSource")
-		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "PipelineSourceNotFound", err.Error())
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonPipelineSourceNotFound, err.Error())
 		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
 		}
@@ -569,7 +654,7 @@ func (r *PipelineInstanceReconciler) getPipeline(ctx context.Context, pipelineIn
 	return pipeline, nil
 }
 
-// baggageSpanAllowlist bounds which W3C baggage members stampBaggageOnSpan
+// baggageSpanAllowlist bounds which W3C baggage members tracing.LiftBaggageToSpan
 // copies onto the reconcile span. Baggage is a free-form propagation channel
 // — any upstream service can inject arbitrary keys, and Cloud Trace retains
 // span attributes for the full trace retention window — so an unbounded
@@ -748,12 +833,85 @@ func (r *PipelineInstanceReconciler) setCondition(pipelineInstance *pipelinesv1a
 	meta.SetStatusCondition(&pipelineInstance.Status.Conditions, condition)
 }
 
+// clearDegradedReason removes a Degraded condition whose Reason matches the
+// given value and persists the status update. It's a no-op when no matching
+// condition exists. Used to clear a stale Degraded set during a transient
+// dependency miss once the dependency reappears, so external watchers (e.g.
+// plainsight-deployment-agent) see the recovery instead of treating the
+// previous condition as terminal.
+func (r *PipelineInstanceReconciler) clearDegradedReason(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, reason string) error {
+	cond := meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded)
+	if cond == nil || cond.Reason != reason {
+		return nil
+	}
+	meta.RemoveStatusCondition(&pipelineInstance.Status.Conditions, ConditionTypeDegraded)
+	return r.Status().Update(ctx, pipelineInstance)
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *PipelineInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&pipelinesv1alpha1.PipelineInstance{}).
 		Owns(&batchv1.Job{}).
 		Owns(&appsv1.Deployment{}).
+		// Wake any PipelineInstance whose Pipeline reference resolves the moment
+		// the Pipeline CR appears in the cache. Without this, a PipelineInstance
+		// created back-to-back with its Pipeline would have to wait for the
+		// in-Reconcile RequeueAfter floor; with it, the watch event fires the
+		// reconcile immediately.
+		Watches(
+			&pipelinesv1alpha1.Pipeline{},
+			handler.EnqueueRequestsFromMapFunc(r.pipelineInstancesForPipeline),
+		).
 		Named("pipelineinstance").
 		Complete(r)
+}
+
+// pipelineInstancesForPipeline returns reconcile requests for every
+// PipelineInstance in the Pipeline's namespace that references it by name.
+// Wired in SetupWithManager so a Pipeline-CR create/update event wakes any
+// PipelineInstance waiting on its Pipeline reference to resolve.
+//
+// Scope: same-namespace only. The list is bounded to pipeline.Namespace so a
+// PipelineInstance living in namespace A that references a Pipeline in
+// namespace B is never returned here when B's Pipeline event fires. Cross-
+// namespace pipelineRefs are supported by the schema but not produced by
+// plainsight-deployment-agent (it always co-locates the two CRs), so the
+// optimization isn't worth the cost of a cluster-wide list. Cross-ns refs
+// still recover correctly via the 1s requeue floor inside the grace window
+// — just without the watch-driven instant wake. If cross-ns ever becomes
+// common, switch to a field-indexed cross-namespace list keyed by
+// pipelineRef.{namespace,name}.
+func (r *PipelineInstanceReconciler) pipelineInstancesForPipeline(ctx context.Context, obj client.Object) []reconcile.Request {
+	pipeline, ok := obj.(*pipelinesv1alpha1.Pipeline)
+	if !ok {
+		return nil
+	}
+	var list pipelinesv1alpha1.PipelineInstanceList
+	if err := r.List(ctx, &list, client.InNamespace(pipeline.Namespace)); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list PipelineInstances for Pipeline watch",
+			"pipeline", pipeline.Name, "namespace", pipeline.Namespace)
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		pi := &list.Items[i]
+		if pi.Spec.PipelineRef.Name != pipeline.Name {
+			continue
+		}
+		// PipelineRef.Namespace may override the PipelineInstance's own
+		// namespace; honor that when filtering so a same-namespace match
+		// doesn't fire when the ref actually points elsewhere.
+		refNS := pi.Namespace
+		if pi.Spec.PipelineRef.Namespace != nil {
+			refNS = *pi.Spec.PipelineRef.Namespace
+		}
+		if refNS != pipeline.Namespace {
+			continue
+		}
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{Namespace: pi.Namespace, Name: pi.Name},
+		})
+	}
+	return requests
 }

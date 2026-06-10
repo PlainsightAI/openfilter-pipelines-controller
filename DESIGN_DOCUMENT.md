@@ -145,10 +145,33 @@ spec:
     name: <pipeline-name>
     namespace: default  # optional, defaults to PipelineInstance namespace
 
-  # sourceRef references the PipelineSource for input configuration
+  # SOURCE BINDING (PLAT-1071): exactly one of `sourceRef` or `sources`
+  # must be set. Enforced by an admission-time XValidation rule on the
+  # spec; setting both, or neither, is rejected by the kube API server.
+
+  # sourceRef (legacy, single-source): references the PipelineSource for
+  # input configuration. The source URL is broadcast to every filter
+  # container as RTSP_URL (streaming) or as a single VIDEO_INPUT_PATH
+  # download target (batch). Existing single-source CRs continue to apply
+  # unchanged.
   sourceRef:
     name: <source-name>
     namespace: default  # optional, defaults to PipelineInstance namespace
+
+  # sources (multi-source): each entry binds a PipelineSource to a
+  # specific filter container by name. The controller injects the
+  # source-derived env vars into ONLY the matching container, enabling
+  # multi-camera pipelines where each VideoIn filter consumes a distinct
+  # source. See section 5.4 for the per-container env injection contract.
+  # Batch mode currently rejects multi-source bindings (>1 entry); the
+  # rejection surfaces as a `MultiSourceBatchUnsupported` condition.
+  sources:
+    - filterName: front-cam
+      sourceRef:
+        name: pipelinesource-front
+    - filterName: back-cam
+      sourceRef:
+        name: pipelinesource-back
 
   # execution defines how the pipeline should be executed
   execution:
@@ -369,6 +392,52 @@ The claimer is a standalone Go binary (`cmd/claimer/main.go`) that runs as an in
 - On error: any filter exits non-zero → Pod becomes Failed
 - On success: all filters exit 0 → Pod Succeeded
 - Filters should be idempotent (at-least-once delivery semantics)
+
+### 5.4 Multi-source contract (PLAT-1071)
+
+A PipelineInstance with `Spec.Sources` bound to N filter containers runs
+all of them in the **same Pod** (streaming mode: one Deployment, one
+replica, N+M containers; batch mode: rejected, see 5.5). Per-container
+source plumbing:
+
+- The reconciler normalizes `Spec.SourceRef` (legacy) and `Spec.Sources`
+  into a uniform `[]ResolvedSourceBinding` via
+  `PipelineInstanceSpec.EffectiveSources()`. Legacy `SourceRef` becomes
+  one entry with `FilterName == ""` — the broadcast sentinel — and the
+  source env vars apply to every container in the pod (today's behavior).
+- For each entry where `FilterName != ""`, the controller injects
+  `RTSP_URL` (and, when credentials are present, `_RTSP_USERNAME` /
+  `_RTSP_PASSWORD` from the referenced Secret) into ONLY the container
+  whose `pipeline.spec.filters[].name` matches `FilterName`. Downstream
+  filters (no matching binding) receive no source env vars and wire to
+  upstream siblings through their own `sources: tcp://localhost:...`
+  filter config.
+- Pipeline authoring constraints the user must satisfy when emitting a
+  multi-VideoIn Pipeline:
+  - **Stagger output ports by 2.** OpenFilter binds the configured port
+    AND `port + 1` per `outputs` (the +1 carries ZMQ control-plane
+    traffic). For N VideoIn filters use 5550, 5552, 5554, … — never
+    5550, 5551.
+  - **Tag every VideoIn output topic explicitly** via the `;topic`
+    suffix in its `sources` config. Without it every VideoIn publishes
+    to the default topic `main` and any downstream that fans-in two
+    upstreams crashes with `RuntimeError: duplicate topic 'main'`. Use
+    the filter name as the topic for determinism.
+
+  Neither constraint is enforced by the controller — they live in the
+  user-authored `filter.config` strings. See the
+  `pipelines_v1alpha1_pipelineinstance_stream_multisource.yaml` sample
+  for a complete worked example.
+
+### 5.5 Multi-source batch — V1 status
+
+Batch mode (`pipeline.spec.mode: batch`) currently accepts only one
+source binding. A PipelineInstance with `len(Sources) > 1` and a batch
+Pipeline is rejected with a `Degraded=MultiSourceBatchUnsupported`
+condition; the message names the count and points at streaming or
+single-source as the workaround. Multi-source batch (for benchmarking
+multi-camera pipelines against per-media GT) needs an N-init-claimer
+reshape and is tracked as a focused follow-up.
 
 ## 6. Controller Responsibilities
 

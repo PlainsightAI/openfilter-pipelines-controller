@@ -1122,6 +1122,11 @@ spec:
             required:
             - pipelineRef
             type: object
+            x-kubernetes-validations:
+            - message: exactly one of `sourceRef` or `sources` must be set (sources
+                must be non-empty)
+              rule: (has(self.sourceRef) && !has(self.sources)) || (!has(self.sourceRef)
+                && has(self.sources) && size(self.sources) > 0)
           status:
             description: status defines the observed state of PipelineInstance
             properties:

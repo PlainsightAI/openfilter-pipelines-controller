@@ -46,7 +46,8 @@ type ExecutionConfig struct {
 //
 // Source binding (PLAT-1071): a PipelineInstance binds one or more
 // PipelineSources to specific filter containers in the referenced Pipeline.
-// Exactly one of the following must be set:
+// Exactly one of the following must be set (enforced by the XValidation
+// rule on this type):
 //
 //   - sourceRef (legacy, single-source): the bound source URL is broadcast
 //     to every filter container as RTSP_URL (streaming) or as a single
@@ -60,7 +61,9 @@ type ExecutionConfig struct {
 //     per-container source URLs, enabling multi-camera pipelines where
 //     each VideoIn filter consumes a distinct source.
 //
-// Setting both fields, or neither, is a validation error.
+// Setting both fields, or neither, is a validation error rejected at
+// admission time.
+// +kubebuilder:validation:XValidation:rule="(has(self.sourceRef) && !has(self.sources)) || (!has(self.sourceRef) && has(self.sources) && size(self.sources) > 0)",message="exactly one of `sourceRef` or `sources` must be set (sources must be non-empty)"
 type PipelineInstanceSpec struct {
 	// pipelineRef references the Pipeline resource to execute
 	// +required

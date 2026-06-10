@@ -3,13 +3,21 @@
 # Each entry under `spec.sources` binds a PipelineSource to a specific filter
 # container in the referenced Pipeline by name. The controller injects
 # RTSP_URL into ONLY the named container — so a Pipeline with two `video-in`
-# filters (front_cam + back_cam) and a downstream `webvis` can serve two
+# filters (front-cam + back-cam) and a downstream `webvis` can serve two
 # distinct RTSP streams, one per camera, in a single Pod.
 #
 # This sample assumes:
 #   - A Pipeline named `pipeline-rtsp-multi` whose filters[] contains containers
-#     named `front_cam`, `back_cam`, and `webvis`.
+#     named `front-cam`, `back-cam`, and `webvis`.
 #   - Two PipelineSources named `pipelinesource-front` and `pipelinesource-back`.
+#
+# IMPORTANT — port spacing for multi-source pipelines: OpenFilter binds
+# **two consecutive ports** per `outputs` entry (the port you set and N+1; the
+# +1 carries ZMQ control-plane traffic). When authoring a multi-VideoIn
+# Pipeline, stagger output ports by at least 2 (e.g. 5550, 5552, ...) — using
+# adjacent ports (5550, 5551) causes the second VideoIn to fail with
+# `ZMQError: Address already in use` because the first VideoIn already
+# reserved 5551. See https://docs.plainsight.ai/docs/openfilter/your-first-filter/.
 #
 # Use `sourceRef` for single-source pipelines instead — `sources` is for the
 # multi-camera case.

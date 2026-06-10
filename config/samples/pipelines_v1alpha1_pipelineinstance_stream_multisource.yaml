@@ -11,13 +11,41 @@
 #     named `front-cam`, `back-cam`, and `webvis`.
 #   - Two PipelineSources named `pipelinesource-front` and `pipelinesource-back`.
 #
-# IMPORTANT — port spacing for multi-source pipelines: OpenFilter binds
-# **two consecutive ports** per `outputs` entry (the port you set and N+1; the
-# +1 carries ZMQ control-plane traffic). When authoring a multi-VideoIn
-# Pipeline, stagger output ports by at least 2 (e.g. 5550, 5552, ...) — using
-# adjacent ports (5550, 5551) causes the second VideoIn to fail with
-# `ZMQError: Address already in use` because the first VideoIn already
-# reserved 5551. See https://docs.plainsight.ai/docs/openfilter/your-first-filter/.
+# IMPORTANT — two openfilter authoring constraints the referenced Pipeline
+# must satisfy (both validated empirically while writing this sample):
+#
+# 1. **Stagger output ports by 2.** OpenFilter binds the configured port
+#    AND port+1 per `outputs` entry (the +1 carries ZMQ control-plane
+#    traffic). Use 5550, 5552, 5554, … — never 5550, 5551 (would crash
+#    the second VideoIn with `Address already in use`). See
+#    https://docs.plainsight.ai/docs/openfilter/your-first-filter/.
+#
+# 2. **Tag every VideoIn output topic** via the `;topic` suffix in its
+#    `sources` config. Without it every VideoIn publishes to the default
+#    topic `main` and any downstream that fans-in two upstreams (webvis,
+#    recorder, …) crashes with `RuntimeError: duplicate topic 'main'`.
+#    Convention: use the filter `name` (== this binding's filterName) as
+#    the topic so wiring is deterministic.
+#
+# Example pipeline `pipeline-rtsp-multi` config that satisfies both:
+#
+#   filters:
+#     - name: front-cam
+#       config:
+#         - name: sources
+#           value: "$(RTSP_URL);front_cam"     # ;front_cam tags the topic
+#         - name: outputs
+#           value: tcp://*:5550
+#     - name: back-cam
+#       config:
+#         - name: sources
+#           value: "$(RTSP_URL);back_cam"
+#         - name: outputs
+#           value: tcp://*:5552                # +2 not +1
+#     - name: webvis
+#       config:
+#         - name: sources
+#           value: "tcp://localhost:5550;front_cam, tcp://localhost:5552;back_cam"
 #
 # Use `sourceRef` for single-source pipelines instead — `sources` is for the
 # multi-camera case.

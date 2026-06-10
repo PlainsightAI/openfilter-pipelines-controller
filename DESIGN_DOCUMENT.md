@@ -162,9 +162,12 @@ spec:
   # specific filter container by name. The controller injects the
   # source-derived env vars into ONLY the matching container, enabling
   # multi-camera pipelines where each VideoIn filter consumes a distinct
-  # source. See section 5.4 for the per-container env injection contract.
-  # Batch mode currently rejects multi-source bindings (>1 entry); the
-  # rejection surfaces as a `MultiSourceBatchUnsupported` condition.
+  # source. Supported in both streaming (RTSP_URL per container) and
+  # batch (per-binding direct-mode init claimer + VIDEO_INPUT_PATH per
+  # container). See section 5.4 for the per-container env injection
+  # contract; section 5.5 covers the batch-specific constraints
+  # (every binding's PipelineSource needs Bucket.Object set so the
+  # direct-mode claimer has a deterministic key).
   sources:
     - filterName: front-cam
       sourceRef:
@@ -429,15 +432,41 @@ source plumbing:
   `pipelines_v1alpha1_pipelineinstance_stream_multisource.yaml` sample
   for a complete worked example.
 
-### 5.5 Multi-source batch — V1 status
+### 5.5 Multi-source batch
 
-Batch mode (`pipeline.spec.mode: batch`) currently accepts only one
-source binding. A PipelineInstance with `len(Sources) > 1` and a batch
-Pipeline is rejected with a `Degraded=MultiSourceBatchUnsupported`
-condition; the message names the count and points at streaming or
-single-source as the workaround. Multi-source batch (for benchmarking
-multi-camera pipelines against per-media GT) needs an N-init-claimer
-reshape and is tracked as a focused follow-up.
+Batch mode supports both single-source (the legacy queue-based
+parallel-files-per-bucket flow, unchanged) and multi-source bindings
+(one Pod, N init claimers, N VideoIns).
+
+The reconciler branches on `len(Sources)` at the top of
+`reconcileBatch`:
+
+- **Single-source**: existing flow. List bucket, enqueue files in
+  Valkey, parallel Pods each pop one file via the init claimer, run
+  the filter chain.
+
+- **Multi-source** (`reconcileBatchMultiSource`): no Valkey work
+  queue, no bucket listing. One init claimer per binding in **direct
+  mode** (S3_OBJECT_KEY env tells the claimer to skip Valkey and
+  download exactly that object), each writing to
+  `/ws/<filterName>.<ext>`. Filter containers run as a chain in the
+  same Pod with VIDEO_INPUT_PATH injected on each matching VideoIn
+  container. Job is `parallelism=1, completions=1` and completion is
+  the Job's own Succeeded/Failed status (no per-file accounting).
+
+Constraints on multi-source batch:
+
+- Every binding's PipelineSource must be a Bucket source — RTSP makes
+  no sense for batch.
+- Every binding's `Bucket.Object` must be set to a specific S3 object
+  key. The default queue-based flow (list a prefix and enqueue every
+  file under it) doesn't apply here: the user has named exactly which
+  media goes to which VideoIn, so each claimer needs a deterministic
+  key.
+
+Both constraints surface as Degraded conditions
+(`MultiSourceBatchInvalidSource` / `MultiSourceBatchMissingObject`)
+with operator-actionable messages.
 
 ## 6. Controller Responsibilities
 

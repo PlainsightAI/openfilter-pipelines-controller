@@ -171,6 +171,127 @@ func TestBuildStreamingDeployment_LegacyBroadcast(t *testing.T) {
 	}
 }
 
+// TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv pins the
+// multi-source batch path (PLAT-1071): one init claimer per binding in
+// direct mode (S3_OBJECT_KEY set + queue env absent), and each VideoIn
+// filter container gets `VIDEO_INPUT_PATH` pointing at its own bound
+// download path. Downstream filters get no VIDEO_INPUT_PATH.
+func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
+	r := &PipelineInstanceReconciler{ClaimerImage: "claimer:test"}
+	pi := makeMinimalStreamingPipelineInstance() // shape-only; values reused
+	pi.Spec.Sources = []pipelinesv1alpha1.NamedSourceRef{
+		{FilterName: "front-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "front-source"}},
+		{FilterName: "back-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "back-source"}},
+	}
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Mode: pipelinesv1alpha1.PipelineModeBatch,
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "front-cam", Image: "videoin:latest"},
+				{Name: "back-cam", Image: "videoin:latest"},
+				{Name: "image-out", Image: "imageout:latest"},
+			},
+		},
+	}
+
+	frontSource := &pipelinesv1alpha1.PipelineSource{
+		Spec: pipelinesv1alpha1.PipelineSourceSpec{
+			Bucket: &pipelinesv1alpha1.BucketSource{
+				Name:   "media",
+				Object: "front.mp4",
+				CredentialsSecret: &pipelinesv1alpha1.SecretReference{
+					Name: "s3-creds",
+				},
+			},
+		},
+	}
+	backSource := &pipelinesv1alpha1.PipelineSource{
+		Spec: pipelinesv1alpha1.PipelineSourceSpec{
+			Bucket: &pipelinesv1alpha1.BucketSource{
+				Name:   "media",
+				Object: "back.mp4",
+				CredentialsSecret: &pipelinesv1alpha1.SecretReference{
+					Name: "s3-creds",
+				},
+			},
+		},
+	}
+	bindings := []ResolvedSourceBinding{
+		{FilterName: "front-cam", Source: frontSource},
+		{FilterName: "back-cam", Source: backSource},
+	}
+
+	job := r.buildMultiSourceBatchJob(context.Background(), pi, pipeline, bindings, "ms-job")
+
+	initContainers := job.Spec.Template.Spec.InitContainers
+	if len(initContainers) != 2 {
+		t.Fatalf("expected 2 init claimers (one per binding), got %d", len(initContainers))
+	}
+
+	// Each init claimer must be in direct mode and target the correct object/path.
+	for _, c := range initContainers {
+		objKey := envValue(c.Env, "S3_OBJECT_KEY")
+		dest := envValue(c.Env, "VIDEO_INPUT_PATH")
+		switch c.Name {
+		case "claimer-front-cam":
+			if objKey != "front.mp4" {
+				t.Errorf("claimer-front-cam S3_OBJECT_KEY = %q, want %q", objKey, "front.mp4")
+			}
+			if dest != "/ws/front-cam.mp4" {
+				t.Errorf("claimer-front-cam VIDEO_INPUT_PATH = %q, want %q", dest, "/ws/front-cam.mp4")
+			}
+		case "claimer-back-cam":
+			if objKey != "back.mp4" {
+				t.Errorf("claimer-back-cam S3_OBJECT_KEY = %q, want %q", objKey, "back.mp4")
+			}
+			if dest != "/ws/back-cam.mp4" {
+				t.Errorf("claimer-back-cam VIDEO_INPUT_PATH = %q, want %q", dest, "/ws/back-cam.mp4")
+			}
+		default:
+			t.Errorf("unexpected init container %q", c.Name)
+		}
+		// Direct mode = no Valkey env.
+		if envValue(c.Env, "STREAM") != "" || envValue(c.Env, "GROUP") != "" {
+			t.Errorf("claimer %q has Valkey env set, expected direct-mode only", c.Name)
+		}
+	}
+
+	// VideoIn filter containers must each carry VIDEO_INPUT_PATH for their
+	// own download path; the downstream image-out filter must not.
+	containers := job.Spec.Template.Spec.Containers
+	front := findContainerByName(t, containers, "front-cam")
+	back := findContainerByName(t, containers, "back-cam")
+	imageOut := findContainerByName(t, containers, "image-out")
+	if got := envValue(front.Env, "VIDEO_INPUT_PATH"); got != "/ws/front-cam.mp4" {
+		t.Errorf("front-cam VIDEO_INPUT_PATH = %q, want %q", got, "/ws/front-cam.mp4")
+	}
+	if got := envValue(back.Env, "VIDEO_INPUT_PATH"); got != "/ws/back-cam.mp4" {
+		t.Errorf("back-cam VIDEO_INPUT_PATH = %q, want %q", got, "/ws/back-cam.mp4")
+	}
+	if hasEnv(imageOut.Env, "VIDEO_INPUT_PATH") {
+		t.Errorf("image-out must not receive VIDEO_INPUT_PATH; it's a downstream consumer")
+	}
+
+	// Job shape: single Pod (parallelism=1, completions=1).
+	if job.Spec.Parallelism == nil || *job.Spec.Parallelism != 1 {
+		t.Errorf("expected parallelism=1, got %v", job.Spec.Parallelism)
+	}
+	if job.Spec.Completions == nil || *job.Spec.Completions != 1 {
+		t.Errorf("expected completions=1, got %v", job.Spec.Completions)
+	}
+}
+
+// envValue returns the inline value of the env var named `name`, or "".
+func envValue(envs []corev1.EnvVar, name string) string {
+	for _, e := range envs {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
+}
+
 // TestEffectiveSources covers the spec-shape normalization: SourceRef
 // becomes a one-entry broadcast list; Sources is returned verbatim; both
 // unset returns nil (the reconciler treats this as an error).

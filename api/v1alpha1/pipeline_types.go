@@ -47,6 +47,17 @@ type BucketSource struct {
 	// +optional
 	Prefix string `json:"prefix,omitempty"`
 
+	// object names a specific S3 object key inside the bucket. Set this for
+	// multi-source batch bindings (PLAT-1071): the claimer downloads exactly
+	// this key to the bound VideoIn's per-container input path, skipping the
+	// Valkey work-queue (queue-based fan-out only makes sense when one
+	// PipelineSource feeds many parallel Pods, which multi-source batch is
+	// not). When `object` is empty the legacy queue-based behavior applies:
+	// the bucket+prefix is listed and each file is enqueued as a Valkey
+	// work item processed by parallel pods.
+	// +optional
+	Object string `json:"object,omitempty"`
+
 	// endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
 	// Examples:
 	//   - MinIO: "http://minio.example.com:9000"

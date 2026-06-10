@@ -40,21 +40,25 @@ import (
 
 // reconcileBatch handles the batch (Job-based) reconciliation path.
 //
-// V1 scope (PLAT-1071): batch mode currently supports a single source
-// binding. Multi-source batch — used for benchmarking multi-camera
-// pipelines against per-media GT — needs N parallel init claimers and a
-// reshaped work-queue model. That work is tracked as a focused follow-up;
-// today multi-source batch is rejected at the top of this function with a
-// clear operator-actionable error. Single-source batch (legacy SourceRef
-// or a one-entry Sources array) keeps working exactly as before.
+// Two sub-paths (PLAT-1071):
+//
+//   - Single-source: one PipelineSource bound (either via legacy
+//     `Spec.SourceRef` or a one-entry `Spec.Sources`). Existing
+//     queue-based flow — list bucket → enqueue files → parallel Pods
+//     each pop one file via Valkey, claim via the init claimer, run
+//     the filter chain. Unchanged from before PR2.
+//
+//   - Multi-source: ≥2 PipelineSources bound, each pinned to a
+//     specific filter container by name. Per-binding the source must
+//     name a specific S3 object via `Bucket.Object` so each VideoIn's
+//     init claimer can download a deterministic file. Job runs as
+//     parallelism=1, completions=1 — one Pod, N init claimers each
+//     writing to `/ws/<filterName>.<ext>`, M filter containers running
+//     the chain. Completion is the Job's normal status (no per-file
+//     queue accounting). Delegates to reconcileBatchMultiSource.
 func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding) (ctrl.Result, error) {
 	if len(sourceBindings) > 1 {
-		err := fmt.Errorf("batch mode does not yet support multi-source pipelines (%d sources bound); please reduce to one source or use streaming mode", len(sourceBindings))
-		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "MultiSourceBatchUnsupported", err.Error())
-		if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
-			logf.FromContext(ctx).Error(statusErr, "Failed to update status after multi-source batch rejection")
-		}
-		return ctrl.Result{}, err
+		return r.reconcileBatchMultiSource(ctx, pipelineInstance, pipeline, sourceBindings)
 	}
 	pipelineSource := sourceBindings[0].Source
 	log := logf.FromContext(ctx)

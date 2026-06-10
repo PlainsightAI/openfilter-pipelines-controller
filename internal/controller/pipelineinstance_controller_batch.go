@@ -549,6 +549,20 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))
 		containerEnv = append(containerEnv, configEnvVars...)
 
+		// Expose the claimer's download destination to every filter
+		// container so VideoIn sources can be authored as
+		// `sources: file://$(VIDEO_INPUT_PATH)` — the same contract the
+		// multi-source path provides per-binding (see
+		// buildBatchFilterContainersForMultiSource). Single-source has no
+		// per-filter binding to key on (legacy broadcast), so all
+		// containers get it; only VideoIn entries reference it. Injected
+		// before filter.Env so a user-supplied value wins on duplicate
+		// names (kubelet keeps the last entry).
+		containerEnv = append(containerEnv, corev1.EnvVar{
+			Name:  "VIDEO_INPUT_PATH",
+			Value: videoInputPath,
+		})
+
 		// Inject GPU env vars before user env vars so users can override if needed.
 		// Skipped when the respective path field is empty (e.g. on EKS).
 		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {

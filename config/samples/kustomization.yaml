@@ -6,4 +6,5 @@ resources:
 - pipelines_v1alpha1_pipelinesource_rtsp.yaml
 - pipelines_v1alpha1_pipelineinstance.yaml
 - pipelines_v1alpha1_pipelineinstance_stream_multisource.yaml
+- pipelines_v1alpha1_pipelineinstance_batch_multisource.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

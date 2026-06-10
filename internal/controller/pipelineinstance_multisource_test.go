@@ -2,12 +2,19 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
+
+// frontCredSecretName is the secret-name fixture used by the
+// credentials-injection test below. Constant to satisfy goconst.
+const frontCredSecretName = "front-rtsp-creds"
 
 // findContainerByName is a local helper used by the multi-source tests to
 // look up a container by name. The pre-existing `findContainer` in
@@ -325,4 +332,164 @@ func TestEffectiveSources(t *testing.T) {
 			t.Errorf("empty spec must yield nil, got: %+v", got)
 		}
 	})
+}
+
+// findSecretEnvRef returns the SecretKeySelector for the env var with the
+// given name, or nil. Used by the credentials-injection test below to
+// assert on ValueFrom-style env vars without dragging full struct
+// comparisons into the call sites.
+func findSecretEnvRef(envs []corev1.EnvVar, name string) *corev1.SecretKeySelector {
+	for _, e := range envs {
+		if e.Name == name && e.ValueFrom != nil {
+			return e.ValueFrom.SecretKeyRef
+		}
+	}
+	return nil
+}
+
+// TestBuildStreamingDeployment_MultiSource_WithCredentials covers the
+// secretRef path: when a per-binding RTSP source has CredentialsSecret
+// set the controller must inject _RTSP_USERNAME / _RTSP_PASSWORD env
+// vars sourced from that secret into the matching VideoIn container
+// alongside RTSP_URL. The pre-existing PerContainerRTSP test covers the
+// no-credentials case; this fills the credentials code path the
+// multi-source change touches.
+func TestBuildStreamingDeployment_MultiSource_WithCredentials(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pi.Spec.Sources = []pipelinesv1alpha1.NamedSourceRef{
+		{FilterName: "front-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "front-source"}},
+		{FilterName: "back-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "back-source"}},
+	}
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "front-cam", Image: "videoin:latest"},
+				{Name: "back-cam", Image: "videoin:latest"},
+			},
+		},
+	}
+
+	bindings := []ResolvedSourceBinding{
+		{FilterName: "front-cam", Source: &pipelinesv1alpha1.PipelineSource{
+			Spec: pipelinesv1alpha1.PipelineSourceSpec{
+				RTSP: &pipelinesv1alpha1.RTSPSource{
+					Host:              "front.example",
+					Port:              554,
+					Path:              "/stream",
+					CredentialsSecret: &pipelinesv1alpha1.SecretReference{Name: frontCredSecretName},
+				},
+			},
+		}},
+		{FilterName: "back-cam", Source: &pipelinesv1alpha1.PipelineSource{
+			Spec: pipelinesv1alpha1.PipelineSourceSpec{
+				RTSP: &pipelinesv1alpha1.RTSPSource{
+					Host: "back.example",
+					Port: 554,
+					Path: "/stream",
+					// No credentials — verifies one-with, one-without works.
+				},
+			},
+		}},
+	}
+
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, bindings, "ms-deployment")
+	containers := deployment.Spec.Template.Spec.Containers
+	front := findContainerByName(t, containers, "front-cam")
+	back := findContainerByName(t, containers, "back-cam")
+
+	usernameRef := findSecretEnvRef(front.Env, "_RTSP_USERNAME")
+	passwordRef := findSecretEnvRef(front.Env, "_RTSP_PASSWORD")
+	if usernameRef == nil || usernameRef.Name != frontCredSecretName || usernameRef.Key != "username" {
+		t.Errorf("front-cam _RTSP_USERNAME secretKeyRef = %+v, want %s/username", usernameRef, frontCredSecretName)
+	}
+	if passwordRef == nil || passwordRef.Name != frontCredSecretName || passwordRef.Key != "password" {
+		t.Errorf("front-cam _RTSP_PASSWORD secretKeyRef = %+v, want %s/password", passwordRef, frontCredSecretName)
+	}
+	if got := rtspURLEnv(front.Env); got == "" {
+		t.Errorf("front-cam RTSP_URL must still be injected alongside credentials, got empty")
+	}
+
+	if findSecretEnvRef(back.Env, "_RTSP_USERNAME") != nil {
+		t.Errorf("back-cam must not have _RTSP_USERNAME (no credentials configured)")
+	}
+	if findSecretEnvRef(back.Env, "_RTSP_PASSWORD") != nil {
+		t.Errorf("back-cam must not have _RTSP_PASSWORD (no credentials configured)")
+	}
+	for _, e := range back.Env {
+		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil && e.ValueFrom.SecretKeyRef.Name == frontCredSecretName {
+			t.Errorf("front-cam's secret leaked into back-cam container env: %+v", e)
+		}
+	}
+}
+
+// TestResolveSourceBindings_SourceMissingSurfacesActionableError covers
+// the error path of resolveSourceBindings: when the referenced
+// PipelineSource doesn't exist in the cluster the function returns a
+// wrapped error naming the binding's FilterName so operators can locate
+// the misconfiguration in the CR.
+func TestResolveSourceBindings_SourceMissingSurfacesActionableError(t *testing.T) {
+	sch := reconcileSpanScheme(t)
+	pi := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pi", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			Sources: []pipelinesv1alpha1.NamedSourceRef{
+				{FilterName: "front-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "src-front"}},
+				{FilterName: "back-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "src-back-missing"}},
+			},
+		},
+	}
+	// Only front exists; back is missing on purpose.
+	frontSrc := &pipelinesv1alpha1.PipelineSource{
+		ObjectMeta: metav1.ObjectMeta{Name: "src-front", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineSourceSpec{
+			RTSP: &pipelinesv1alpha1.RTSPSource{Host: "front"},
+		},
+	}
+	r := &PipelineInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(sch).WithObjects(pi, frontSrc).Build(),
+		Scheme: sch,
+	}
+
+	_, err := r.resolveSourceBindings(context.Background(), pi)
+	if err == nil {
+		t.Fatalf("expected error when a referenced source is missing, got nil")
+	}
+	if !strings.Contains(err.Error(), "src-back-missing") {
+		t.Errorf("error must name the missing source, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "back-cam") {
+		t.Errorf("error must name the filter binding, got: %v", err)
+	}
+}
+
+// TestResolveSourceBindings_LegacySourceRefMissingSurfacesError covers
+// the same error path for the legacy SourceRef shape (FilterName==""). In
+// the legacy path the error wording omits the filter-name suffix since
+// the binding isn't filter-scoped.
+func TestResolveSourceBindings_LegacySourceRefMissingSurfacesError(t *testing.T) {
+	sch := reconcileSpanScheme(t)
+	pi := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pi", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			//nolint:staticcheck // SA1019: legacy SourceRef is the system under test.
+			SourceRef: &pipelinesv1alpha1.SourceReference{Name: "src-missing"},
+		},
+	}
+	r := &PipelineInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(sch).WithObjects(pi).Build(),
+		Scheme: sch,
+	}
+
+	_, err := r.resolveSourceBindings(context.Background(), pi)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "src-missing") {
+		t.Errorf("error must name the missing source, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "bound to filter") {
+		t.Errorf("legacy SourceRef error should not mention filter binding (FilterName is empty), got: %v", err)
+	}
 }

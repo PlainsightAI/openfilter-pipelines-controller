@@ -23,7 +23,9 @@
 #
 # The same two openfilter authoring constraints as the streaming
 # multi-source sample apply: stagger output ports by 2 (5550, 5552, …) and
-# tag each VideoIn's output topic. Example pipeline `pipeline-batch-multi`:
+# disambiguate fan-in topics (publisher tags shown below; the
+# plainsight-api export emits the equivalent subscriber-side remap form —
+# see the streaming multisource sample). Example `pipeline-batch-multi`:
 #
 #   filters:
 #     - name: front-cam

@@ -507,7 +507,12 @@ var _ = Describe("PipelineInstance Controller", func() {
 			// Filter containers receive the claimer's download destination so
 			// VideoIn sources can be authored as `file://$(VIDEO_INPUT_PATH)`
 			// — the same contract the multi-source path provides per-binding.
-			Expect(job.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: "/ws/custom-input.mp4"}))
+			// It must be the FIRST entry, before any FILTER_* config env:
+			// Kubernetes dependent-env expansion only resolves $(VAR)
+			// references to variables defined earlier in the list.
+			filterEnv := job.Spec.Template.Spec.Containers[0].Env
+			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: "/ws/custom-input.mp4"}))
+			Expect(filterEnv[0].Name).To(Equal("VIDEO_INPUT_PATH"))
 		})
 
 		It("should inject per-namespace Valkey credentials from namespace secret in claimer", func() {

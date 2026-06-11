@@ -544,24 +544,25 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			})
 		}
 
-		// Start with config env vars, then add filter-specific env vars
-		// Filter-specific env vars can override config if they have the same name
-		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))
-		containerEnv = append(containerEnv, configEnvVars...)
-
-		// Expose the claimer's download destination to every filter
-		// container so VideoIn sources can be authored as
-		// `sources: file://$(VIDEO_INPUT_PATH)` — the same contract the
-		// multi-source path provides per-binding (see
-		// buildBatchFilterContainersForMultiSource). Single-source has no
-		// per-filter binding to key on (legacy broadcast), so all
-		// containers get it; only VideoIn entries reference it. Injected
-		// before filter.Env so a user-supplied value wins on duplicate
-		// names (kubelet keeps the last entry).
+		// Start with the claimer's download destination, THEN config env,
+		// then filter-specific env vars (later entries override earlier
+		// duplicates on the running container).
+		//
+		// VIDEO_INPUT_PATH MUST precede the FILTER_* config env in the
+		// list: Kubernetes dependent-env expansion only resolves $(VAR)
+		// references to variables defined EARLIER — with the old
+		// config-first ordering, `sources: file://$(VIDEO_INPUT_PATH)`
+		// arrived in the container as a literal unexpanded string.
+		// Exposed to every filter container (single-source has no
+		// per-filter binding to key on — legacy broadcast); only VideoIn
+		// entries reference it. Same contract the multi-source path
+		// provides per-binding (see buildBatchFilterContainersForMultiSource).
+		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env)+1)
 		containerEnv = append(containerEnv, corev1.EnvVar{
 			Name:  "VIDEO_INPUT_PATH",
 			Value: videoInputPath,
 		})
+		containerEnv = append(containerEnv, configEnvVars...)
 
 		// Inject GPU env vars before user env vars so users can override if needed.
 		// Skipped when the respective path field is empty (e.g. on EKS).

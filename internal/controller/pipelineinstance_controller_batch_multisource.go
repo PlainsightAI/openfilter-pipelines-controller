@@ -49,8 +49,10 @@ import (
 // Constraints enforced here (V1):
 //   - Every binding's PipelineSource must have a Bucket source set
 //     (RTSP makes no sense for batch).
-//   - Every binding's `Bucket.Object` must be set so the per-binding
-//     direct-mode claimer has a deterministic key to download.
+//   - Every binding must resolve a deterministic object key for its
+//     direct-mode claimer: `Bucket.Object` when set, else `Bucket.Prefix`
+//     used as the full key (the platform's media model carries single-file
+//     keys in prefix — see bindingObjectKey).
 //
 // Either constraint failing surfaces as a Degraded condition with an
 // operator-actionable message; the reconciler returns nil so the kube
@@ -74,8 +76,8 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 			}
 			return ctrl.Result{}, nil
 		}
-		if b.Source.Spec.Bucket.Object == "" {
-			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource Bucket.Object to be set; %q does not name a specific object", b.FilterName)
+		if bindingObjectKey(b) == "" {
+			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource to name a specific object (Bucket.Object or a Bucket.Prefix that is a full object key); %q has neither", b.FilterName)
 			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "MultiSourceBatchMissingObject", msg)
 			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				log.Error(statusErr, "Failed to update status after multi-source batch validation")
@@ -185,7 +187,7 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 	// (where their VideoIn reads).
 	downloadPath := make(map[string]string, len(sourceBindings))
 	for _, b := range sourceBindings {
-		downloadPath[b.FilterName] = perFilterInputPath(b.FilterName, b.Source.Spec.Bucket.Object)
+		downloadPath[b.FilterName] = perFilterInputPath(b.FilterName, bindingObjectKey(b))
 	}
 
 	// One init claimer per binding (direct mode).
@@ -199,7 +201,7 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 				{Name: "workspace", MountPath: "/ws"},
 			},
 		})
-		log.V(1).Info("Added direct-mode claimer", "index", i, "filter", b.FilterName, "object", b.Source.Spec.Bucket.Object, "destination", downloadPath[b.FilterName])
+		log.V(1).Info("Added direct-mode claimer", "index", i, "filter", b.FilterName, "object", bindingObjectKey(b), "destination", downloadPath[b.FilterName])
 	}
 
 	// Build filter containers with per-VideoIn VIDEO_INPUT_PATH env.
@@ -259,7 +261,7 @@ func (r *PipelineInstanceReconciler) buildDirectClaimerEnv(b ResolvedSourceBindi
 	bucket := b.Source.Spec.Bucket
 	env := []corev1.EnvVar{
 		{Name: "S3_BUCKET", Value: bucket.Name},
-		{Name: "S3_OBJECT_KEY", Value: bucket.Object},
+		{Name: "S3_OBJECT_KEY", Value: bindingObjectKey(b)},
 		{Name: "VIDEO_INPUT_PATH", Value: destPath},
 		{Name: "S3_ENDPOINT", Value: bucket.Endpoint},
 		{Name: "S3_REGION", Value: bucket.Region},
@@ -308,19 +310,22 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 			})
 		}
 
-		env := append([]corev1.EnvVar{}, configEnv...)
-
-		// Per-binding env: VideoIn containers whose name matches a
-		// binding pick up VIDEO_INPUT_PATH and we also expose it as
-		// the FILTER_SOURCES alias so authors can write either
-		// `sources: file://$(VIDEO_INPUT_PATH)` (explicit) or
-		// `sources: $(FILTER_SOURCES)` (parallel to RTSP streaming
-		// where downstream filters do this).
+		// Per-binding env: the VideoIn container whose name matches a
+		// binding picks up VIDEO_INPUT_PATH = its claimer's download
+		// destination, so authors write `sources: file://$(VIDEO_INPUT_PATH)`.
+		//
+		// VIDEO_INPUT_PATH MUST precede the FILTER_* config env in the
+		// list: Kubernetes dependent-env expansion only resolves $(VAR)
+		// references to variables defined EARLIER — a forward reference
+		// stays a literal string and the VideoIn fails to open its input.
+		// (Mirrors the streaming builder's RTSP-env-first ordering.)
+		env := make([]corev1.EnvVar, 0, len(configEnv)+1)
 		if path, ok := downloadPath[filter.Name]; ok {
 			env = append(env,
 				corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: path},
 			)
 		}
+		env = append(env, configEnv...)
 
 		// GPU + tracing env (mirrors single-source batch).
 		if filter.Resources != nil && containerResourcesRequireGPU(*filter.Resources) {
@@ -351,6 +356,24 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 		containers = append(containers, c)
 	}
 	return containers
+}
+
+// bindingObjectKey resolves the exact S3 object a binding's claimer must
+// download: Bucket.Object when set (explicit override), else Bucket.Prefix.
+// The platform's media model has no separate object concept — single-file
+// medias put the full object key in prefix (the agent parses the media URL
+// path into it), and the legacy queue path has always relied on
+// prefix-as-key listing for single-file sources. Direct mode uses the same
+// value as the exact GET key; a folder-style prefix fails at download with
+// a per-claimer error naming the key.
+func bindingObjectKey(b ResolvedSourceBinding) string {
+	if b.Source == nil || b.Source.Spec.Bucket == nil {
+		return ""
+	}
+	if b.Source.Spec.Bucket.Object != "" {
+		return b.Source.Spec.Bucket.Object
+	}
+	return b.Source.Spec.Bucket.Prefix
 }
 
 // perFilterInputPath computes the workspace path the claimer writes its

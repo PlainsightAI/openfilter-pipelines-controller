@@ -12,7 +12,9 @@
 #
 # Constraints enforced by the controller (surfaced as Degraded conditions):
 #   - every binding's PipelineSource must be a Bucket source (no RTSP), and
-#   - every Bucket source must name a specific `object` (no prefix scans).
+#   - every Bucket source must resolve a specific object key: `object` when
+#     set, else `prefix` is used as the full key (how single-file medias
+#     ship from the platform — no prefix scans in multi-source mode).
 #
 # The controller injects `VIDEO_INPUT_PATH = /ws/<filterName><ext>` into
 # ONLY the filter container whose name matches the binding's filterName, so

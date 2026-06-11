@@ -276,6 +276,15 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 	if got := envValue(back.Env, "VIDEO_INPUT_PATH"); got != "/ws/back-cam.mp4" {
 		t.Errorf("back-cam VIDEO_INPUT_PATH = %q, want %q", got, "/ws/back-cam.mp4")
 	}
+	// ORDERING contract: VIDEO_INPUT_PATH must precede every FILTER_* env
+	// entry. Kubernetes dependent-env expansion only resolves $(VAR)
+	// references to variables defined earlier in the list, so a
+	// config-first ordering turns `sources: file://$(VIDEO_INPUT_PATH)`
+	// into a literal unexpanded string inside the container.
+	for _, c := range []corev1.Container{front, back} {
+		assertEnvPrecedesFilterConfig(t, c, "VIDEO_INPUT_PATH")
+	}
+
 	if hasEnv(imageOut.Env, "VIDEO_INPUT_PATH") {
 		t.Errorf("image-out must not receive VIDEO_INPUT_PATH; it's a downstream consumer")
 	}
@@ -491,5 +500,63 @@ func TestResolveSourceBindings_LegacySourceRefMissingSurfacesError(t *testing.T)
 	}
 	if strings.Contains(err.Error(), "bound to filter") {
 		t.Errorf("legacy SourceRef error should not mention filter binding (FilterName is empty), got: %v", err)
+	}
+}
+
+// assertEnvPrecedesFilterConfig fails the test unless env var `name` appears
+// in c.Env BEFORE every FILTER_*-prefixed entry — the position Kubernetes
+// dependent-env expansion requires for $(name) references inside filter
+// config values to resolve.
+func assertEnvPrecedesFilterConfig(t *testing.T, c corev1.Container, name string) {
+	t.Helper()
+	nameIdx := -1
+	firstFilterIdx := -1
+	for i, e := range c.Env {
+		if e.Name == name && nameIdx == -1 {
+			nameIdx = i
+		}
+		if strings.HasPrefix(e.Name, "FILTER_") && firstFilterIdx == -1 {
+			firstFilterIdx = i
+		}
+	}
+	if nameIdx == -1 {
+		t.Fatalf("container %q: env %s not found", c.Name, name)
+	}
+	if firstFilterIdx != -1 && nameIdx > firstFilterIdx {
+		t.Errorf("container %q: %s at index %d must precede first FILTER_* env at index %d (K8s $(VAR) expansion only resolves earlier-defined vars)", c.Name, name, nameIdx, firstFilterIdx)
+	}
+}
+
+// TestBindingObjectKey pins the object-key resolution the direct-mode
+// claimers depend on: explicit Bucket.Object wins; otherwise Bucket.Prefix
+// is the full key (the platform's media model carries single-file object
+// keys in prefix — there is no separate object concept upstream); neither →
+// empty (reconcile Degrades).
+func TestBindingObjectKey(t *testing.T) {
+	mk := func(object, prefix string) ResolvedSourceBinding {
+		return ResolvedSourceBinding{
+			FilterName: "front-cam",
+			Source: &pipelinesv1alpha1.PipelineSource{
+				Spec: pipelinesv1alpha1.PipelineSourceSpec{
+					Bucket: &pipelinesv1alpha1.BucketSource{
+						Name:   "b",
+						Object: object,
+						Prefix: prefix,
+					},
+				},
+			},
+		}
+	}
+	if got := bindingObjectKey(mk("clips/exact.mp4", "clips/")); got != "clips/exact.mp4" {
+		t.Errorf("explicit Object must win, got %q", got)
+	}
+	if got := bindingObjectKey(mk("", "clips/front_001.mp4")); got != "clips/front_001.mp4" {
+		t.Errorf("Prefix must serve as the full key when Object empty, got %q", got)
+	}
+	if got := bindingObjectKey(mk("", "")); got != "" {
+		t.Errorf("neither set must resolve empty, got %q", got)
+	}
+	if got := bindingObjectKey(ResolvedSourceBinding{FilterName: "x"}); got != "" {
+		t.Errorf("nil source must resolve empty, got %q", got)
 	}
 }

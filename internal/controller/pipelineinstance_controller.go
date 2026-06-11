@@ -540,10 +540,17 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
-	// Bindings validate — clear any stale Degraded/SourceBindingUnmatched
-	// left by a previous failing pass so external watchers see the recovery.
+	// Bindings resolve and validate — clear any stale Degraded left by a
+	// previous failing pass so external watchers see the recovery. Both
+	// reasons matter: SourceBindingUnmatched from a since-fixed filterName,
+	// and PipelineSourceNotFound from the creation race where the
+	// PipelineInstance is applied before its PipelineSources (the
+	// deployment-agent's intentional order) — the PipelineSource watch
+	// re-reconciles us here once the sources land, and without this clear
+	// the stale condition lingers and the agent's provisioning monitor
+	// tears the instance down as degraded.
 	// Same conflict semantics as the PipelineNotFound clear above.
-	if err := r.clearDegradedReason(ctx, pipelineInstance, ReasonSourceBindingUnmatched); err != nil {
+	if err := r.clearDegradedReason(ctx, pipelineInstance, ReasonSourceBindingUnmatched, ReasonPipelineSourceNotFound); err != nil {
 		if apierrors.IsConflict(err) {
 			log.V(1).Info("Status update conflict while clearing stale Degraded; requeueing",
 				"reason", ReasonSourceBindingUnmatched)

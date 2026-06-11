@@ -757,6 +757,60 @@ func TestReconcile_UnmatchedSourceBinding_ClearsOnFix(t *testing.T) {
 	}
 }
 
+// TestReconcile_PipelineSourceNotFound_ClearsOnceSourceExists pins the
+// creation-race recovery the deployment agent depends on: the agent applies
+// the PipelineInstance BEFORE its PipelineSources (intentional — cleanup
+// treats a source as orphaned when no PI references it), so the first
+// reconcile finds no sources and sets Degraded/PipelineSourceNotFound. Once
+// the sources land, the PipelineSource watch re-reconciles and the stale
+// condition MUST clear — the agent's provisioning monitor tears the whole
+// instance down on any lingering Degraded (observed live in the cross-PR
+// smoke test before this clear existed).
+func TestReconcile_PipelineSourceNotFound_ClearsOnceSourceExists(t *testing.T) {
+	sch := reconcileSpanScheme(t)
+	pipeline, src, pi := makeUnmatchedBindingFixtures(t, pipelinesv1alpha1.PipelineModeStream, "front-cam")
+	// Phase 1: PI exists, its PipelineSource does NOT (agent apply order).
+	r := &PipelineInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(sch).
+			WithStatusSubresource(&pipelinesv1alpha1.PipelineInstance{}).
+			WithObjects(pipeline, pi).Build(),
+		Scheme: sch,
+	}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace},
+	}); err == nil {
+		t.Fatalf("expected error while the PipelineSource is missing, got nil")
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded)
+	if cond.Status != metav1.ConditionTrue || cond.Reason != ReasonPipelineSourceNotFound {
+		t.Fatalf("expected Degraded=True (%s) while source is missing, got %+v", ReasonPipelineSourceNotFound, cond)
+	}
+
+	// Phase 2: the source lands (what the agent does milliseconds later).
+	if err := r.Create(context.Background(), src); err != nil {
+		t.Fatalf("create PipelineSource: %v", err)
+	}
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace},
+	}); err != nil {
+		t.Fatalf("expected nil error once the source exists, got %v", err)
+	}
+
+	updated = &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded); cond.Type != "" {
+		t.Errorf("expected stale Degraded/%s to clear once the PipelineSource exists, got %+v", ReasonPipelineSourceNotFound, cond)
+	}
+}
+
 // TestBindingObjectKey pins the object-key resolution the direct-mode
 // claimers depend on: Bucket.Prefix is the full object key (the platform's
 // media model carries single-file object keys in prefix — there is no

@@ -138,18 +138,14 @@ func TestBuildStreamingDeployment_MultiSource_PerContainerRTSP(t *testing.T) {
 	}
 }
 
-// TestBuildStreamingDeployment_LegacyBroadcast confirms the deprecated
-// `Spec.SourceRef` path still broadcasts RTSP_URL to every container,
+// TestBuildStreamingDeployment_LegacyBroadcast confirms the singular
+// `Spec.SourceRef` form still broadcasts RTSP_URL to every container,
 // matching pre-PLAT-1071 behavior. The resolver upstream produces a
 // single ResolvedSourceBinding with FilterName=="" — the sentinel for
 // broadcast.
 func TestBuildStreamingDeployment_LegacyBroadcast(t *testing.T) {
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
-	// Deprecated field intentionally exercised: this test guards the
-	// legacy-CR compatibility path that the SA1019 deprecation comment
-	// asks new callers to avoid.
-	//nolint:staticcheck // SA1019: legacy SourceRef path is the system under test.
 	pi.Spec.SourceRef = &pipelinesv1alpha1.SourceReference{Name: "legacy-source"}
 
 	pipeline := &pipelinesv1alpha1.Pipeline{
@@ -318,7 +314,6 @@ func envValue(envs []corev1.EnvVar, name string) string {
 func TestEffectiveSources(t *testing.T) {
 	t.Run("legacy_source_ref_becomes_broadcast_sentinel", func(t *testing.T) {
 		spec := pipelinesv1alpha1.PipelineInstanceSpec{
-			//nolint:staticcheck // SA1019: deprecated SourceRef is the system under test.
 			SourceRef: &pipelinesv1alpha1.SourceReference{Name: "src1"},
 		}
 		got := spec.EffectiveSources()
@@ -486,7 +481,6 @@ func TestResolveSourceBindings_LegacySourceRefMissingSurfacesError(t *testing.T)
 	pi := &pipelinesv1alpha1.PipelineInstance{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pi", Namespace: "default"},
 		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
-			//nolint:staticcheck // SA1019: legacy SourceRef is the system under test.
 			SourceRef: &pipelinesv1alpha1.SourceReference{Name: "src-missing"},
 		},
 	}
@@ -560,16 +554,14 @@ func TestPipelineInstancesForPipelineSource_MapsReferencingInstances(t *testing.
 		ObjectMeta: metav1.ObjectMeta{Name: "pi-legacy", Namespace: "default"},
 		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
-			//nolint:staticcheck // SA1019: legacy SourceRef path is under test.
-			SourceRef: &pipelinesv1alpha1.SourceReference{Name: "shared-src"},
+			SourceRef:   &pipelinesv1alpha1.SourceReference{Name: "shared-src"},
 		},
 	}
 	piUnrelated := &pipelinesv1alpha1.PipelineInstance{
 		ObjectMeta: metav1.ObjectMeta{Name: "pi-unrelated", Namespace: "default"},
 		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
-			//nolint:staticcheck // SA1019: legacy SourceRef path is under test.
-			SourceRef: &pipelinesv1alpha1.SourceReference{Name: "different-src"},
+			SourceRef:   &pipelinesv1alpha1.SourceReference{Name: "different-src"},
 		},
 	}
 	// Same name but the ref explicitly points at another namespace — the

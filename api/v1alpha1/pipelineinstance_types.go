@@ -49,10 +49,10 @@ type ExecutionConfig struct {
 // Exactly one of the following must be set (enforced by the XValidation
 // rule on this type):
 //
-//   - sourceRef (legacy, single-source): the bound source URL is broadcast
-//     to every filter container as RTSP_URL (streaming) or as a single
-//     VIDEO_INPUT_PATH download target (batch). Existing single-source CRs
-//     and demos continue to work unchanged.
+//   - sourceRef (single-source convenience form): the bound source URL is
+//     broadcast to every filter container as RTSP_URL (streaming) or as a
+//     single VIDEO_INPUT_PATH download target (batch). The natural shape
+//     for one-camera pipelines — no filter names required.
 //
 //   - sources (multi-source): each entry binds a PipelineSource to the
 //     filter container whose name matches `filterName`. The controller
@@ -70,12 +70,11 @@ type PipelineInstanceSpec struct {
 	PipelineRef PipelineReference `json:"pipelineRef"`
 
 	// sourceRef references the PipelineSource resource for input
-	// configuration. Use this for single-source pipelines; the source URL
-	// is broadcast to every filter container. For multi-source pipelines,
-	// use `sources` instead.
-	//
-	// Deprecated: prefer `sources` for new pipelines. Retained for legacy
-	// single-source CRs and existing demos.
+	// configuration. This is the convenience form for single-source
+	// pipelines — the source URL is broadcast to every filter container,
+	// so the author doesn't need to know filter names. For multi-source
+	// pipelines, use `sources` instead. Both forms are first-class and
+	// supported indefinitely.
 	// +optional
 	SourceRef *SourceReference `json:"sourceRef,omitempty"`
 
@@ -164,8 +163,8 @@ type NamedSourceRef struct {
 }
 
 // EffectiveSources returns the canonical list of (filterName, source) bindings
-// for this PipelineInstance, normalizing the legacy `SourceRef` field into the
-// new shape. When `SourceRef` is set, the returned list has a single entry
+// for this PipelineInstance, normalizing the singular `SourceRef` field into
+// the plural shape. When `SourceRef` is set, the returned list has a single entry
 // with an empty FilterName — a sentinel that means "broadcast to every
 // container" in the reconciler's per-binding loop. When `Sources` is set, the
 // returned list is the user's bindings verbatim. Validation at admission time

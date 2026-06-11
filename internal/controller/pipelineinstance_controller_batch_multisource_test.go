@@ -270,6 +270,35 @@ func TestClaimerContainerName(t *testing.T) {
 	}
 }
 
+// TestPerFilterInputPath pins the claimer↔filter path contract: the claimer
+// downloads to this exact path and the filter container's
+// `file://$(VIDEO_INPUT_PATH)` must resolve to the same bytes — a drift here
+// breaks batch runs with a file-not-found deep inside the pod.
+func TestPerFilterInputPath(t *testing.T) {
+	cases := []struct {
+		name       string
+		filterName string
+		objectKey  string
+		want       string
+	}{
+		{"extension preserved", "front-cam", "clips/front_lobby_001.mp4", "/ws/front-cam.mp4"},
+		{"non-mp4 extension preserved", "back-cam", "clips/back.mkv", "/ws/back-cam.mkv"},
+		{"no extension defaults to mp4", "front-cam", "clips/raw-dump", "/ws/front-cam.mp4"},
+		{"empty key defaults to mp4", "front-cam", "", "/ws/front-cam.mp4"},
+		{"double extension keeps last", "cam", "clips/video.tar.gz", "/ws/cam.gz"},
+		{"dot in directory not an extension", "cam", "v1.2/clip", "/ws/cam.mp4"},
+		{"trailing dot yields bare dot ext", "cam", "clips/video.", "/ws/cam."},
+		{"uppercase extension preserved verbatim", "cam", "clips/VIDEO.MP4", "/ws/cam.MP4"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := perFilterInputPath(tc.filterName, tc.objectKey); got != tc.want {
+				t.Errorf("perFilterInputPath(%q, %q) = %q, want %q", tc.filterName, tc.objectKey, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestReconcileBatchMultiSource_CreatesJobAndStampsStartTime pins branch
 // 3: with valid bindings, the reconciler creates the Job (named
 // "<pi>-job"), stamps StartTime, sets Status.JobName, and leaves a

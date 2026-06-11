@@ -585,7 +585,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 // ResolvedSourceBinding pairs a target filter name with the PipelineSource that
 // feeds it. FilterName=="" is the legacy "broadcast to every filter container"
-// sentinel produced when the PipelineInstance uses the deprecated singular
+// sentinel produced when the PipelineInstance uses the singular
 // `sourceRef` field. Non-empty FilterName targets the container whose
 // `pipeline.spec.filters[].name` matches exactly.
 type ResolvedSourceBinding struct {

@@ -1005,12 +1005,11 @@ spec:
               sourceRef:
                 description: |-
                   sourceRef references the PipelineSource resource for input
-                  configuration. Use this for single-source pipelines; the source URL
-                  is broadcast to every filter container. For multi-source pipelines,
-                  use `sources` instead.
-
-                  Deprecated: prefer `sources` for new pipelines. Retained for legacy
-                  single-source CRs and existing demos.
+                  configuration. This is the convenience form for single-source
+                  pipelines — the source URL is broadcast to every filter container,
+                  so the author doesn't need to know filter names. For multi-source
+                  pipelines, use `sources` instead. Both forms are first-class and
+                  supported indefinitely.
                 properties:
                   name:
                     description: name is the name of the PipelineSource resource

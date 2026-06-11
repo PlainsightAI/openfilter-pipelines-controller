@@ -310,7 +310,7 @@ func (r *PipelineInstanceReconciler) ensureStreamingDeployment(ctx context.Conte
 // each filter container we look up the matching binding by name and inject
 // the source-derived env vars (RTSP_URL plus, when credentials are present,
 // _RTSP_USERNAME / _RTSP_PASSWORD) into only that container. Legacy CRs that
-// use the deprecated singular `Spec.SourceRef` resolve to one binding with
+// use the singular `Spec.SourceRef` convenience form resolve to one binding with
 // FilterName="" which broadcasts the env vars to every filter container —
 // preserving today's behavior.
 func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding, deploymentName string) *appsv1.Deployment {
@@ -368,7 +368,7 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 		// Inject RTSP environment variables first so they can be referenced
 		// in filter config (filter authors write `sources: "$(RTSP_URL)"`).
 		// If multiple sources end up applied to one container — only happens
-		// when a legacy SourceRef coexists with a Sources entry that targets
+		// when a singular SourceRef coexists with a Sources entry that targets
 		// this container, which validation rejects — the last write wins.
 		var envVars []corev1.EnvVar
 		for _, src := range perContainerSources {

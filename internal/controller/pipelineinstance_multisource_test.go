@@ -5,9 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
@@ -59,13 +63,13 @@ func hasEnv(envs []corev1.EnvVar, name string) bool {
 
 // TestBuildStreamingDeployment_MultiSource_PerContainerRTSP exercises the
 // PLAT-1071 multi-source path: a Pipeline with two VideoIn-style filters
-// (front_cam, back_cam) plus one downstream filter (webvis). The
+// (front-cam, back-cam) plus one downstream filter (webvis). The
 // PipelineInstance binds each VideoIn to a distinct PipelineSource via
 // NamedSourceRef. The build step must:
 //
-//   - Inject RTSP_URL into the `front_cam` container, valued at the
+//   - Inject RTSP_URL into the `front-cam` container, valued at the
 //     `front` source's URL, and NOT the `back` source's URL.
-//   - Inject RTSP_URL into the `back_cam` container, valued at the
+//   - Inject RTSP_URL into the `back-cam` container, valued at the
 //     `back` source's URL.
 //   - Leave the `webvis` container with NO RTSP_URL env var — it's a
 //     downstream filter that consumes from siblings via its own
@@ -74,15 +78,15 @@ func TestBuildStreamingDeployment_MultiSource_PerContainerRTSP(t *testing.T) {
 	r := &PipelineInstanceReconciler{}
 	pi := makeMinimalStreamingPipelineInstance()
 	pi.Spec.Sources = []pipelinesv1alpha1.NamedSourceRef{
-		{FilterName: "front_cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "front-source"}},
-		{FilterName: "back_cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "back-source"}},
+		{FilterName: "front-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "front-source"}},
+		{FilterName: "back-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "back-source"}},
 	}
 
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
 			Filters: []pipelinesv1alpha1.Filter{
-				{Name: "front_cam", Image: "videoin:latest"},
-				{Name: "back_cam", Image: "videoin:latest"},
+				{Name: "front-cam", Image: "videoin:latest"},
+				{Name: "back-cam", Image: "videoin:latest"},
 				{Name: "webvis", Image: "webvis:latest"},
 			},
 		},
@@ -99,25 +103,25 @@ func TestBuildStreamingDeployment_MultiSource_PerContainerRTSP(t *testing.T) {
 		},
 	}
 	bindings := []ResolvedSourceBinding{
-		{FilterName: "front_cam", Source: frontSource},
-		{FilterName: "back_cam", Source: backSource},
+		{FilterName: "front-cam", Source: frontSource},
+		{FilterName: "back-cam", Source: backSource},
 	}
 
 	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, bindings, "ms-deployment")
 	containers := deployment.Spec.Template.Spec.Containers
 
-	frontContainer := findContainerByName(t, containers, "front_cam")
-	backContainer := findContainerByName(t, containers, "back_cam")
+	frontContainer := findContainerByName(t, containers, "front-cam")
+	backContainer := findContainerByName(t, containers, "back-cam")
 	webvisContainer := findContainerByName(t, containers, "webvis")
 
 	wantFront := buildRTSPURL(frontSource.Spec.RTSP)
 	wantBack := buildRTSPURL(backSource.Spec.RTSP)
 
 	if got := rtspURLEnv(frontContainer.Env); got != wantFront {
-		t.Errorf("front_cam RTSP_URL = %q, want %q", got, wantFront)
+		t.Errorf("front-cam RTSP_URL = %q, want %q", got, wantFront)
 	}
 	if got := rtspURLEnv(backContainer.Env); got != wantBack {
-		t.Errorf("back_cam RTSP_URL = %q, want %q", got, wantBack)
+		t.Errorf("back-cam RTSP_URL = %q, want %q", got, wantBack)
 	}
 	if hasEnv(webvisContainer.Env, "RTSP_URL") {
 		t.Errorf("webvis must not receive RTSP_URL — it's a downstream filter; got env: %v", webvisContainer.Env)
@@ -127,10 +131,10 @@ func TestBuildStreamingDeployment_MultiSource_PerContainerRTSP(t *testing.T) {
 	// container or vice versa (would surface as a swap bug in the
 	// bindingsByFilter lookup).
 	if got := rtspURLEnv(frontContainer.Env); got == wantBack {
-		t.Errorf("front_cam ended up with back source URL — bindings swapped")
+		t.Errorf("front-cam ended up with back source URL — bindings swapped")
 	}
 	if got := rtspURLEnv(backContainer.Env); got == wantFront {
-		t.Errorf("back_cam ended up with front source URL — bindings swapped")
+		t.Errorf("back-cam ended up with front source URL — bindings swapped")
 	}
 }
 
@@ -524,6 +528,240 @@ func assertEnvPrecedesFilterConfig(t *testing.T, c corev1.Container, name string
 	}
 	if firstFilterIdx != -1 && nameIdx > firstFilterIdx {
 		t.Errorf("container %q: %s at index %d must precede first FILTER_* env at index %d (K8s $(VAR) expansion only resolves earlier-defined vars)", c.Name, name, nameIdx, firstFilterIdx)
+	}
+}
+
+// TestPipelineInstancesForPipelineSource_MapsReferencingInstances pins the
+// PipelineSource→PipelineInstance watch mapping wired in SetupWithManager: a
+// PipelineSource event must enqueue every PipelineInstance in the source's
+// namespace that references it — via spec.sources[].sourceRef.name OR the
+// legacy spec.sourceRef.name — and nothing else. Without this mapping, an
+// instance Degraded by multi-source batch validation (which returns without
+// requeue) would never reconcile again after the source is fixed.
+func TestPipelineInstancesForPipelineSource_MapsReferencingInstances(t *testing.T) {
+	sch := reconcileSpanScheme(t)
+	otherNS := "elsewhere"
+
+	src := &pipelinesv1alpha1.PipelineSource{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-src", Namespace: "default"},
+	}
+
+	piMulti := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pi-multi", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
+			Sources: []pipelinesv1alpha1.NamedSourceRef{
+				{FilterName: "front-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "shared-src"}},
+				{FilterName: "back-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "some-other-src"}},
+			},
+		},
+	}
+	piLegacy := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pi-legacy", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
+			//nolint:staticcheck // SA1019: legacy SourceRef path is under test.
+			SourceRef: &pipelinesv1alpha1.SourceReference{Name: "shared-src"},
+		},
+	}
+	piUnrelated := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pi-unrelated", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
+			//nolint:staticcheck // SA1019: legacy SourceRef path is under test.
+			SourceRef: &pipelinesv1alpha1.SourceReference{Name: "different-src"},
+		},
+	}
+	// Same name but the ref explicitly points at another namespace — the
+	// event for default/shared-src must NOT wake this instance.
+	piCrossNS := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pi-cross-ns", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
+			Sources: []pipelinesv1alpha1.NamedSourceRef{
+				{FilterName: "front-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "shared-src", Namespace: &otherNS}},
+			},
+		},
+	}
+
+	r := &PipelineInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(sch).
+			WithObjects(src, piMulti, piLegacy, piUnrelated, piCrossNS).Build(),
+		Scheme: sch,
+	}
+
+	requests := r.pipelineInstancesForPipelineSource(context.Background(), src)
+	got := make(map[string]bool, len(requests))
+	for _, req := range requests {
+		got[req.Name] = true
+	}
+	if len(requests) != 2 || !got["pi-multi"] || !got["pi-legacy"] {
+		t.Errorf("expected exactly [pi-multi pi-legacy], got %v", requests)
+	}
+}
+
+// makeUnmatchedBindingFixtures builds the Pipeline / PipelineSource /
+// PipelineInstance triple the SourceBindingUnmatched Reconcile tests share.
+// The instance pre-seeds the Valkey-credentials finalizer so the full
+// Reconcile entry point flows straight through to source-binding validation
+// instead of returning early to persist the finalizer.
+func makeUnmatchedBindingFixtures(t *testing.T, mode pipelinesv1alpha1.PipelineMode, filterName string) (*pipelinesv1alpha1.Pipeline, *pipelinesv1alpha1.PipelineSource, *pipelinesv1alpha1.PipelineInstance) {
+	t.Helper()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{Name: "unmatched-pipeline", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Mode: mode,
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "front-cam", Image: "videoin:latest"},
+				{Name: "webvis", Image: "webvis:latest"},
+			},
+		},
+	}
+	src := &pipelinesv1alpha1.PipelineSource{
+		ObjectMeta: metav1.ObjectMeta{Name: "unmatched-src", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineSourceSpec{
+			RTSP:   &pipelinesv1alpha1.RTSPSource{Host: "cam.example"},
+			Bucket: nil,
+		},
+	}
+	if mode == pipelinesv1alpha1.PipelineModeBatch {
+		src.Spec.RTSP = nil
+		src.Spec.Bucket = &pipelinesv1alpha1.BucketSource{Name: "media", Prefix: "clip.mp4"}
+	}
+	pi := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "unmatched-pi",
+			Namespace:  "default",
+			UID:        types.UID("unmatched-pi-uid"),
+			Finalizers: []string{FinalizerValkeyCredentials},
+		},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipeline.Name},
+			Sources: []pipelinesv1alpha1.NamedSourceRef{
+				{FilterName: filterName, SourceRef: pipelinesv1alpha1.SourceReference{Name: src.Name}},
+			},
+		},
+	}
+	return pipeline, src, pi
+}
+
+// TestReconcile_UnmatchedSourceBinding_DegradesStreaming pins the
+// streaming-mode half of the unmatched-binding validation: a
+// sources[].filterName that matches no pipeline.spec.filters[].name must
+// surface Degraded=True (SourceBindingUnmatched) with a message naming both
+// the unmatched and the available filter names, and no Deployment may be
+// created (the binding would otherwise be a silent no-op — the RTSP env
+// would land on no container).
+func TestReconcile_UnmatchedSourceBinding_DegradesStreaming(t *testing.T) {
+	sch := reconcileSpanScheme(t)
+	pipeline, src, pi := makeUnmatchedBindingFixtures(t, pipelinesv1alpha1.PipelineModeStream, "ghost-cam")
+	r := &PipelineInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(sch).
+			WithStatusSubresource(&pipelinesv1alpha1.PipelineInstance{}).
+			WithObjects(pipeline, src, pi).Build(),
+		Scheme: sch,
+	}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace},
+	}); err != nil {
+		t.Fatalf("expected nil error (validation failure surfaces via Condition), got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded)
+	if cond.Status != metav1.ConditionTrue || cond.Reason != ReasonSourceBindingUnmatched {
+		t.Fatalf("expected Degraded=True (%s), got %+v", ReasonSourceBindingUnmatched, cond)
+	}
+	if !strings.Contains(cond.Message, "ghost-cam") {
+		t.Errorf("message must name the unmatched binding, got %q", cond.Message)
+	}
+	if !strings.Contains(cond.Message, "front-cam") || !strings.Contains(cond.Message, "webvis") {
+		t.Errorf("message must list the available filter names, got %q", cond.Message)
+	}
+
+	deploy := &appsv1.Deployment{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name + "-deploy", Namespace: pi.Namespace}, deploy); err == nil {
+		t.Errorf("expected no Deployment to be created after validation failure")
+	}
+}
+
+// TestReconcile_UnmatchedSourceBinding_DegradesBatch pins the batch-mode
+// half: the same validation fires before reconcileBatch ever runs (shared
+// path), so no Job is created and no Valkey access happens.
+func TestReconcile_UnmatchedSourceBinding_DegradesBatch(t *testing.T) {
+	sch := reconcileSpanScheme(t)
+	pipeline, src, pi := makeUnmatchedBindingFixtures(t, pipelinesv1alpha1.PipelineModeBatch, "ghost-cam")
+	r := &PipelineInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(sch).
+			WithStatusSubresource(&pipelinesv1alpha1.PipelineInstance{}).
+			WithObjects(pipeline, src, pi).Build(),
+		Scheme: sch,
+		// ValkeyClient intentionally nil: validation must reject before any
+		// batch-mode queue work is attempted.
+	}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace},
+	}); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded)
+	if cond.Status != metav1.ConditionTrue || cond.Reason != ReasonSourceBindingUnmatched {
+		t.Fatalf("expected Degraded=True (%s), got %+v", ReasonSourceBindingUnmatched, cond)
+	}
+
+	job := &batchv1.Job{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name + "-job", Namespace: pi.Namespace}, job); err == nil {
+		t.Errorf("expected no Job to be created after validation failure")
+	}
+}
+
+// TestReconcile_UnmatchedSourceBinding_ClearsOnFix pins the recovery half of
+// the shared-path validation: an instance previously Degraded with
+// SourceBindingUnmatched must have the condition cleared on the next
+// reconcile once its bindings validate (e.g. after the Pipeline gained the
+// missing filter or the CR's filterName was corrected — both events
+// re-trigger reconcile via the Pipeline watch / spec generation bump).
+func TestReconcile_UnmatchedSourceBinding_ClearsOnFix(t *testing.T) {
+	sch := reconcileSpanScheme(t)
+	// Binding targets front-cam, which the Pipeline HAS — validation passes.
+	pipeline, src, pi := makeUnmatchedBindingFixtures(t, pipelinesv1alpha1.PipelineModeStream, "front-cam")
+	// Pre-seed the stale Degraded condition a previous failing pass left.
+	pi.Status.Conditions = []metav1.Condition{{
+		Type:               ConditionTypeDegraded,
+		Status:             metav1.ConditionTrue,
+		Reason:             ReasonSourceBindingUnmatched,
+		Message:            "stale",
+		LastTransitionTime: metav1.Now(),
+	}}
+	r := &PipelineInstanceReconciler{
+		Client: fake.NewClientBuilder().WithScheme(sch).
+			WithStatusSubresource(&pipelinesv1alpha1.PipelineInstance{}).
+			WithObjects(pipeline, src, pi).Build(),
+		Scheme: sch,
+	}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace},
+	}); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded); cond.Type != "" {
+		t.Errorf("expected stale Degraded/%s condition to be cleared once bindings validate, got %+v", ReasonSourceBindingUnmatched, cond)
 	}
 }
 

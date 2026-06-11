@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -184,6 +185,88 @@ func TestReconcileBatchMultiSource_RejectsMissingObject(t *testing.T) {
 	cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded)
 	if cond.Status != metav1.ConditionTrue || cond.Reason != "MultiSourceBatchMissingObject" {
 		t.Errorf("expected Degraded=True (MultiSourceBatchMissingObject), got %+v", cond)
+	}
+}
+
+// TestReconcileBatchMultiSource_ClearsValidationDegradedOnRecovery pins the
+// recovery half of the validation contract: a reconcile that Degrades on a
+// missing object key must NOT leave the instance Degraded forever — once the
+// PipelineSource is fixed (the event the PipelineSource watch mapping in
+// SetupWithManager re-triggers reconcile for), the next pass clears the
+// Degraded condition and proceeds to create the Job.
+func TestReconcileBatchMultiSource_ClearsValidationDegradedOnRecovery(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	// Break the back-cam binding: empty prefix → no object key.
+	bindings[1].Source.Spec.Bucket.Prefix = ""
+	r := newMSReconciler(t, pi)
+
+	// Pass 1: validation fails, Degraded=True is persisted.
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("first reconcile: expected nil error, got %v", err)
+	}
+	degraded := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, degraded); err != nil {
+		t.Fatalf("re-fetch PI after first reconcile: %v", err)
+	}
+	cond := findCondition(t, degraded.Status.Conditions, ConditionTypeDegraded)
+	if cond.Status != metav1.ConditionTrue || cond.Reason != ReasonMultiSourceBatchMissingObject {
+		t.Fatalf("expected Degraded=True (%s) after first reconcile, got %+v", ReasonMultiSourceBatchMissingObject, cond)
+	}
+
+	// Fix the source, then re-reconcile against the freshly fetched PI —
+	// the shape a watch-triggered reconcile would see.
+	bindings[1].Source.Spec.Bucket.Prefix = "back.mp4"
+	if _, err := r.reconcileBatchMultiSource(context.Background(), degraded, pipeline, bindings); err != nil {
+		t.Fatalf("second reconcile: expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI after second reconcile: %v", err)
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded); cond.Type != "" {
+		t.Errorf("expected Degraded condition to be cleared after the source was fixed, got %+v", cond)
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Status != metav1.ConditionTrue {
+		t.Errorf("expected Progressing=True after recovery, got %+v", cond)
+	}
+	job := &batchv1.Job{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name + "-job", Namespace: pi.Namespace}, job); err != nil {
+		t.Errorf("expected Job to be created after recovery: %v", err)
+	}
+}
+
+// TestClaimerContainerName pins the 63-char container-name budget: the CRD
+// allows filterName up to 63 chars, and "claimer-" (8 chars) on top of that
+// would exceed Kubernetes' DNS-1123 container-name limit. The helper must
+// truncate the filterName to 55 chars (63 - 8), deterministically, and never
+// leave a trailing hyphen at the cut point.
+func TestClaimerContainerName(t *testing.T) {
+	if got := claimerContainerName("front-cam"); got != "claimer-front-cam" {
+		t.Errorf("short name must pass through untruncated, got %q", got)
+	}
+
+	long := strings.Repeat("a", 63) // max the CRD pattern allows
+	got := claimerContainerName(long)
+	if len(got) > 63 {
+		t.Errorf("claimer name for 63-char filterName exceeds 63 chars: %q (len %d)", got, len(got))
+	}
+	if want := "claimer-" + strings.Repeat("a", 55); got != want {
+		t.Errorf("claimer name = %q, want %q", got, want)
+	}
+	if again := claimerContainerName(long); again != got {
+		t.Errorf("truncation must be deterministic: %q != %q", again, got)
+	}
+
+	// A hyphen landing exactly at the cut point must be trimmed — DNS-1123
+	// labels can't end with '-'.
+	hyphenAtCut := strings.Repeat("a", 54) + "-" + strings.Repeat("b", 8) // 63 chars; [:55] ends with '-'
+	got = claimerContainerName(hyphenAtCut)
+	if strings.HasSuffix(got, "-") {
+		t.Errorf("claimer name must not end with a hyphen, got %q", got)
+	}
+	if want := "claimer-" + strings.Repeat("a", 54); got != want {
+		t.Errorf("claimer name = %q, want %q", got, want)
 	}
 }
 

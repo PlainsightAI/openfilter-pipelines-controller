@@ -400,8 +400,8 @@ The claimer is a standalone Go binary (`cmd/claimer/main.go`) that runs as an in
 
 A PipelineInstance with `Spec.Sources` bound to N filter containers runs
 all of them in the **same Pod** (streaming mode: one Deployment, one
-replica, N+M containers; batch mode: rejected, see 5.5). Per-container
-source plumbing:
+replica, N+M containers; batch mode: one Job with a single Pod, one init
+claimer per binding — see 5.5). Per-container source plumbing:
 
 - The reconciler normalizes `Spec.SourceRef` (legacy) and `Spec.Sources`
   into a uniform `[]ResolvedSourceBinding` via
@@ -415,6 +415,20 @@ source plumbing:
   filters (no matching binding) receive no source env vars and wire to
   upstream siblings through their own `sources: tcp://localhost:...`
   filter config.
+- Every non-empty `sources[].filterName` must match a
+  `pipeline.spec.filters[].name` exactly. An unmatched binding would be a
+  silent no-op (streaming: the source env never lands on any container;
+  batch: the claimer downloads a file no filter reads), so the reconciler
+  rejects it with a `Degraded` condition (reason `SourceBindingUnmatched`)
+  whose message lists the unmatched and available filter names. The
+  condition clears automatically once the bindings validate.
+- **Idle timeout anchoring (streaming, V1)**: multi-source instances apply
+  the idle-timeout policy from `sourceBindings[0]` — the first `sources[]`
+  entry — ONLY. This is deliberate: the semantic of "ANY source idle vs
+  ALL sources idle" is not yet defined for multi-camera (see the Step 3
+  comment in `reconcileStreaming`). An `idleTimeout` set on any other
+  binding's source is silently ignored; operators who need per-source idle
+  budgets should author one PipelineInstance per source today.
 - Pipeline authoring constraints the user must satisfy when emitting a
   multi-VideoIn Pipeline:
   - **Stagger output ports by 2.** OpenFilter binds the configured port
@@ -458,15 +472,17 @@ Constraints on multi-source batch:
 
 - Every binding's PipelineSource must be a Bucket source — RTSP makes
   no sense for batch.
-- Every binding's `Bucket.Object` must be set to a specific S3 object
-  key. The default queue-based flow (list a prefix and enqueue every
-  file under it) doesn't apply here: the user has named exactly which
-  media goes to which VideoIn, so each claimer needs a deterministic
-  key.
+- Every binding's `Bucket.Prefix` must name a specific S3 object key
+  (the platform's media model carries single-file keys in prefix). The
+  default queue-based flow (list a prefix and enqueue every file under
+  it) doesn't apply here: the user has named exactly which media goes
+  to which VideoIn, so each claimer needs a deterministic key.
 
 Both constraints surface as Degraded conditions
 (`MultiSourceBatchInvalidSource` / `MultiSourceBatchMissingObject`)
-with operator-actionable messages.
+with operator-actionable messages. A controller watch on PipelineSource
+re-triggers reconcile when a referenced source changes, and the
+Degraded condition clears automatically once validation passes.
 
 ## 6. Controller Responsibilities
 

@@ -70,7 +70,7 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 	for _, b := range sourceBindings {
 		if b.Source == nil || b.Source.Spec.Bucket == nil {
 			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource to be a Bucket source (filter %q is not)", b.FilterName)
-			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "MultiSourceBatchInvalidSource", msg)
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonMultiSourceBatchInvalidSource, msg)
 			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				log.Error(statusErr, "Failed to update status after multi-source batch validation")
 			}
@@ -78,12 +78,24 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 		}
 		if bindingObjectKey(b) == "" {
 			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource Bucket.Prefix to name a full object key; %q has an empty prefix", b.FilterName)
-			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "MultiSourceBatchMissingObject", msg)
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonMultiSourceBatchMissingObject, msg)
 			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				log.Error(statusErr, "Failed to update status after multi-source batch validation")
 			}
 			return ctrl.Result{}, nil
 		}
+	}
+
+	// Validation passed — clear any stale Degraded condition a previous
+	// failing pass left behind. The validation failures above return without
+	// a requeue, so recovery rides on the PipelineSource watch mapping in
+	// SetupWithManager re-triggering this reconcile once the source is fixed;
+	// without this clear the instance would stay Degraded forever even after
+	// the fix.
+	if err := r.clearDegradedReason(ctx, pipelineInstance,
+		ReasonMultiSourceBatchInvalidSource, ReasonMultiSourceBatchMissingObject); err != nil {
+		log.Error(err, "Failed to clear stale multi-source batch validation Degraded condition")
+		return ctrl.Result{}, err
 	}
 
 	// Stamp StartTime once for trace correlation and to anchor the
@@ -176,8 +188,8 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 
 // buildMultiSourceBatchJob constructs the Job for the multi-source batch
 // path. One init claimer per binding (direct mode), then the user's
-// filter containers with per-binding VIDEO_INPUT_PATH and FILTER_VIDEO_IN
-// env vars injected into the matching VideoIn container only.
+// filter containers with a per-binding VIDEO_INPUT_PATH env var injected
+// into the matching VideoIn container only.
 func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding, jobName string) *batchv1.Job {
 	log := logf.FromContext(ctx)
 	instanceID := pipelineInstance.GetInstanceID()
@@ -194,7 +206,7 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 	initContainers := make([]corev1.Container, 0, len(sourceBindings))
 	for i, b := range sourceBindings {
 		initContainers = append(initContainers, corev1.Container{
-			Name:  fmt.Sprintf("claimer-%s", b.FilterName),
+			Name:  claimerContainerName(b.FilterName),
 			Image: r.ClaimerImage,
 			Env:   r.buildDirectClaimerEnv(b, downloadPath[b.FilterName]),
 			VolumeMounts: []corev1.VolumeMount{
@@ -371,6 +383,25 @@ func bindingObjectKey(b ResolvedSourceBinding) string {
 		return ""
 	}
 	return b.Source.Spec.Bucket.Prefix
+}
+
+// claimerContainerName derives the init-claimer container name for a
+// binding's filter. Kubernetes container names are DNS-1123 labels capped at
+// 63 characters, and the CRD allows filterName itself to be 63 characters —
+// "claimer-" (8 chars) plus a 63-char filterName would be 71. So the
+// filterName is truncated to 55 characters (63 - len("claimer-")) before
+// prefixing. Truncation is a deterministic prefix cut so repeated reconciles
+// render byte-identical Job specs; trailing hyphens left by the cut are
+// trimmed because DNS-1123 labels must end alphanumeric. Collisions between
+// two 63-char filterNames sharing a 55-char prefix are theoretically possible
+// but rejected by the apiserver at Job create (duplicate container name) —
+// an operator-visible failure rather than a silent one.
+func claimerContainerName(filterName string) string {
+	const maxFilterNameLen = 63 - len("claimer-") // 55
+	if len(filterName) > maxFilterNameLen {
+		filterName = strings.TrimRight(filterName[:maxFilterNameLen], "-")
+	}
+	return "claimer-" + filterName
 }
 
 // perFilterInputPath computes the workspace path the claimer writes its

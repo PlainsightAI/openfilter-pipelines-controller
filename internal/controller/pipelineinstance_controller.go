@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -64,6 +65,21 @@ const (
 	// Degraded condition reasons
 	ReasonPipelineNotFound       = "PipelineNotFound"
 	ReasonPipelineSourceNotFound = "PipelineSourceNotFound"
+
+	// ReasonSourceBindingUnmatched marks a Degraded condition raised when a
+	// `sources[].filterName` matches no `pipeline.spec.filters[].name`. Without
+	// this validation the binding is a silent no-op: in streaming the
+	// per-filter env never lands on any container, and in multi-source batch
+	// the claimer downloads a file no filter container reads.
+	ReasonSourceBindingUnmatched = "SourceBindingUnmatched"
+
+	// ReasonMultiSourceBatchInvalidSource / ReasonMultiSourceBatchMissingObject
+	// mark Degraded conditions raised by multi-source batch binding validation
+	// (see reconcileBatchMultiSource). Centralized here so the
+	// clear-on-recovery path and the set path can never drift apart on the
+	// reason string.
+	ReasonMultiSourceBatchInvalidSource = "MultiSourceBatchInvalidSource"
+	ReasonMultiSourceBatchMissingObject = "MultiSourceBatchMissingObject"
 
 	// Reconciliation intervals
 	StatusUpdateInterval = 30 * time.Second
@@ -500,6 +516,43 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
+	// Validate that every named binding targets a filter container that
+	// actually exists in the Pipeline. An unmatched `sources[].filterName`
+	// would otherwise be a silent no-op: streaming never injects the source
+	// env into any container, and multi-source batch downloads a file no
+	// filter reads. Surface it as Degraded with an operator-actionable
+	// message and return nil (consistent with the other validation failures
+	// — retrying won't help until the CR or Pipeline is fixed; the Pipeline
+	// watch and CR-spec generation bump re-trigger reconcile on a fix).
+	if unmatched := unmatchedBindingFilterNames(resolvedSources, pipeline); len(unmatched) > 0 {
+		available := make([]string, 0, len(pipeline.Spec.Filters))
+		for _, f := range pipeline.Spec.Filters {
+			available = append(available, f.Name)
+		}
+		msg := fmt.Sprintf(
+			"sources[].filterName value(s) [%s] match no pipeline.spec.filters[].name; available filter names: [%s]",
+			strings.Join(unmatched, ", "), strings.Join(available, ", "))
+		log.Info("Source binding validation failed", "unmatched", unmatched, "available", available)
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonSourceBindingUnmatched, msg)
+		if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
+			log.Error(statusErr, "Failed to update status after unmatched source binding validation")
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Bindings validate — clear any stale Degraded/SourceBindingUnmatched
+	// left by a previous failing pass so external watchers see the recovery.
+	// Same conflict semantics as the PipelineNotFound clear above.
+	if err := r.clearDegradedReason(ctx, pipelineInstance, ReasonSourceBindingUnmatched); err != nil {
+		if apierrors.IsConflict(err) {
+			log.V(1).Info("Status update conflict while clearing stale Degraded; requeueing",
+				"reason", ReasonSourceBindingUnmatched)
+			return ctrl.Result{Requeue: true}, nil
+		}
+		log.Error(err, "Failed to clear stale Degraded condition")
+		return ctrl.Result{}, err
+	}
+
 	// Branch by pipeline mode
 	mode := pipeline.Spec.Mode
 	if mode == "" {
@@ -574,6 +627,28 @@ func (r *PipelineInstanceReconciler) resolveSourceBindings(ctx context.Context, 
 		})
 	}
 	return bindings, nil
+}
+
+// unmatchedBindingFilterNames returns, in binding order, every non-empty
+// binding FilterName that matches no `pipeline.spec.filters[].name`. The
+// broadcast sentinel (FilterName=="") is skipped — it targets every container
+// by design. Names are unique per the CRD's listType=map key, so no
+// deduplication is needed.
+func unmatchedBindingFilterNames(bindings []ResolvedSourceBinding, pipeline *pipelinesv1alpha1.Pipeline) []string {
+	known := make(map[string]struct{}, len(pipeline.Spec.Filters))
+	for _, f := range pipeline.Spec.Filters {
+		known[f.Name] = struct{}{}
+	}
+	var unmatched []string
+	for _, b := range bindings {
+		if b.FilterName == "" {
+			continue
+		}
+		if _, ok := known[b.FilterName]; !ok {
+			unmatched = append(unmatched, b.FilterName)
+		}
+	}
+	return unmatched
 }
 
 // getCredentials retrieves S3 credentials for the pipelineSource bucket secret, if configured.
@@ -863,15 +938,25 @@ func (r *PipelineInstanceReconciler) setCondition(pipelineInstance *pipelinesv1a
 	meta.SetStatusCondition(&pipelineInstance.Status.Conditions, condition)
 }
 
-// clearDegradedReason removes a Degraded condition whose Reason matches the
-// given value and persists the status update. It's a no-op when no matching
-// condition exists. Used to clear a stale Degraded set during a transient
-// dependency miss once the dependency reappears, so external watchers (e.g.
-// plainsight-deployment-agent) see the recovery instead of treating the
-// previous condition as terminal.
-func (r *PipelineInstanceReconciler) clearDegradedReason(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, reason string) error {
+// clearDegradedReason removes a Degraded condition whose Reason matches any
+// of the given values and persists the status update. It's a no-op when no
+// matching condition exists. Used to clear a stale Degraded set during a
+// transient dependency miss or a since-fixed validation failure, so external
+// watchers (e.g. plainsight-deployment-agent) see the recovery instead of
+// treating the previous condition as terminal.
+func (r *PipelineInstanceReconciler) clearDegradedReason(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, reasons ...string) error {
 	cond := meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded)
-	if cond == nil || cond.Reason != reason {
+	if cond == nil {
+		return nil
+	}
+	matched := false
+	for _, reason := range reasons {
+		if cond.Reason == reason {
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return nil
 	}
 	meta.RemoveStatusCondition(&pipelineInstance.Status.Conditions, ConditionTypeDegraded)
@@ -892,6 +977,15 @@ func (r *PipelineInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&pipelinesv1alpha1.Pipeline{},
 			handler.EnqueueRequestsFromMapFunc(r.pipelineInstancesForPipeline),
+		).
+		// Wake any PipelineInstance bound to a PipelineSource when that source
+		// changes. Multi-source batch validation Degrades on a misconfigured
+		// source (e.g. empty Bucket.Prefix) and returns without requeue —
+		// without this watch, fixing the PipelineSource would never re-trigger
+		// reconcile and the instance would stay Degraded forever.
+		Watches(
+			&pipelinesv1alpha1.PipelineSource{},
+			handler.EnqueueRequestsFromMapFunc(r.pipelineInstancesForPipelineSource),
 		).
 		Named("pipelineinstance").
 		Complete(r)
@@ -942,6 +1036,56 @@ func (r *PipelineInstanceReconciler) pipelineInstancesForPipeline(ctx context.Co
 		requests = append(requests, reconcile.Request{
 			NamespacedName: types.NamespacedName{Namespace: pi.Namespace, Name: pi.Name},
 		})
+	}
+	return requests
+}
+
+// pipelineInstancesForPipelineSource returns reconcile requests for every
+// PipelineInstance in the PipelineSource's namespace that references it —
+// either via `spec.sources[].sourceRef.name` or the legacy
+// `spec.sourceRef.name` (both shapes are normalized by EffectiveSources).
+// Wired in SetupWithManager so a PipelineSource create/update event wakes any
+// PipelineInstance whose last reconcile Degraded on that source (e.g.
+// multi-source batch validation failures, which return without a requeue).
+//
+// Scope: same-namespace only, mirroring pipelineInstancesForPipeline. A
+// cross-namespace sourceRef still recovers via a CR-spec edit or controller
+// restart, just without the watch-driven instant wake; if cross-ns refs ever
+// become common, switch to a field-indexed cross-namespace list keyed by
+// sourceRef.{namespace,name}.
+func (r *PipelineInstanceReconciler) pipelineInstancesForPipelineSource(ctx context.Context, obj client.Object) []reconcile.Request {
+	source, ok := obj.(*pipelinesv1alpha1.PipelineSource)
+	if !ok {
+		return nil
+	}
+	var list pipelinesv1alpha1.PipelineInstanceList
+	if err := r.List(ctx, &list, client.InNamespace(source.Namespace)); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list PipelineInstances for PipelineSource watch",
+			"pipelineSource", source.Name, "namespace", source.Namespace)
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		pi := &list.Items[i]
+		for _, ref := range pi.Spec.EffectiveSources() {
+			if ref.SourceRef.Name != source.Name {
+				continue
+			}
+			// SourceRef.Namespace may override the PipelineInstance's own
+			// namespace; honor that so a same-namespace name match doesn't
+			// fire when the ref actually points elsewhere.
+			refNS := pi.Namespace
+			if ref.SourceRef.Namespace != nil {
+				refNS = *ref.SourceRef.Namespace
+			}
+			if refNS != source.Namespace {
+				continue
+			}
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: pi.Namespace, Name: pi.Name},
+			})
+			break
+		}
 	}
 	return requests
 }

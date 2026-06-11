@@ -47,7 +47,6 @@ type BucketSource struct {
 	// +optional
 	Prefix string `json:"prefix,omitempty"`
 
-
 	// endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
 	// Examples:
 	//   - MinIO: "http://minio.example.com:9000"

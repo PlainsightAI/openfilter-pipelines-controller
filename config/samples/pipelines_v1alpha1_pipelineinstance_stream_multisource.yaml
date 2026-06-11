@@ -20,16 +20,20 @@
 #    the second VideoIn with `Address already in use`). See
 #    https://docs.plainsight.ai/docs/openfilter/your-first-filter/.
 #
-# 2. **Tag every VideoIn output topic** via the `;topic` suffix in its
-#    `sources` config. Without it every VideoIn publishes to the default
-#    topic `main` and any downstream that fans-in two upstreams (webvis,
-#    recorder, …) crashes with `RuntimeError: duplicate topic 'main'`.
-#    Convention: use the filter `name` (== this binding's filterName) as
-#    the topic so wiring is deterministic. Note filter names (and therefore
-#    `sources[].filterName` below) must be DNS-1123 labels — lowercase
-#    alphanumerics and hyphens only, no underscores — because they flow
-#    into container names; using them as topics too keeps one name per
-#    camera end-to-end.
+# 2. **Disambiguate fan-in topics.** Every VideoIn publishes on the default
+#    topic `main`; any downstream that fans-in two upstreams (webvis,
+#    recorder, …) crashes with `RuntimeError: duplicate topic 'main'`
+#    unless the topics are made distinct. Two equivalent ways:
+#      a. Publisher tags (shown below): `;topic` suffix on each VideoIn's
+#         `sources`, downstream subscribes the distinct topics. Convention
+#         for hand-authoring: topic = the filter `name`.
+#      b. Subscriber-side remap (what the plainsight-api export emits,
+#         validated end-to-end): VideoIns stay on `main`; the fan-in
+#         filter's sources use `;main><name>_main` per upstream, e.g.
+#         `tcp://localhost:5550;main>front_cam_main`.
+#    Note filter names (and therefore `sources[].filterName` below) must be
+#    DNS-1123 labels — lowercase alphanumerics and hyphens, no underscores —
+#    because they flow into container names.
 #
 # Example pipeline `pipeline-rtsp-multi` config that satisfies both:
 #

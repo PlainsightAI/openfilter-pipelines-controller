@@ -50,9 +50,9 @@ import (
 //   - Every binding's PipelineSource must have a Bucket source set
 //     (RTSP makes no sense for batch).
 //   - Every binding must resolve a deterministic object key for its
-//     direct-mode claimer: `Bucket.Object` when set, else `Bucket.Prefix`
-//     used as the full key (the platform's media model carries single-file
-//     keys in prefix — see bindingObjectKey).
+//     direct-mode claimer: `Bucket.Prefix` used as the full key (the
+//     platform's media model carries single-file keys in prefix — see
+//     bindingObjectKey).
 //
 // Either constraint failing surfaces as a Degraded condition with an
 // operator-actionable message; the reconciler returns nil so the kube
@@ -77,7 +77,7 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 			return ctrl.Result{}, nil
 		}
 		if bindingObjectKey(b) == "" {
-			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource to name a specific object (Bucket.Object or a Bucket.Prefix that is a full object key); %q has neither", b.FilterName)
+			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource Bucket.Prefix to name a full object key; %q has an empty prefix", b.FilterName)
 			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "MultiSourceBatchMissingObject", msg)
 			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 				log.Error(statusErr, "Failed to update status after multi-source batch validation")
@@ -359,19 +359,16 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 }
 
 // bindingObjectKey resolves the exact S3 object a binding's claimer must
-// download: Bucket.Object when set (explicit override), else Bucket.Prefix.
-// The platform's media model has no separate object concept — single-file
-// medias put the full object key in prefix (the agent parses the media URL
-// path into it), and the legacy queue path has always relied on
-// prefix-as-key listing for single-file sources. Direct mode uses the same
-// value as the exact GET key; a folder-style prefix fails at download with
-// a per-claimer error naming the key.
+// download: Bucket.Prefix used as the full key. The platform's media model
+// has no separate object concept — single-file medias ship their full
+// object key in prefix (the agent parses the media URL path into it), and
+// the legacy queue path has always relied on prefix-as-key listing for
+// single-file sources. Direct mode uses the same value as the exact GET
+// key; a folder-style prefix fails at download with a per-claimer error
+// naming the key.
 func bindingObjectKey(b ResolvedSourceBinding) string {
 	if b.Source == nil || b.Source.Spec.Bucket == nil {
 		return ""
-	}
-	if b.Source.Spec.Bucket.Object != "" {
-		return b.Source.Spec.Bucket.Object
 	}
 	return b.Source.Spec.Bucket.Prefix
 }

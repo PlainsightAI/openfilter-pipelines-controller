@@ -72,12 +72,12 @@ func makeMultiSourcePI(t *testing.T) (*pipelinesv1alpha1.PipelineInstance, *pipe
 	bindings := []ResolvedSourceBinding{
 		{FilterName: "front-cam", Source: &pipelinesv1alpha1.PipelineSource{
 			Spec: pipelinesv1alpha1.PipelineSourceSpec{
-				Bucket: &pipelinesv1alpha1.BucketSource{Name: "media", Object: "front.mp4"},
+				Bucket: &pipelinesv1alpha1.BucketSource{Name: "media", Prefix: "front.mp4"},
 			},
 		}},
 		{FilterName: "back-cam", Source: &pipelinesv1alpha1.PipelineSource{
 			Spec: pipelinesv1alpha1.PipelineSourceSpec{
-				Bucket: &pipelinesv1alpha1.BucketSource{Name: "media", Object: "back.mp4"},
+				Bucket: &pipelinesv1alpha1.BucketSource{Name: "media", Prefix: "back.mp4"},
 			},
 		}},
 	}
@@ -165,12 +165,12 @@ func TestReconcileBatchMultiSource_RejectsNonBucketSource(t *testing.T) {
 }
 
 // TestReconcileBatchMultiSource_RejectsMissingObject pins branch 2: a
-// binding with a Bucket source but no Object key surfaces a
-// `MultiSourceBatchMissingObject` Degraded condition.
+// binding with a Bucket source whose Prefix is empty (no object key to
+// resolve) surfaces a `MultiSourceBatchMissingObject` Degraded condition.
 func TestReconcileBatchMultiSource_RejectsMissingObject(t *testing.T) {
 	pi, pipeline, bindings := makeMultiSourcePI(t)
-	// Strip the object on back-cam.
-	bindings[1].Source.Spec.Bucket.Object = ""
+	// Strip the object key on back-cam.
+	bindings[1].Source.Spec.Bucket.Prefix = ""
 	r := newMSReconciler(t, pi)
 
 	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {

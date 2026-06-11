@@ -49,8 +49,8 @@ import (
 //     the filter chain. Unchanged from before PR2.
 //
 //   - Multi-source: ≥2 PipelineSources bound, each pinned to a
-//     specific filter container by name. Per-binding the source must
-//     name a specific S3 object via `Bucket.Object` so each VideoIn's
+//     specific filter container by name. Per-binding the source's
+//     `Bucket.Prefix` must be a full S3 object key so each VideoIn's
 //     init claimer can download a deterministic file. Job runs as
 //     parallelism=1, completions=1 — one Pod, N init claimers each
 //     writing to `/ws/<filterName>.<ext>`, M filter containers running

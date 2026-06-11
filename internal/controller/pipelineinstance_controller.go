@@ -615,17 +615,6 @@ func (r *PipelineInstanceReconciler) listBucketFiles(ctx context.Context, pipeli
 
 	bucket := pipelineSource.Spec.Bucket
 
-	// A source naming a specific object (PLAT-1071) is exactly one work
-	// item — enqueue it directly instead of listing the prefix. Without
-	// this, a single-binding batch whose PipelineSource carries Object
-	// would silently process every object under Prefix (the multi-source
-	// path honors Object via direct-mode claimers; the queue path must
-	// match). Existence is verified by the claimer's download, which
-	// surfaces a missing object as a per-file failure.
-	if bucket.Object != "" {
-		return []string{bucket.Object}, nil
-	}
-
 	endpoint := bucket.Endpoint
 	useSSL := true
 	if endpoint != "" {

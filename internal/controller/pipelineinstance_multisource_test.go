@@ -206,7 +206,7 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 		Spec: pipelinesv1alpha1.PipelineSourceSpec{
 			Bucket: &pipelinesv1alpha1.BucketSource{
 				Name:   "media",
-				Object: "front.mp4",
+				Prefix: "front.mp4",
 				CredentialsSecret: &pipelinesv1alpha1.SecretReference{
 					Name: "s3-creds",
 				},
@@ -217,7 +217,7 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 		Spec: pipelinesv1alpha1.PipelineSourceSpec{
 			Bucket: &pipelinesv1alpha1.BucketSource{
 				Name:   "media",
-				Object: "back.mp4",
+				Prefix: "back.mp4",
 				CredentialsSecret: &pipelinesv1alpha1.SecretReference{
 					Name: "s3-creds",
 				},
@@ -528,33 +528,29 @@ func assertEnvPrecedesFilterConfig(t *testing.T, c corev1.Container, name string
 }
 
 // TestBindingObjectKey pins the object-key resolution the direct-mode
-// claimers depend on: explicit Bucket.Object wins; otherwise Bucket.Prefix
-// is the full key (the platform's media model carries single-file object
-// keys in prefix — there is no separate object concept upstream); neither →
-// empty (reconcile Degrades).
+// claimers depend on: Bucket.Prefix is the full object key (the platform's
+// media model carries single-file object keys in prefix — there is no
+// separate object concept anywhere in the train); nil/empty resolves empty
+// and the reconciler Degrades.
 func TestBindingObjectKey(t *testing.T) {
-	mk := func(object, prefix string) ResolvedSourceBinding {
+	mk := func(prefix string) ResolvedSourceBinding {
 		return ResolvedSourceBinding{
 			FilterName: "front-cam",
 			Source: &pipelinesv1alpha1.PipelineSource{
 				Spec: pipelinesv1alpha1.PipelineSourceSpec{
 					Bucket: &pipelinesv1alpha1.BucketSource{
 						Name:   "b",
-						Object: object,
 						Prefix: prefix,
 					},
 				},
 			},
 		}
 	}
-	if got := bindingObjectKey(mk("clips/exact.mp4", "clips/")); got != "clips/exact.mp4" {
-		t.Errorf("explicit Object must win, got %q", got)
+	if got := bindingObjectKey(mk("clips/front_001.mp4")); got != "clips/front_001.mp4" {
+		t.Errorf("Prefix must serve as the full key, got %q", got)
 	}
-	if got := bindingObjectKey(mk("", "clips/front_001.mp4")); got != "clips/front_001.mp4" {
-		t.Errorf("Prefix must serve as the full key when Object empty, got %q", got)
-	}
-	if got := bindingObjectKey(mk("", "")); got != "" {
-		t.Errorf("neither set must resolve empty, got %q", got)
+	if got := bindingObjectKey(mk("")); got != "" {
+		t.Errorf("empty prefix must resolve empty, got %q", got)
 	}
 	if got := bindingObjectKey(ResolvedSourceBinding{FilterName: "x"}); got != "" {
 		t.Errorf("nil source must resolve empty, got %q", got)

@@ -12,9 +12,9 @@
 #
 # Constraints enforced by the controller (surfaced as Degraded conditions):
 #   - every binding's PipelineSource must be a Bucket source (no RTSP), and
-#   - every Bucket source must resolve a specific object key: `object` when
-#     set, else `prefix` is used as the full key (how single-file medias
-#     ship from the platform — no prefix scans in multi-source mode).
+#   - every Bucket source's `prefix` must be a FULL object key (how
+#     single-file medias ship from the platform — no prefix scans in
+#     multi-source mode).
 #
 # The controller injects `VIDEO_INPUT_PATH = /ws/<filterName><ext>` into
 # ONLY the filter container whose name matches the binding's filterName, so
@@ -43,14 +43,14 @@
 #         - name: sources
 #           value: "tcp://localhost:5550;front-cam, tcp://localhost:5552;back-cam"
 #
-# This sample assumes two PipelineSources, each a Bucket source naming a
-# specific object, e.g.:
+# This sample assumes two PipelineSources, each a Bucket source whose
+# prefix is a full object key, e.g.:
 #
 #   spec:
 #     bucket:
 #       endpoint: https://storage.googleapis.com
 #       name: my-benchmark-clips
-#       object: clips/front_lobby_001.mp4
+#       prefix: clips/front_lobby_001.mp4
 apiVersion: filter.plainsight.ai/v1alpha1
 kind: PipelineInstance
 metadata:

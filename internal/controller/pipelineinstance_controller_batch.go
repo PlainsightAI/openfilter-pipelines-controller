@@ -56,8 +56,16 @@ import (
 //     writing to `/ws/<filterName>.<ext>`, M filter containers running
 //     the chain. Completion is the Job's normal status (no per-file
 //     queue accounting). Delegates to reconcileBatchMultiSource.
+//
+// A SINGLE binding also takes the direct path when its bucket declares
+// `singleObject: true` (prefix is a full object key) AND the binding names
+// a filter (plural `sources` form, not the legacy broadcast sentinel): the
+// object is known up front, so the queue adds nothing — and queue mode's
+// fixed input.mp4 download destination destroys the file extension, which
+// extension-sensitive entry filters (image-in) need. The deployment agent
+// sets singleObject for single-file media kinds.
 func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding) (ctrl.Result, error) {
-	if len(sourceBindings) > 1 {
+	if len(sourceBindings) > 1 || isDirectModeSingleBinding(sourceBindings) {
 		return r.reconcileBatchMultiSource(ctx, pipelineInstance, pipeline, sourceBindings)
 	}
 	pipelineSource := sourceBindings[0].Source

@@ -415,3 +415,21 @@ func perFilterInputPath(filterName, objectKey string) string {
 	}
 	return fmt.Sprintf("/ws/%s%s", filterName, ext)
 }
+
+// isDirectModeSingleBinding reports whether a single-binding batch instance
+// should run in direct-download mode: the binding must name a filter
+// container (plural `sources` form — the legacy broadcast sentinel has no
+// container to scope the per-filter input path to) and its bucket must
+// declare `singleObject: true` (prefix is a full object key, nothing to
+// scan). Multi-binding instances always run direct; bindings without the
+// flag keep the queue-based prefix-scan flow.
+func isDirectModeSingleBinding(bindings []ResolvedSourceBinding) bool {
+	if len(bindings) != 1 {
+		return false
+	}
+	b := bindings[0]
+	return b.FilterName != "" &&
+		b.Source != nil &&
+		b.Source.Spec.Bucket != nil &&
+		b.Source.Spec.Bucket.SingleObject
+}

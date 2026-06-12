@@ -47,6 +47,19 @@ type BucketSource struct {
 	// +optional
 	Prefix string `json:"prefix,omitempty"`
 
+	// singleObject declares that prefix is a FULL object key naming exactly
+	// one file, not a prefix to scan. Batch instances whose every binding is
+	// a single-object bucket run in direct-download mode (one init claimer
+	// per binding, no Valkey work queue) — the same path multi-source
+	// instances always use — preserving the object's file extension in the
+	// per-filter input path (queue mode downloads to a fixed input.mp4,
+	// which breaks extension-sensitive filters like image-in). The
+	// deployment agent sets this for single-file media kinds
+	// (external_video, external_image, uploads); hand-authored CRs without
+	// it keep the queue-based prefix-scan flow.
+	// +optional
+	SingleObject bool `json:"singleObject,omitempty"`
+
 	// endpoint is the S3-compatible endpoint URL (required for non-AWS S3)
 	// Examples:
 	//   - MinIO: "http://minio.example.com:9000"

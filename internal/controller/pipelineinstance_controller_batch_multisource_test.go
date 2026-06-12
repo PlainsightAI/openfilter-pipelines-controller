@@ -454,3 +454,180 @@ func TestReconcileBatchMultiSource_JobProgressingStaysProgressing(t *testing.T) 
 		t.Errorf("Succeeded must not be True while Job is still active, got %+v", cond)
 	}
 }
+
+// TestIsDirectModeSingleBinding pins the routing predicate for the
+// single-binding direct path: only a NAMED binding (plural sources form)
+// whose bucket declares singleObject takes direct mode; everything else
+// keeps the queue flow.
+func TestIsDirectModeSingleBinding(t *testing.T) {
+	singleObjBucket := &pipelinesv1alpha1.PipelineSource{
+		Spec: pipelinesv1alpha1.PipelineSourceSpec{
+			Bucket: &pipelinesv1alpha1.BucketSource{Name: "media", Prefix: "clip.png", SingleObject: true},
+		},
+	}
+	prefixBucket := &pipelinesv1alpha1.PipelineSource{
+		Spec: pipelinesv1alpha1.PipelineSourceSpec{
+			Bucket: &pipelinesv1alpha1.BucketSource{Name: "media", Prefix: "clips/"},
+		},
+	}
+	rtsp := &pipelinesv1alpha1.PipelineSource{
+		Spec: pipelinesv1alpha1.PipelineSourceSpec{
+			RTSP: &pipelinesv1alpha1.RTSPSource{Host: "cam.example"},
+		},
+	}
+
+	cases := []struct {
+		name     string
+		bindings []ResolvedSourceBinding
+		want     bool
+	}{
+		{"named binding with singleObject bucket", []ResolvedSourceBinding{{FilterName: "image-in", Source: singleObjBucket}}, true},
+		{"named binding without singleObject", []ResolvedSourceBinding{{FilterName: "image-in", Source: prefixBucket}}, false},
+		{"broadcast sentinel (legacy sourceRef) never direct", []ResolvedSourceBinding{{FilterName: "", Source: singleObjBucket}}, false},
+		{"rtsp source never direct", []ResolvedSourceBinding{{FilterName: "cam", Source: rtsp}}, false},
+		{"nil source", []ResolvedSourceBinding{{FilterName: "cam", Source: nil}}, false},
+		{"two bindings handled by the multi-source branch, not this predicate", []ResolvedSourceBinding{
+			{FilterName: "a", Source: singleObjBucket}, {FilterName: "b", Source: singleObjBucket},
+		}, false},
+		{"no bindings", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isDirectModeSingleBinding(tc.bindings); got != tc.want {
+				t.Errorf("isDirectModeSingleBinding() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReconcileBatch_SingleBindingSingleObject_UsesDirectMode pins the fix
+// for single-source batch image pipelines: a single named binding whose
+// bucket declares singleObject routes through reconcileBatch into the
+// direct-download path — one init claimer carrying S3_OBJECT_KEY (no
+// Valkey env), VIDEO_INPUT_PATH preserving the object's extension
+// (/ws/image-in.png, not the queue path's fixed input.mp4), and a
+// parallelism=1/completions=1 Job. ValkeyClient is intentionally nil:
+// touching the queue would panic.
+func TestReconcileBatch_SingleBindingSingleObject_UsesDirectMode(t *testing.T) {
+	pi := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "single-direct-pi",
+			Namespace: "default",
+			UID:       types.UID("single-direct-pi-uid"),
+		},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "single-direct-pipeline"},
+			Sources: []pipelinesv1alpha1.NamedSourceRef{
+				{FilterName: "image-in", SourceRef: pipelinesv1alpha1.SourceReference{Name: "src-img"}},
+			},
+		},
+	}
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{Name: "single-direct-pipeline", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Mode: pipelinesv1alpha1.PipelineModeBatch,
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "image-in", Image: "imagein:latest"},
+				{Name: "image-out", Image: "imageout:latest"},
+			},
+		},
+	}
+	bindings := []ResolvedSourceBinding{
+		{FilterName: "image-in", Source: &pipelinesv1alpha1.PipelineSource{
+			Spec: pipelinesv1alpha1.PipelineSourceSpec{
+				Bucket: &pipelinesv1alpha1.BucketSource{Name: "media", Prefix: "images/triangle.png", SingleObject: true},
+			},
+		}},
+	}
+	r := newMSReconciler(t, pi)
+
+	if _, err := r.reconcileBatch(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	job := &batchv1.Job{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name + "-job", Namespace: pi.Namespace}, job); err != nil {
+		t.Fatalf("expected direct-mode Job to exist: %v", err)
+	}
+	if len(job.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("expected 1 init claimer, got %d", len(job.Spec.Template.Spec.InitContainers))
+	}
+	claimer := job.Spec.Template.Spec.InitContainers[0]
+	if claimer.Name != "claimer-image-in" {
+		t.Errorf("claimer name = %q, want claimer-image-in", claimer.Name)
+	}
+	var objectKey, inputPath string
+	hasValkey := false
+	for _, e := range claimer.Env {
+		switch e.Name {
+		case "S3_OBJECT_KEY":
+			objectKey = e.Value
+		case "VIDEO_INPUT_PATH":
+			inputPath = e.Value
+		case "VALKEY_URL", "STREAM", "GROUP":
+			hasValkey = true
+		}
+	}
+	if objectKey != "images/triangle.png" {
+		t.Errorf("S3_OBJECT_KEY = %q, want images/triangle.png", objectKey)
+	}
+	if inputPath != "/ws/image-in.png" {
+		t.Errorf("VIDEO_INPUT_PATH = %q, want /ws/image-in.png (extension preserved)", inputPath)
+	}
+	if hasValkey {
+		t.Errorf("direct-mode claimer must not carry Valkey env, got %v", claimer.Env)
+	}
+}
+
+// TestReconcileBatch_SingleBindingWithoutFlag_KeepsQueueMode pins backward
+// compatibility: a single binding whose bucket does NOT declare
+// singleObject must keep the queue flow — reconcileBatch must not route
+// it into the direct path (asserted by the absence of the direct-mode
+// Job; the queue path errors immediately on this fixture's nil
+// ValkeyClient, which is fine — reaching the queue IS the assertion).
+func TestReconcileBatch_SingleBindingWithoutFlag_KeepsQueueMode(t *testing.T) {
+	pi := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "single-queue-pi",
+			Namespace: "default",
+			UID:       types.UID("single-queue-pi-uid"),
+		},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "single-queue-pipeline"},
+			Sources: []pipelinesv1alpha1.NamedSourceRef{
+				{FilterName: "video-in", SourceRef: pipelinesv1alpha1.SourceReference{Name: "src-vid"}},
+			},
+		},
+	}
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{Name: "single-queue-pipeline", Namespace: "default"},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Mode:    pipelinesv1alpha1.PipelineModeBatch,
+			Filters: []pipelinesv1alpha1.Filter{{Name: "video-in", Image: "videoin:latest"}},
+		},
+	}
+	bindings := []ResolvedSourceBinding{
+		{FilterName: "video-in", Source: &pipelinesv1alpha1.PipelineSource{
+			Spec: pipelinesv1alpha1.PipelineSourceSpec{
+				Bucket: &pipelinesv1alpha1.BucketSource{Name: "media", Prefix: "clips/"},
+			},
+		}},
+	}
+	r := newMSReconciler(t, pi)
+
+	// The queue path will fail fast on the nil Valkey client — that is the
+	// expected (and asserted) routing outcome; what must NOT happen is the
+	// direct-mode Job appearing.
+	_, _ = r.reconcileBatch(context.Background(), pi, pipeline, bindings)
+
+	job := &batchv1.Job{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name + "-job", Namespace: pi.Namespace}, job); err == nil {
+		if len(job.Spec.Template.Spec.InitContainers) == 1 {
+			for _, e := range job.Spec.Template.Spec.InitContainers[0].Env {
+				if e.Name == "S3_OBJECT_KEY" {
+					t.Fatalf("single binding without singleObject must not run in direct mode")
+				}
+			}
+		}
+	}
+}

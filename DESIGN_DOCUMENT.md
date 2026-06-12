@@ -166,8 +166,8 @@ spec:
   # batch (per-binding direct-mode init claimer + VIDEO_INPUT_PATH per
   # container). See section 5.4 for the per-container env injection
   # contract; section 5.5 covers the batch-specific constraints
-  # (every binding's PipelineSource needs Bucket.Object set so the
-  # direct-mode claimer has a deterministic key).
+  # (every binding's PipelineSource Bucket.Prefix must be a FULL object
+  # key so the direct-mode claimer has a deterministic download).
   sources:
     - filterName: front-cam
       sourceRef:

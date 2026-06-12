@@ -137,14 +137,19 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 	}
 
 	// Step 3: Check for idle timeout. Multi-source pipelines anchor the
-	// idle-timeout policy to the first binding's source for V1 — the
-	// semantic of "ANY source idle vs ALL sources idle" is not yet
-	// well-defined for multi-camera. Operators who need per-source idle
-	// budgets can author multiple PipelineInstances today.
-	idleSource := sourceBindings[0].Source
+	// idle-timeout policy to ONE binding's source for V1 — the semantic of
+	// "ANY source idle vs ALL sources idle" is not yet well-defined for
+	// multi-camera. Operators who need per-source idle budgets can author
+	// multiple PipelineInstances today. The anchor is the binding with the
+	// lexicographically-smallest filterName (NOT slice position: sources is
+	// a listType=map field, so element order is not semantically stable
+	// across patches), making the applied policy deterministic.
+	idleAnchor := idleAnchorBinding(sourceBindings)
+	idleSource := idleAnchor.Source
+	idleAnchorName := idleAnchor.FilterName
 	if idleSource != nil && idleSource.Spec.RTSP != nil && idleSource.Spec.RTSP.IdleTimeout != nil {
 		if shouldComplete, reason := r.checkIdleTimeout(pipelineInstance, idleSource); shouldComplete {
-			log.Info("Streaming run idle timeout reached, marking as complete", "reason", reason)
+			log.Info("Streaming run idle timeout reached, marking as complete", "reason", reason, "anchorBinding", idleAnchorName)
 			r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionTrue, "IdleTimeout", reason)
 			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, "IdleTimeout", reason)
 
@@ -759,4 +764,20 @@ func (r *PipelineInstanceReconciler) deleteFilterServices(ctx context.Context, p
 	}
 
 	return nil
+}
+
+// idleAnchorBinding picks the binding whose source anchors the V1
+// idle-timeout policy: the lexicographically-smallest FilterName. NOT slice
+// position — `spec.sources` is a listType=map field, so element order is
+// not semantically stable across patches; sorting makes the applied policy
+// deterministic. The legacy broadcast sentinel (single binding,
+// FilterName=="") trivially anchors itself.
+func idleAnchorBinding(bindings []ResolvedSourceBinding) ResolvedSourceBinding {
+	anchor := bindings[0]
+	for _, b := range bindings[1:] {
+		if b.FilterName < anchor.FilterName {
+			anchor = b
+		}
+	}
+	return anchor
 }

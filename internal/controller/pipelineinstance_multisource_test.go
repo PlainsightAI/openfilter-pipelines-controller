@@ -888,3 +888,29 @@ func TestIsDirectoryPlaceholder(t *testing.T) {
 		}
 	}
 }
+
+// TestIdleAnchorBinding pins the deterministic idle-timeout anchor: the
+// lexicographically-smallest filterName wins regardless of slice order
+// (sources is listType=map — element order is not semantically stable).
+func TestIdleAnchorBinding(t *testing.T) {
+	a := ResolvedSourceBinding{FilterName: "a-cam"}
+	m := ResolvedSourceBinding{FilterName: "m-cam"}
+	z := ResolvedSourceBinding{FilterName: "z-cam"}
+
+	for name, order := range map[string][]ResolvedSourceBinding{
+		"sorted":   {a, m, z},
+		"reversed": {z, m, a},
+		"shuffled": {m, z, a},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := idleAnchorBinding(order); got.FilterName != "a-cam" {
+				t.Errorf("anchor = %q, want a-cam", got.FilterName)
+			}
+		})
+	}
+
+	// Legacy broadcast sentinel: single binding anchors itself.
+	if got := idleAnchorBinding([]ResolvedSourceBinding{{FilterName: ""}}); got.FilterName != "" {
+		t.Errorf("broadcast sentinel must anchor itself")
+	}
+}

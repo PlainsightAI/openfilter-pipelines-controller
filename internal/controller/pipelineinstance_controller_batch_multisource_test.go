@@ -29,7 +29,7 @@ import (
 // with a fake K8s client and verifies one of its six branches:
 //
 //   1. Bucket-source validation (binding whose source isn't a Bucket)
-//   2. Object-key validation (binding whose Bucket.Object is empty)
+//   2. Object-key validation (binding whose Bucket.Prefix — the full object key — is empty)
 //   3. Happy-path Job create + StartTime stamp
 //   4. Job-complete observation → PipelineInstance Succeeded
 //   5. Job-failed observation → PipelineInstance Degraded

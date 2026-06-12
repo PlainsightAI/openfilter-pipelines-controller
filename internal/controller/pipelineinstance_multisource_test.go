@@ -840,3 +840,26 @@ func TestBindingObjectKey(t *testing.T) {
 		t.Errorf("nil source must resolve empty, got %q", got)
 	}
 }
+
+// TestIsDirectoryPlaceholder pins the bucket-listing filter: zero-byte
+// keys ending in "/" (GCS/S3 console "folders") are skipped; real files —
+// including zero-byte regular files and oddly-named keys — are kept.
+func TestIsDirectoryPlaceholder(t *testing.T) {
+	cases := []struct {
+		key  string
+		size int64
+		want bool
+	}{
+		{"videos/", 0, true},
+		{"videos/nested/", 0, true},
+		{"videos/train.mp4", 10821688, false},
+		{"videos/empty.mp4", 0, false},
+		{"videos/", 5, false}, // non-empty trailing-slash key: keep, let processing decide
+		{"", 0, false},
+	}
+	for _, tc := range cases {
+		if got := isDirectoryPlaceholder(tc.key, tc.size); got != tc.want {
+			t.Errorf("isDirectoryPlaceholder(%q, %d) = %v, want %v", tc.key, tc.size, got, tc.want)
+		}
+	}
+}

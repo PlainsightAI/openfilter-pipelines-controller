@@ -742,10 +742,22 @@ func (r *PipelineInstanceReconciler) listBucketFiles(ctx context.Context, pipeli
 		if object.Err != nil {
 			return nil, fmt.Errorf("error listing objects: %w", object.Err)
 		}
+		if isDirectoryPlaceholder(object.Key, object.Size) {
+			continue
+		}
 		files = append(files, object.Key)
 	}
 
 	return files, nil
+}
+
+// isDirectoryPlaceholder reports whether a listed object is a zero-byte
+// directory-placeholder key (ending in "/", created by the GCS/S3 console
+// for "folders"). They are not processable files — enqueued, one would fail
+// its download/decode attempts, land in the DLQ, and fail the whole run
+// (observed empirically against a console-created GCS folder).
+func isDirectoryPlaceholder(key string, size int64) bool {
+	return strings.HasSuffix(key, "/") && size == 0
 }
 
 // getPipeline retrieves the Pipeline resource referenced by the PipelineInstance

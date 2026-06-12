@@ -156,6 +156,9 @@ func TestReconcileBatchMultiSource_RejectsNonBucketSource(t *testing.T) {
 	if cond.Status != metav1.ConditionTrue || cond.Reason != "MultiSourceBatchInvalidSource" {
 		t.Errorf("expected Degraded=True (MultiSourceBatchInvalidSource), got %+v", cond)
 	}
+	if prog := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); prog.Status == metav1.ConditionTrue {
+		t.Errorf("expected Progressing!=True alongside the validation Degraded, got %+v", prog)
+	}
 
 	// No Job must have been created when validation rejects.
 	job := &batchv1.Job{}
@@ -185,6 +188,9 @@ func TestReconcileBatchMultiSource_RejectsMissingObject(t *testing.T) {
 	cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded)
 	if cond.Status != metav1.ConditionTrue || cond.Reason != "MultiSourceBatchMissingObject" {
 		t.Errorf("expected Degraded=True (MultiSourceBatchMissingObject), got %+v", cond)
+	}
+	if prog := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); prog.Status == metav1.ConditionTrue {
+		t.Errorf("expected Progressing!=True alongside the validation Degraded, got %+v", prog)
 	}
 }
 

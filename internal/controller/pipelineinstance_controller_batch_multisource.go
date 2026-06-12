@@ -25,6 +25,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -70,19 +71,11 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 	for _, b := range sourceBindings {
 		if b.Source == nil || b.Source.Spec.Bucket == nil {
 			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource to be a Bucket source (filter %q is not)", b.FilterName)
-			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonMultiSourceBatchInvalidSource, msg)
-			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
-				log.Error(statusErr, "Failed to update status after multi-source batch validation")
-			}
-			return ctrl.Result{}, nil
+			return r.degradeBatchValidation(ctx, pipelineInstance, ReasonMultiSourceBatchInvalidSource, msg)
 		}
 		if bindingObjectKey(b) == "" {
 			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource Bucket.Prefix to name a full object key; %q has an empty prefix", b.FilterName)
-			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonMultiSourceBatchMissingObject, msg)
-			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
-				log.Error(statusErr, "Failed to update status after multi-source batch validation")
-			}
-			return ctrl.Result{}, nil
+			return r.degradeBatchValidation(ctx, pipelineInstance, ReasonMultiSourceBatchMissingObject, msg)
 		}
 	}
 
@@ -177,11 +170,23 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 		}
 	}
 
-	// Still progressing.
-	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Processing", "Multi-source batch Job is running")
-	if err := r.Status().Update(ctx, pipelineInstance); err != nil {
-		log.Error(err, "Failed to update status")
-		return ctrl.Result{}, err
+	// Still progressing. This branch re-runs every StatusUpdateInterval —
+	// skip the status write when the condition is already in this exact
+	// state (meta.SetStatusCondition reports whether anything changed), so
+	// the steady-state loop doesn't issue a no-op API write every 30s.
+	changed := meta.SetStatusCondition(&pipelineInstance.Status.Conditions, metav1.Condition{
+		Type:               ConditionTypeProgressing,
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: pipelineInstance.Generation,
+		LastTransitionTime: metav1.Now(),
+		Reason:             "Processing",
+		Message:            "Multi-source batch Job is running",
+	})
+	if changed {
+		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
+			log.Error(err, "Failed to update status")
+			return ctrl.Result{}, err
+		}
 	}
 	return ctrl.Result{RequeueAfter: StatusUpdateInterval}, nil
 }
@@ -432,4 +437,25 @@ func isDirectModeSingleBinding(bindings []ResolvedSourceBinding) bool {
 		b.Source != nil &&
 		b.Source.Spec.Bucket != nil &&
 		b.Source.Spec.Bucket.SingleObject
+}
+
+// degradeBatchValidation marks a multi-source batch validation failure:
+// Degraded=True with the given reason, Progressing=False (a
+// validation-blocked instance is not making progress; Succeeded is left
+// untouched — it records a past terminal outcome). The status write error
+// is propagated so controller-runtime retries — these validation paths
+// intentionally don't requeue, so a swallowed write failure would leave the
+// server-side status stale forever.
+func (r *PipelineInstanceReconciler) degradeBatchValidation(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, reason, msg string) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+	r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, reason, msg)
+	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, reason, msg)
+	if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
+		if apierrors.IsConflict(statusErr) {
+			return ctrl.Result{Requeue: true}, nil
+		}
+		log.Error(statusErr, "Failed to update status after multi-source batch validation")
+		return ctrl.Result{}, statusErr
+	}
+	return ctrl.Result{}, nil
 }

@@ -566,8 +566,8 @@ func TestPipelineInstancesForPipelineSource_MapsReferencingInstances(t *testing.
 	}
 	// Same name but the ref explicitly points at another namespace — the
 	// event for default/shared-src must NOT wake this instance.
-	piCrossNS := &pipelinesv1alpha1.PipelineInstance{
-		ObjectMeta: metav1.ObjectMeta{Name: "pi-cross-ns", Namespace: "default"},
+	piCrossNSAway := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pi-cross-ns-away", Namespace: "default"},
 		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
 			Sources: []pipelinesv1alpha1.NamedSourceRef{
@@ -575,10 +575,32 @@ func TestPipelineInstancesForPipelineSource_MapsReferencingInstances(t *testing.
 			},
 		},
 	}
+	// The inverse: an instance in ANOTHER namespace whose ref explicitly
+	// points at default/shared-src MUST wake on the event — the list is
+	// cluster-wide and the match resolves the ref's namespace.
+	defaultNS := "default"
+	piCrossNSToward := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pi-cross-ns-toward", Namespace: otherNS},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
+			Sources: []pipelinesv1alpha1.NamedSourceRef{
+				{FilterName: "front-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "shared-src", Namespace: &defaultNS}},
+			},
+		},
+	}
+	// Same-name source in the other namespace must not be confused with
+	// default/shared-src: an instance referencing it locally stays asleep.
+	piOtherNSLocal := &pipelinesv1alpha1.PipelineInstance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pi-other-ns-local", Namespace: otherNS},
+		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "p"},
+			SourceRef:   &pipelinesv1alpha1.SourceReference{Name: "shared-src"},
+		},
+	}
 
 	r := &PipelineInstanceReconciler{
 		Client: fake.NewClientBuilder().WithScheme(sch).
-			WithObjects(src, piMulti, piLegacy, piUnrelated, piCrossNS).Build(),
+			WithObjects(src, piMulti, piLegacy, piUnrelated, piCrossNSAway, piCrossNSToward, piOtherNSLocal).Build(),
 		Scheme: sch,
 	}
 
@@ -587,8 +609,8 @@ func TestPipelineInstancesForPipelineSource_MapsReferencingInstances(t *testing.
 	for _, req := range requests {
 		got[req.Name] = true
 	}
-	if len(requests) != 2 || !got["pi-multi"] || !got["pi-legacy"] {
-		t.Errorf("expected exactly [pi-multi pi-legacy], got %v", requests)
+	if len(requests) != 3 || !got["pi-multi"] || !got["pi-legacy"] || !got["pi-cross-ns-toward"] {
+		t.Errorf("expected exactly [pi-multi pi-legacy pi-cross-ns-toward], got %v", requests)
 	}
 }
 
@@ -667,6 +689,9 @@ func TestReconcile_UnmatchedSourceBinding_DegradesStreaming(t *testing.T) {
 	cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded)
 	if cond.Status != metav1.ConditionTrue || cond.Reason != ReasonSourceBindingUnmatched {
 		t.Fatalf("expected Degraded=True (%s), got %+v", ReasonSourceBindingUnmatched, cond)
+	}
+	if prog := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); prog.Status == metav1.ConditionTrue {
+		t.Errorf("expected Progressing!=True alongside the validation Degraded, got %+v", prog)
 	}
 	if !strings.Contains(cond.Message, "ghost-cam") {
 		t.Errorf("message must name the unmatched binding, got %q", cond.Message)

@@ -46,7 +46,10 @@ import (
 //     `Spec.SourceRef` or a one-entry `Spec.Sources`). Existing
 //     queue-based flow — list bucket → enqueue files → parallel Pods
 //     each pop one file via Valkey, claim via the init claimer, run
-//     the filter chain. Unchanged from before PR2.
+//     the filter chain. Unchanged from before PR2. Note: on this path
+//     the binding's filterName is NOT used for routing — env injection
+//     is broadcast-equivalent, exactly as single-source always behaved
+//     (the unmatched-filterName validation still runs upstream).
 //
 //   - Multi-source: ≥2 PipelineSources bound, each pinned to a
 //     specific filter container by name. Per-binding the source's

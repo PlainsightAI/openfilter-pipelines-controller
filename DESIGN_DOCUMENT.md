@@ -446,6 +446,16 @@ claimer per binding — see 5.5). Per-container source plumbing:
   `pipelines_v1alpha1_pipelineinstance_stream_multisource.yaml` sample
   for a complete worked example.
 
+  Note on ownership (deviation from the original PLAT-1141 draft): the
+  ticket sketched the controller injecting `FILTER_SOURCES` and a
+  deterministic port scheme (5550 + index). The implementation instead
+  treats ports, topics, and downstream `sources` wiring as
+  **authoring-time** concerns — baked into the Pipeline CRD by the
+  plainsight-api export (or by hand, per the samples) — and the
+  controller only injects the per-binding env (`RTSP_URL` /
+  `VIDEO_INPUT_PATH`) into the matching container. The pivot was
+  validated end-to-end with multi-camera runs (see PR #74).
+
 ### 5.5 Multi-source batch
 
 Batch mode supports both single-source (the legacy queue-based

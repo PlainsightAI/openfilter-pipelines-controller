@@ -534,8 +534,20 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			strings.Join(unmatched, ", "), strings.Join(available, ", "))
 		log.Info("Source binding validation failed", "unmatched", unmatched, "available", available)
 		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonSourceBindingUnmatched, msg)
+		// A validation-blocked instance is not making progress — clear any
+		// stale Progressing=True from a prior pass so the condition set
+		// reads consistently for automation. (Succeeded is left untouched:
+		// it records a past terminal outcome, not current activity.)
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, ReasonSourceBindingUnmatched, msg)
 		if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
+			// Propagate so controller-runtime retries: returning nil here
+			// would leave the server-side status stale with no requeue
+			// (validation failures intentionally don't requeue).
+			if apierrors.IsConflict(statusErr) {
+				return ctrl.Result{Requeue: true}, nil
+			}
 			log.Error(statusErr, "Failed to update status after unmatched source binding validation")
+			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{}, nil
 	}
@@ -1060,25 +1072,24 @@ func (r *PipelineInstanceReconciler) pipelineInstancesForPipeline(ctx context.Co
 }
 
 // pipelineInstancesForPipelineSource returns reconcile requests for every
-// PipelineInstance in the PipelineSource's namespace that references it —
+// PipelineInstance that references the PipelineSource —
 // either via `spec.sources[].sourceRef.name` or the legacy
 // `spec.sourceRef.name` (both shapes are normalized by EffectiveSources).
 // Wired in SetupWithManager so a PipelineSource create/update event wakes any
 // PipelineInstance whose last reconcile Degraded on that source (e.g.
 // multi-source batch validation failures, which return without a requeue).
 //
-// Scope: same-namespace only, mirroring pipelineInstancesForPipeline. A
-// cross-namespace sourceRef still recovers via a CR-spec edit or controller
-// restart, just without the watch-driven instant wake; if cross-ns refs ever
-// become common, switch to a field-indexed cross-namespace list keyed by
-// sourceRef.{namespace,name}.
+// Scope: cluster-wide list (the informer cache already holds every
+// PipelineInstance), with per-ref namespace resolution below — so a
+// cross-namespace sourceRef (ref.namespace set) wakes its instance exactly
+// like a same-namespace one.
 func (r *PipelineInstanceReconciler) pipelineInstancesForPipelineSource(ctx context.Context, obj client.Object) []reconcile.Request {
 	source, ok := obj.(*pipelinesv1alpha1.PipelineSource)
 	if !ok {
 		return nil
 	}
 	var list pipelinesv1alpha1.PipelineInstanceList
-	if err := r.List(ctx, &list, client.InNamespace(source.Namespace)); err != nil {
+	if err := r.List(ctx, &list); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to list PipelineInstances for PipelineSource watch",
 			"pipelineSource", source.Name, "namespace", source.Namespace)
 		return nil

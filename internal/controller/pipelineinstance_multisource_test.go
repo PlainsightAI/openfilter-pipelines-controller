@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -913,4 +914,113 @@ func TestIdleAnchorBinding(t *testing.T) {
 	if got := idleAnchorBinding([]ResolvedSourceBinding{{FilterName: ""}}); got.FilterName != "" {
 		t.Errorf("broadcast sentinel must anchor itself")
 	}
+}
+
+// TestBuildStreamingDeployment_MultiSource_GPUCoexistence pins the
+// 3-cams + 1-GPU-filter topology (PLAT-1141 + PR #66 coexistence): on a
+// Spec.Sources instance, applyGPUContainerSharing must put the
+// nvidia.com/gpu limit on exactly one container (the GPU filter), inject
+// NVIDIA_VISIBLE_DEVICES there, and leave the camera containers untouched
+// apart from their per-binding RTSP_URL.
+func TestBuildStreamingDeployment_MultiSource_GPUCoexistence(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pi.Spec.Sources = []pipelinesv1alpha1.NamedSourceRef{
+		{FilterName: "cam-a", SourceRef: pipelinesv1alpha1.SourceReference{Name: "src-a"}},
+		{FilterName: "cam-b", SourceRef: pipelinesv1alpha1.SourceReference{Name: "src-b"}},
+		{FilterName: "cam-c", SourceRef: pipelinesv1alpha1.SourceReference{Name: "src-c"}},
+	}
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "cam-a", Image: "videoin:latest"},
+				{Name: "cam-b", Image: "videoin:latest"},
+				{Name: "cam-c", Image: "videoin:latest"},
+				{Name: "detector", Image: "detector:latest", Resources: &corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+				}},
+			},
+		},
+	}
+	mkSrc := func(host string) *pipelinesv1alpha1.PipelineSource {
+		return &pipelinesv1alpha1.PipelineSource{
+			Spec: pipelinesv1alpha1.PipelineSourceSpec{
+				RTSP: &pipelinesv1alpha1.RTSPSource{Host: host, Port: 554, Path: "/s"},
+			},
+		}
+	}
+	bindings := []ResolvedSourceBinding{
+		{FilterName: "cam-a", Source: mkSrc("a.example")},
+		{FilterName: "cam-b", Source: mkSrc("b.example")},
+		{FilterName: "cam-c", Source: mkSrc("c.example")},
+	}
+
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, bindings, "gpu-coexist")
+	containers := deployment.Spec.Template.Spec.Containers
+
+	detector := findContainerByName(t, containers, "detector")
+	if got := detector.Resources.Limits["nvidia.com/gpu"]; got.Value() != 1 {
+		t.Errorf("detector nvidia.com/gpu limit = %v, want 1", got)
+	}
+	if !hasEnv(detector.Env, "NVIDIA_VISIBLE_DEVICES") {
+		t.Errorf("detector must carry NVIDIA_VISIBLE_DEVICES, env: %v", detector.Env)
+	}
+	if hasEnv(detector.Env, "RTSP_URL") {
+		t.Errorf("detector must not receive RTSP_URL")
+	}
+
+	gpuLimited := 0
+	for _, c := range containers {
+		if _, ok := c.Resources.Limits["nvidia.com/gpu"]; ok {
+			gpuLimited++
+		}
+	}
+	if gpuLimited != 1 {
+		t.Errorf("exactly one container must hold the nvidia.com/gpu limit, got %d", gpuLimited)
+	}
+	for _, name := range []string{"cam-a", "cam-b", "cam-c"} {
+		c := findContainerByName(t, containers, name)
+		if rtspURLEnv(c.Env) == "" {
+			t.Errorf("%s must carry its per-binding RTSP_URL", name)
+		}
+		if hasEnv(c.Env, "NVIDIA_VISIBLE_DEVICES") {
+			t.Errorf("%s is CPU-only and must not carry NVIDIA_VISIBLE_DEVICES", name)
+		}
+	}
+}
+
+// TestBuildStreamingDeployment_RTSPURLPrecedesFilterConfig pins the
+// streaming-side env ordering: RTSP_URL must appear before any FILTER_*
+// entry in the bound container's env so Kubernetes dependent-env expansion
+// resolves $(RTSP_URL) inside filter config values (the batch counterpart
+// is pinned via the same assertEnvPrecedesFilterConfig helper).
+func TestBuildStreamingDeployment_RTSPURLPrecedesFilterConfig(t *testing.T) {
+	r := &PipelineInstanceReconciler{}
+	pi := makeMinimalStreamingPipelineInstance()
+	pi.Spec.Sources = []pipelinesv1alpha1.NamedSourceRef{
+		{FilterName: "front-cam", SourceRef: pipelinesv1alpha1.SourceReference{Name: "front-source"}},
+	}
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "front-cam", Image: "videoin:latest", Config: []pipelinesv1alpha1.ConfigVar{
+					{Name: "sources", Value: "$(RTSP_URL);front-cam"},
+					{Name: "outputs", Value: "tcp://*:5550"},
+				}},
+			},
+		},
+	}
+	bindings := []ResolvedSourceBinding{
+		{FilterName: "front-cam", Source: &pipelinesv1alpha1.PipelineSource{
+			Spec: pipelinesv1alpha1.PipelineSourceSpec{
+				RTSP: &pipelinesv1alpha1.RTSPSource{Host: "front.example", Port: 554, Path: "/s"},
+			},
+		}},
+	}
+
+	deployment := r.buildStreamingDeployment(context.Background(), pi, pipeline, bindings, "ordering")
+	cam := findContainerByName(t, deployment.Spec.Template.Spec.Containers, "front-cam")
+	assertEnvPrecedesFilterConfig(t, cam, "RTSP_URL")
 }

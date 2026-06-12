@@ -9,16 +9,21 @@ A Kubernetes operator for managing Pipeline custom resources in the `filter.plai
 
 ## Installation
 
-### Install from Docker Hub (recommended)
+### Install from GHCR (recommended)
 
-The chart is published as an OCI artifact to Docker Hub. Helm 3.8+ supports OCI
-directly — no `helm repo add` is needed:
+The chart is published as an OCI artifact to GitHub Container Registry. Helm
+3.8+ supports OCI directly — no `helm repo add` is needed:
 
 ```bash
 helm install openfilter-pipelines-controller \
-  oci://registry-1.docker.io/plainsightai/openfilter-pipelines-controller \
+  oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
   --version <version>
 ```
+
+The chart deliberately lives in a separate registry from the container images:
+Docker Hub has a flat namespace, so the chart (whose OCI repository name is
+derived from the chart name) would share a repository with the controller
+image and overwrite the image manifest at each release tag.
 
 Replace `<version>` with the desired release (e.g. `0.5.2`); the published
 tags match the git tags on this repository (`vX.Y.Z` → chart `X.Y.Z`).

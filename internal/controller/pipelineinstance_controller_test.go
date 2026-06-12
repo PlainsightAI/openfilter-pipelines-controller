@@ -404,7 +404,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -449,7 +449,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
@@ -504,6 +504,15 @@ var _ = Describe("PipelineInstance Controller", func() {
 			// Only user-defined filters should be present.
 			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1))
 			Expect(job.Spec.Template.Spec.Containers[0].Name).To(Equal("test-filter"))
+			// Filter containers receive the claimer's download destination so
+			// VideoIn sources can be authored as `file://$(VIDEO_INPUT_PATH)`
+			// — the same contract the multi-source path provides per-binding.
+			// It must be the FIRST entry, before any FILTER_* config env:
+			// Kubernetes dependent-env expansion only resolves $(VAR)
+			// references to variables defined earlier in the list.
+			filterEnv := job.Spec.Template.Spec.Containers[0].Env
+			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: "/ws/custom-input.mp4"}))
+			Expect(filterEnv[0].Name).To(Equal("VIDEO_INPUT_PATH"))
 		})
 
 		It("should inject per-namespace Valkey credentials from namespace secret in claimer", func() {
@@ -516,7 +525,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -603,7 +612,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -661,7 +670,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: "nonexistent-pipeline",
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -705,7 +714,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: "nonexistent-pipeline",
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -746,7 +755,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName, // points at a Pipeline we'll create in step 2
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -832,14 +841,14 @@ var _ = Describe("PipelineInstance Controller", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: matchName, Namespace: namespace},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipelineName},
-					SourceRef:   pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
+					SourceRef:   &pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
 				},
 			}
 			missPI := &pipelinesv1alpha1.PipelineInstance{
 				ObjectMeta: metav1.ObjectMeta{Name: missName, Namespace: namespace},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: "some-other-pipeline"},
-					SourceRef:   pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
+					SourceRef:   &pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
 				},
 			}
 			crossPI := &pipelinesv1alpha1.PipelineInstance{
@@ -849,7 +858,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 						Name:      pipelineName,
 						Namespace: &otherNS,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
+					SourceRef: &pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, matchPI)).To(Succeed())
@@ -887,7 +896,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: "nonexistent-source",
 					},
 				},
@@ -969,7 +978,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: streamPipelineName},
-					SourceRef:   pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
+					SourceRef:   &pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, streamInstance)).To(Succeed())
@@ -1012,7 +1021,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1128,7 +1137,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1219,7 +1228,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1322,7 +1331,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1378,7 +1387,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1456,7 +1465,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1512,7 +1521,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1577,7 +1586,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1616,7 +1625,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1660,7 +1669,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1738,7 +1747,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1805,7 +1814,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1873,7 +1882,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -1942,7 +1951,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -2021,7 +2030,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -2144,7 +2153,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -2207,7 +2216,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -2299,7 +2308,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -2376,7 +2385,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 				},
@@ -2462,7 +2471,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					PipelineRef: pipelinesv1alpha1.PipelineReference{
 						Name: pipelineName,
 					},
-					SourceRef: pipelinesv1alpha1.SourceReference{
+					SourceRef: &pipelinesv1alpha1.SourceReference{
 						Name: pipelineSourceName,
 					},
 					Execution: &pipelinesv1alpha1.ExecutionConfig{
@@ -2553,7 +2562,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: streamPipelineName},
-					SourceRef:   pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
+					SourceRef:   &pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, streamInstance)).To(Succeed())
@@ -2668,7 +2677,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: streamPipelineName},
-					SourceRef:   pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
+					SourceRef:   &pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, streamInstance)).To(Succeed())
@@ -2737,7 +2746,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipelineName},
-					SourceRef:   pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
+					SourceRef:   &pipelinesv1alpha1.SourceReference{Name: pipelineSourceName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, batchInstance)).To(Succeed())
@@ -2820,7 +2829,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: streamPipelineName},
-					SourceRef:   pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
+					SourceRef:   &pipelinesv1alpha1.SourceReference{Name: rtspSourceName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, streamInstance)).To(Succeed())

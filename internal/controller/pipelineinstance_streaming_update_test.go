@@ -70,7 +70,7 @@ var _ = Describe("PipelineInstance streaming update path", func() {
 				},
 				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 					PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipelineName},
-					SourceRef:   pipelinesv1alpha1.SourceReference{Name: sourceName},
+					SourceRef:   &pipelinesv1alpha1.SourceReference{Name: sourceName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, pi)).To(Succeed())
@@ -81,7 +81,7 @@ var _ = Describe("PipelineInstance streaming update path", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 
-			Expect(r.ensureStreamingDeployment(ctx, pi, pipeline, source)).To(Succeed())
+			Expect(r.ensureStreamingDeployment(ctx, pi, pipeline, []ResolvedSourceBinding{{Source: source}})).To(Succeed())
 
 			depName := pi.Name + "-deploy"
 			depKey := types.NamespacedName{Name: depName, Namespace: ns}
@@ -98,7 +98,7 @@ var _ = Describe("PipelineInstance streaming update path", func() {
 			pi.Labels["plainsight.ai/project-id"] = "proj-NEW"
 			Expect(k8sClient.Update(ctx, pi)).To(Succeed())
 
-			Expect(r.ensureStreamingDeployment(ctx, pi, pipeline, source)).To(Succeed())
+			Expect(r.ensureStreamingDeployment(ctx, pi, pipeline, []ResolvedSourceBinding{{Source: source}})).To(Succeed())
 
 			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
 

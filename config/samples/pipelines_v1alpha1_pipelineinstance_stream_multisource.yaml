@@ -1,0 +1,73 @@
+# Multi-source streaming PipelineInstance (PLAT-1071).
+#
+# Each entry under `spec.sources` binds a PipelineSource to a specific filter
+# container in the referenced Pipeline by name. The controller injects
+# RTSP_URL into ONLY the named container — so a Pipeline with two `video-in`
+# filters (front-cam + back-cam) and a downstream `webvis` can serve two
+# distinct RTSP streams, one per camera, in a single Pod.
+#
+# This sample assumes:
+#   - A Pipeline named `pipeline-rtsp-multi` whose filters[] contains containers
+#     named `front-cam`, `back-cam`, and `webvis`.
+#   - Two PipelineSources named `pipelinesource-front` and `pipelinesource-back`.
+#
+# IMPORTANT — two openfilter authoring constraints the referenced Pipeline
+# must satisfy (both validated empirically while writing this sample):
+#
+# 1. **Stagger output ports by 2.** OpenFilter binds the configured port
+#    AND port+1 per `outputs` entry (the +1 carries ZMQ control-plane
+#    traffic). Use 5550, 5552, 5554, … — never 5550, 5551 (would crash
+#    the second VideoIn with `Address already in use`). See
+#    https://docs.plainsight.ai/docs/openfilter/your-first-filter/.
+#
+# 2. **Disambiguate fan-in topics.** Every VideoIn publishes on the default
+#    topic `main`; any downstream that fans-in two upstreams (webvis,
+#    recorder, …) crashes with `RuntimeError: duplicate topic 'main'`
+#    unless the topics are made distinct. Two equivalent ways:
+#      a. Publisher tags (shown below): `;topic` suffix on each VideoIn's
+#         `sources`, downstream subscribes the distinct topics. Convention
+#         for hand-authoring: topic = the filter `name`.
+#      b. Subscriber-side remap (what the plainsight-api export emits,
+#         validated end-to-end): VideoIns stay on `main`; the fan-in
+#         filter's sources use `;main><name>_main` per upstream, e.g.
+#         `tcp://localhost:5550;main>front_cam_main`.
+#    Note filter names (and therefore `sources[].filterName` below) must be
+#    DNS-1123 labels — lowercase alphanumerics and hyphens, no underscores —
+#    because they flow into container names.
+#
+# Example pipeline `pipeline-rtsp-multi` config that satisfies both:
+#
+#   filters:
+#     - name: front-cam
+#       config:
+#         - name: sources
+#           value: "$(RTSP_URL);front-cam"     # ;front-cam tags the topic
+#         - name: outputs
+#           value: tcp://*:5550
+#     - name: back-cam
+#       config:
+#         - name: sources
+#           value: "$(RTSP_URL);back-cam"
+#         - name: outputs
+#           value: tcp://*:5552                # +2 not +1
+#     - name: webvis
+#       config:
+#         - name: sources
+#           value: "tcp://localhost:5550;front-cam, tcp://localhost:5552;back-cam"
+#
+# Use `sourceRef` for single-source pipelines instead — `sources` is for the
+# multi-camera case.
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineInstance
+metadata:
+  name: pipelineinstance-rtsp-multisource
+spec:
+  pipelineRef:
+    name: pipeline-rtsp-multi
+  sources:
+    - filterName: front-cam
+      sourceRef:
+        name: pipelinesource-front
+    - filterName: back-cam
+      sourceRef:
+        name: pipelinesource-back

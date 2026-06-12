@@ -42,15 +42,54 @@ type ExecutionConfig struct {
 	PendingTimeout *metav1.Duration `json:"pendingTimeout,omitempty"`
 }
 
-// PipelineInstanceSpec defines the desired state of PipelineInstance
+// PipelineInstanceSpec defines the desired state of PipelineInstance.
+//
+// Source binding (PLAT-1071): a PipelineInstance binds one or more
+// PipelineSources to specific filter containers in the referenced Pipeline.
+// Exactly one of the following must be set (enforced by the XValidation
+// rule on this type):
+//
+//   - sourceRef (single-source convenience form): the bound source URL is
+//     broadcast to every filter container as RTSP_URL (streaming) or as a
+//     single VIDEO_INPUT_PATH download target (batch). The natural shape
+//     for one-camera pipelines — no filter names required.
+//
+//   - sources (multi-source): each entry binds a PipelineSource to the
+//     filter container whose name matches `filterName`. The controller
+//     injects the source-derived env vars (RTSP_URL / VIDEO_INPUT_PATH)
+//     into ONLY that container. Multiple bindings produce multiple
+//     per-container source URLs, enabling multi-camera pipelines where
+//     each VideoIn filter consumes a distinct source.
+//
+// Setting both fields, or neither, is a validation error rejected at
+// admission time.
+// +kubebuilder:validation:XValidation:rule="(has(self.sourceRef) && !has(self.sources)) || (!has(self.sourceRef) && has(self.sources) && size(self.sources) > 0)",message="exactly one of `sourceRef` or `sources` must be set (sources must be non-empty)"
 type PipelineInstanceSpec struct {
 	// pipelineRef references the Pipeline resource to execute
 	// +required
 	PipelineRef PipelineReference `json:"pipelineRef"`
 
-	// sourceRef references the PipelineSource resource for input configuration
-	// +required
-	SourceRef SourceReference `json:"sourceRef"`
+	// sourceRef references the PipelineSource resource for input
+	// configuration. This is the convenience form for single-source
+	// pipelines — the source URL is broadcast to every filter container,
+	// so the author doesn't need to know filter names. For multi-source
+	// pipelines, use `sources` instead. Both forms are first-class and
+	// supported indefinitely.
+	// +optional
+	SourceRef *SourceReference `json:"sourceRef,omitempty"`
+
+	// sources binds one or more PipelineSources to specific filter
+	// containers by name. Each entry targets the container whose
+	// `pipeline.spec.filters[].name` matches `filterName`; the controller
+	// injects the source-derived env vars into only that container. Use
+	// for multi-camera pipelines where each VideoIn filter consumes a
+	// distinct source.
+	//
+	// Exactly one of `sourceRef` or `sources` must be set.
+	// +optional
+	// +listType=map
+	// +listMapKey=filterName
+	Sources []NamedSourceRef `json:"sources,omitempty"`
 
 	// execution defines how the pipeline should be executed
 	// +optional
@@ -97,6 +136,50 @@ type SourceReference struct {
 	// If not specified, the PipelineInstance's namespace is used
 	// +optional
 	Namespace *string `json:"namespace,omitempty"`
+}
+
+// NamedSourceRef binds a PipelineSource to a specific filter container by
+// name. The controller injects the source-derived env vars (RTSP_URL for
+// streaming, VIDEO_INPUT_PATH for batch) into only the container whose
+// `pipeline.spec.filters[].name` matches `filterName`. This lets a single
+// PipelineInstance run a multi-camera pipeline where each VideoIn filter
+// pulls a distinct source.
+type NamedSourceRef struct {
+	// filterName names the filter container in the referenced Pipeline
+	// that consumes this source. Must match a `pipeline.spec.filters[].name`
+	// value exactly. Constrained to DNS-1123 label rules (lowercase
+	// alphanum + hyphens, max 63 chars) so it can safely flow into
+	// generated container / volume / env names.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	FilterName string `json:"filterName"`
+
+	// sourceRef references the PipelineSource resource that provides the
+	// input for the filter named by `filterName`.
+	// +required
+	SourceRef SourceReference `json:"sourceRef"`
+}
+
+// EffectiveSources returns the canonical list of (filterName, source) bindings
+// for this PipelineInstance, normalizing the singular `SourceRef` field into
+// the plural shape. When `SourceRef` is set, the returned list has a single entry
+// with an empty FilterName — a sentinel that means "broadcast to every
+// container" in the reconciler's per-binding loop. When `Sources` is set, the
+// returned list is the user's bindings verbatim. Validation at admission time
+// guarantees exactly one of the two is set.
+func (s *PipelineInstanceSpec) EffectiveSources() []NamedSourceRef {
+	if len(s.Sources) > 0 {
+		return s.Sources
+	}
+	if s.SourceRef != nil {
+		return []NamedSourceRef{{
+			FilterName: "",
+			SourceRef:  *s.SourceRef,
+		}}
+	}
+	return nil
 }
 
 // PipelineInstanceStatus defines the observed state of PipelineInstance.

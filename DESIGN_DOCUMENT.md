@@ -145,10 +145,36 @@ spec:
     name: <pipeline-name>
     namespace: default  # optional, defaults to PipelineInstance namespace
 
-  # sourceRef references the PipelineSource for input configuration
+  # SOURCE BINDING (PLAT-1071): exactly one of `sourceRef` or `sources`
+  # must be set. Enforced by an admission-time XValidation rule on the
+  # spec; setting both, or neither, is rejected by the kube API server.
+
+  # sourceRef (legacy, single-source): references the PipelineSource for
+  # input configuration. The source URL is broadcast to every filter
+  # container as RTSP_URL (streaming) or as a single VIDEO_INPUT_PATH
+  # download target (batch). Existing single-source CRs continue to apply
+  # unchanged.
   sourceRef:
     name: <source-name>
     namespace: default  # optional, defaults to PipelineInstance namespace
+
+  # sources (multi-source): each entry binds a PipelineSource to a
+  # specific filter container by name. The controller injects the
+  # source-derived env vars into ONLY the matching container, enabling
+  # multi-camera pipelines where each VideoIn filter consumes a distinct
+  # source. Supported in both streaming (RTSP_URL per container) and
+  # batch (per-binding direct-mode init claimer + VIDEO_INPUT_PATH per
+  # container). See section 5.4 for the per-container env injection
+  # contract; section 5.5 covers the batch-specific constraints
+  # (every binding's PipelineSource Bucket.Prefix must be a FULL object
+  # key so the direct-mode claimer has a deterministic download).
+  sources:
+    - filterName: front-cam
+      sourceRef:
+        name: pipelinesource-front
+    - filterName: back-cam
+      sourceRef:
+        name: pipelinesource-back
 
   # execution defines how the pipeline should be executed
   execution:
@@ -369,6 +395,104 @@ The claimer is a standalone Go binary (`cmd/claimer/main.go`) that runs as an in
 - On error: any filter exits non-zero → Pod becomes Failed
 - On success: all filters exit 0 → Pod Succeeded
 - Filters should be idempotent (at-least-once delivery semantics)
+
+### 5.4 Multi-source contract (PLAT-1071)
+
+A PipelineInstance with `Spec.Sources` bound to N filter containers runs
+all of them in the **same Pod** (streaming mode: one Deployment, one
+replica, N+M containers; batch mode: one Job with a single Pod, one init
+claimer per binding — see 5.5). Per-container source plumbing:
+
+- The reconciler normalizes `Spec.SourceRef` (legacy) and `Spec.Sources`
+  into a uniform `[]ResolvedSourceBinding` via
+  `PipelineInstanceSpec.EffectiveSources()`. Legacy `SourceRef` becomes
+  one entry with `FilterName == ""` — the broadcast sentinel — and the
+  source env vars apply to every container in the pod (today's behavior).
+- For each entry where `FilterName != ""`, the controller injects
+  `RTSP_URL` (and, when credentials are present, `_RTSP_USERNAME` /
+  `_RTSP_PASSWORD` from the referenced Secret) into ONLY the container
+  whose `pipeline.spec.filters[].name` matches `FilterName`. Downstream
+  filters (no matching binding) receive no source env vars and wire to
+  upstream siblings through their own `sources: tcp://localhost:...`
+  filter config.
+- Every non-empty `sources[].filterName` must match a
+  `pipeline.spec.filters[].name` exactly. An unmatched binding would be a
+  silent no-op (streaming: the source env never lands on any container;
+  batch: the claimer downloads a file no filter reads), so the reconciler
+  rejects it with a `Degraded` condition (reason `SourceBindingUnmatched`)
+  whose message lists the unmatched and available filter names. The
+  condition clears automatically once the bindings validate.
+- **Idle timeout anchoring (streaming, V1)**: multi-source instances apply
+  the idle-timeout policy from `sourceBindings[0]` — the first `sources[]`
+  entry — ONLY. This is deliberate: the semantic of "ANY source idle vs
+  ALL sources idle" is not yet defined for multi-camera (see the Step 3
+  comment in `reconcileStreaming`). An `idleTimeout` set on any other
+  binding's source is silently ignored; operators who need per-source idle
+  budgets should author one PipelineInstance per source today.
+- Pipeline authoring constraints the user must satisfy when emitting a
+  multi-VideoIn Pipeline:
+  - **Stagger output ports by 2.** OpenFilter binds the configured port
+    AND `port + 1` per `outputs` (the +1 carries ZMQ control-plane
+    traffic). For N VideoIn filters use 5550, 5552, 5554, … — never
+    5550, 5551.
+  - **Tag every VideoIn output topic explicitly** via the `;topic`
+    suffix in its `sources` config. Without it every VideoIn publishes
+    to the default topic `main` and any downstream that fans-in two
+    upstreams crashes with `RuntimeError: duplicate topic 'main'`. Use
+    the filter name as the topic for determinism.
+
+  Neither constraint is enforced by the controller — they live in the
+  user-authored `filter.config` strings. See the
+  `pipelines_v1alpha1_pipelineinstance_stream_multisource.yaml` sample
+  for a complete worked example.
+
+  Note on ownership (deviation from the original PLAT-1141 draft): the
+  ticket sketched the controller injecting `FILTER_SOURCES` and a
+  deterministic port scheme (5550 + index). The implementation instead
+  treats ports, topics, and downstream `sources` wiring as
+  **authoring-time** concerns — baked into the Pipeline CRD by the
+  plainsight-api export (or by hand, per the samples) — and the
+  controller only injects the per-binding env (`RTSP_URL` /
+  `VIDEO_INPUT_PATH`) into the matching container. The pivot was
+  validated end-to-end with multi-camera runs (see PR #74).
+
+### 5.5 Multi-source batch
+
+Batch mode supports both single-source (the legacy queue-based
+parallel-files-per-bucket flow, unchanged) and multi-source bindings
+(one Pod, N init claimers, N VideoIns).
+
+The reconciler branches on `len(Sources)` at the top of
+`reconcileBatch`:
+
+- **Single-source**: existing flow. List bucket, enqueue files in
+  Valkey, parallel Pods each pop one file via the init claimer, run
+  the filter chain.
+
+- **Multi-source** (`reconcileBatchMultiSource`): no Valkey work
+  queue, no bucket listing. One init claimer per binding in **direct
+  mode** (S3_OBJECT_KEY env tells the claimer to skip Valkey and
+  download exactly that object), each writing to
+  `/ws/<filterName>.<ext>`. Filter containers run as a chain in the
+  same Pod with VIDEO_INPUT_PATH injected on each matching VideoIn
+  container. Job is `parallelism=1, completions=1` and completion is
+  the Job's own Succeeded/Failed status (no per-file accounting).
+
+Constraints on multi-source batch:
+
+- Every binding's PipelineSource must be a Bucket source — RTSP makes
+  no sense for batch.
+- Every binding's `Bucket.Prefix` must name a specific S3 object key
+  (the platform's media model carries single-file keys in prefix). The
+  default queue-based flow (list a prefix and enqueue every file under
+  it) doesn't apply here: the user has named exactly which media goes
+  to which VideoIn, so each claimer needs a deterministic key.
+
+Both constraints surface as Degraded conditions
+(`MultiSourceBatchInvalidSource` / `MultiSourceBatchMissingObject`)
+with operator-actionable messages. A controller watch on PipelineSource
+re-triggers reconcile when a referenced source changes, and the
+Degraded condition clears automatically once validation passes.
 
 ## 6. Controller Responsibilities
 

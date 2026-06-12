@@ -56,6 +56,12 @@ const (
 	EnvS3PathStyle    = "S3_USE_PATH_STYLE"
 	EnvS3SkipTLS      = "S3_INSECURE_SKIP_TLS_VERIFY"
 	EnvVideoInput     = "VIDEO_INPUT_PATH"
+	// EnvS3ObjectKey selects "direct download" mode for the multi-source
+	// batch path (PLAT-1071). When set, the claimer skips Valkey and
+	// downloads exactly this S3 object key to VIDEO_INPUT_PATH, then
+	// exits. Used by the per-VideoIn init claimer the batch reconciler
+	// emits for multi-source bindings.
+	EnvS3ObjectKey = "S3_OBJECT_KEY"
 
 	// Volume mount paths
 	defaultInputPath = "/ws/input.mp4"
@@ -89,6 +95,24 @@ func run() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Direct-download mode (PLAT-1071): when S3_OBJECT_KEY is set, the
+	// caller has named a specific object the claimer must download. This
+	// is the multi-source batch path — one init claimer per VideoIn
+	// binding, each pointing at its bound media's object. No Valkey
+	// work-queue is involved.
+	if cfg.S3ObjectKey != "" {
+		log.Printf("Direct-download mode: bucket=%s, key=%s, dest=%s", cfg.S3Bucket, cfg.S3ObjectKey, cfg.VideoInputPath)
+		minioClient, err := createMinIOClient(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to create MinIO client: %w", err)
+		}
+		if err := downloadFile(ctx, minioClient, cfg.S3Bucket, cfg.S3ObjectKey, cfg.VideoInputPath); err != nil {
+			return fmt.Errorf("failed to download file: %w", err)
+		}
+		log.Printf("Downloaded %s to %s", cfg.S3ObjectKey, cfg.VideoInputPath)
+		return nil
 	}
 
 	// Create Valkey client (with retry for outages during startup)
@@ -163,6 +187,9 @@ type Config struct {
 	S3UsePathStyle bool
 	S3SkipTLS      bool
 	VideoInputPath string
+	// S3ObjectKey selects direct-download mode (PLAT-1071). Empty in the
+	// legacy queue-based path.
+	S3ObjectKey string
 }
 
 func loadConfig() (*Config, error) {
@@ -186,18 +213,22 @@ func loadConfig() (*Config, error) {
 			}
 			return defaultInputPath
 		}(),
+		S3ObjectKey: os.Getenv(EnvS3ObjectKey),
 	}
 
 	// Parse boolean flags
 	cfg.S3UsePathStyle = getEnvOrDefault(EnvS3PathStyle, "false") == "true"
 	cfg.S3SkipTLS = getEnvOrDefault(EnvS3SkipTLS, "false") == "true"
 
-	// Validate required fields
-	if cfg.Stream == "" {
-		return nil, fmt.Errorf("STREAM is required")
-	}
-	if cfg.Group == "" {
-		return nil, fmt.Errorf("GROUP is required")
+	// STREAM / GROUP are required only in queue-based mode. In direct
+	// mode (S3_OBJECT_KEY set) the claimer skips Valkey entirely.
+	if cfg.S3ObjectKey == "" {
+		if cfg.Stream == "" {
+			return nil, fmt.Errorf("STREAM is required")
+		}
+		if cfg.Group == "" {
+			return nil, fmt.Errorf("GROUP is required")
+		}
 	}
 	// POD_NAME and POD_NAMESPACE are optional; retained for diagnostics only.
 	if cfg.S3Bucket == "" {

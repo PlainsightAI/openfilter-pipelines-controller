@@ -1,0 +1,69 @@
+# Multi-source batch PipelineInstance (PLAT-1071) — e.g. a multi-camera
+# benchmark run comparing two recorded clips against per-camera ground truth.
+#
+# When `spec.sources` has more than one entry the controller switches the
+# batch path to DIRECT mode: a single-Pod Job (parallelism=1, completions=1)
+# with one init claimer per binding. Each claimer downloads its bound
+# bucket object to `/ws/<filterName><ext>` (extension preserved from the
+# object key, defaulting to .mp4) and skips the Valkey work queue entirely
+# (S3_OBJECT_KEY env tells it which single object to fetch). The
+# single-source path — `sourceRef`, or a one-element `sources` — keeps the
+# existing Valkey queue model for multi-file buckets.
+#
+# Constraints enforced by the controller (surfaced as Degraded conditions):
+#   - every binding's PipelineSource must be a Bucket source (no RTSP), and
+#   - every Bucket source's `prefix` must be a FULL object key (how
+#     single-file medias ship from the platform — no prefix scans in
+#     multi-source mode).
+#
+# The controller injects `VIDEO_INPUT_PATH = /ws/<filterName><ext>` into
+# ONLY the filter container whose name matches the binding's filterName, so
+# the referenced Pipeline authors each VideoIn source as
+# `file://$(VIDEO_INPUT_PATH)` — the value resolves per container.
+#
+# The same two openfilter authoring constraints as the streaming
+# multi-source sample apply: stagger output ports by 2 (5550, 5552, …) and
+# disambiguate fan-in topics (publisher tags shown below; the
+# plainsight-api export emits the equivalent subscriber-side remap form —
+# see the streaming multisource sample). Example `pipeline-batch-multi`:
+#
+#   filters:
+#     - name: front-cam
+#       config:
+#         - name: sources
+#           value: "file://$(VIDEO_INPUT_PATH);front-cam"
+#         - name: outputs
+#           value: tcp://*:5550
+#     - name: back-cam
+#       config:
+#         - name: sources
+#           value: "file://$(VIDEO_INPUT_PATH);back-cam"
+#         - name: outputs
+#           value: tcp://*:5552                # +2 not +1
+#     - name: tracker
+#       config:
+#         - name: sources
+#           value: "tcp://localhost:5550;front-cam, tcp://localhost:5552;back-cam"
+#
+# This sample assumes two PipelineSources, each a Bucket source whose
+# prefix is a full object key, e.g.:
+#
+#   spec:
+#     bucket:
+#       endpoint: https://storage.googleapis.com
+#       name: my-benchmark-clips
+#       prefix: clips/front_lobby_001.mp4
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineInstance
+metadata:
+  name: pipelineinstance-batch-multisource
+spec:
+  pipelineRef:
+    name: pipeline-batch-multi
+  sources:
+    - filterName: front-cam
+      sourceRef:
+        name: pipelinesource-front-clip
+    - filterName: back-cam
+      sourceRef:
+        name: pipelinesource-back-clip

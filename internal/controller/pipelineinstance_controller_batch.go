@@ -38,8 +38,40 @@ import (
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
-// reconcileBatch handles the batch (Job-based) reconciliation path
-func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource) (ctrl.Result, error) {
+// reconcileBatch handles the batch (Job-based) reconciliation path.
+//
+// Two sub-paths (PLAT-1071):
+//
+//   - Single-source: one PipelineSource bound (either via legacy
+//     `Spec.SourceRef` or a one-entry `Spec.Sources`). Existing
+//     queue-based flow — list bucket → enqueue files → parallel Pods
+//     each pop one file via Valkey, claim via the init claimer, run
+//     the filter chain. Unchanged from before PR2. Note: on this path
+//     the binding's filterName is NOT used for routing — env injection
+//     is broadcast-equivalent, exactly as single-source always behaved
+//     (the unmatched-filterName validation still runs upstream).
+//
+//   - Multi-source: ≥2 PipelineSources bound, each pinned to a
+//     specific filter container by name. Per-binding the source's
+//     `Bucket.Prefix` must be a full S3 object key so each VideoIn's
+//     init claimer can download a deterministic file. Job runs as
+//     parallelism=1, completions=1 — one Pod, N init claimers each
+//     writing to `/ws/<filterName>.<ext>`, M filter containers running
+//     the chain. Completion is the Job's normal status (no per-file
+//     queue accounting). Delegates to reconcileBatchMultiSource.
+//
+// A SINGLE binding also takes the direct path when its bucket declares
+// `singleObject: true` (prefix is a full object key) AND the binding names
+// a filter (plural `sources` form, not the legacy broadcast sentinel): the
+// object is known up front, so the queue adds nothing — and queue mode's
+// fixed input.mp4 download destination destroys the file extension, which
+// extension-sensitive entry filters (image-in) need. The deployment agent
+// sets singleObject for single-file media kinds.
+func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding) (ctrl.Result, error) {
+	if len(sourceBindings) > 1 || isDirectModeSingleBinding(sourceBindings) {
+		return r.reconcileBatchMultiSource(ctx, pipelineInstance, pipeline, sourceBindings)
+	}
+	pipelineSource := sourceBindings[0].Source
 	log := logf.FromContext(ctx)
 
 	// Ensure counts object exists before initialization
@@ -523,9 +555,24 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			})
 		}
 
-		// Start with config env vars, then add filter-specific env vars
-		// Filter-specific env vars can override config if they have the same name
-		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env))
+		// Start with the claimer's download destination, THEN config env,
+		// then filter-specific env vars (later entries override earlier
+		// duplicates on the running container).
+		//
+		// VIDEO_INPUT_PATH MUST precede the FILTER_* config env in the
+		// list: Kubernetes dependent-env expansion only resolves $(VAR)
+		// references to variables defined EARLIER — with the old
+		// config-first ordering, `sources: file://$(VIDEO_INPUT_PATH)`
+		// arrived in the container as a literal unexpanded string.
+		// Exposed to every filter container (single-source has no
+		// per-filter binding to key on — legacy broadcast); only VideoIn
+		// entries reference it. Same contract the multi-source path
+		// provides per-binding (see buildBatchFilterContainersForMultiSource).
+		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env)+1)
+		containerEnv = append(containerEnv, corev1.EnvVar{
+			Name:  "VIDEO_INPUT_PATH",
+			Value: videoInputPath,
+		})
 		containerEnv = append(containerEnv, configEnvVars...)
 
 		// Inject GPU env vars before user env vars so users can override if needed.

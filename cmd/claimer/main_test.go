@@ -55,6 +55,70 @@ func TestExponentialBackoff(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_DirectMode covers the PLAT-1071 direct-download mode
+// shape on loadConfig: when S3_OBJECT_KEY is set the Stream/Group env
+// requirement is lifted (because the claimer skips Valkey), and the
+// resulting Config carries the object key for run() to dispatch on.
+func TestLoadConfig_DirectMode(t *testing.T) {
+	// Required for every mode.
+	t.Setenv("S3_BUCKET", "test-bucket")
+
+	t.Run("direct_mode_no_stream_or_group_required", func(t *testing.T) {
+		t.Setenv("S3_OBJECT_KEY", "media/front.mp4")
+		// Deliberately do NOT set STREAM or GROUP.
+		t.Setenv("STREAM", "")
+		t.Setenv("GROUP", "")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("direct mode must not require STREAM/GROUP, got error: %v", err)
+		}
+		if cfg.S3ObjectKey != "media/front.mp4" {
+			t.Errorf("S3ObjectKey = %q, want %q", cfg.S3ObjectKey, "media/front.mp4")
+		}
+	})
+
+	t.Run("queue_mode_still_requires_stream", func(t *testing.T) {
+		// Leaving S3_OBJECT_KEY empty puts the claimer back in queue mode,
+		// where STREAM/GROUP remain mandatory — the existing contract.
+		t.Setenv("S3_OBJECT_KEY", "")
+		t.Setenv("STREAM", "")
+		t.Setenv("GROUP", "g")
+		if _, err := loadConfig(); err == nil {
+			t.Error("queue mode must reject missing STREAM, got nil error")
+		}
+	})
+
+	t.Run("queue_mode_still_requires_group", func(t *testing.T) {
+		t.Setenv("S3_OBJECT_KEY", "")
+		t.Setenv("STREAM", "s")
+		t.Setenv("GROUP", "")
+		if _, err := loadConfig(); err == nil {
+			t.Error("queue mode must reject missing GROUP, got nil error")
+		}
+	})
+
+	t.Run("s3_bucket_required_in_either_mode", func(t *testing.T) {
+		t.Setenv("S3_BUCKET", "")
+		t.Setenv("S3_OBJECT_KEY", "media/front.mp4")
+		if _, err := loadConfig(); err == nil {
+			t.Error("S3_BUCKET must be required even in direct mode, got nil error")
+		}
+	})
+
+	t.Run("video_input_path_default_applies_in_direct_mode", func(t *testing.T) {
+		t.Setenv("S3_BUCKET", "test-bucket")
+		t.Setenv("S3_OBJECT_KEY", "media/front.mp4")
+		t.Setenv("VIDEO_INPUT_PATH", "")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("expected default path to satisfy validation, got: %v", err)
+		}
+		if cfg.VideoInputPath == "" {
+			t.Error("expected defaultInputPath to be applied, got empty")
+		}
+	})
+}
+
 func TestLoadConfig_ValkeyPassword(t *testing.T) {
 	t.Setenv("STREAM", "test-stream")
 	t.Setenv("GROUP", "test-group")

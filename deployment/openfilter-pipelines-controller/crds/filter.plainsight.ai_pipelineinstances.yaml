@@ -1003,8 +1003,13 @@ spec:
                 - name
                 type: object
               sourceRef:
-                description: sourceRef references the PipelineSource resource for
-                  input configuration
+                description: |-
+                  sourceRef references the PipelineSource resource for input
+                  configuration. This is the convenience form for single-source
+                  pipelines — the source URL is broadcast to every filter container,
+                  so the author doesn't need to know filter names. For multi-source
+                  pipelines, use `sources` instead. Both forms are first-class and
+                  supported indefinitely.
                 properties:
                   name:
                     description: name is the name of the PipelineSource resource
@@ -1017,6 +1022,60 @@ spec:
                 required:
                 - name
                 type: object
+              sources:
+                description: |-
+                  sources binds one or more PipelineSources to specific filter
+                  containers by name. Each entry targets the container whose
+                  `pipeline.spec.filters[].name` matches `filterName`; the controller
+                  injects the source-derived env vars into only that container. Use
+                  for multi-camera pipelines where each VideoIn filter consumes a
+                  distinct source.
+
+                  Exactly one of `sourceRef` or `sources` must be set.
+                items:
+                  description: |-
+                    NamedSourceRef binds a PipelineSource to a specific filter container by
+                    name. The controller injects the source-derived env vars (RTSP_URL for
+                    streaming, VIDEO_INPUT_PATH for batch) into only the container whose
+                    `pipeline.spec.filters[].name` matches `filterName`. This lets a single
+                    PipelineInstance run a multi-camera pipeline where each VideoIn filter
+                    pulls a distinct source.
+                  properties:
+                    filterName:
+                      description: |-
+                        filterName names the filter container in the referenced Pipeline
+                        that consumes this source. Must match a `pipeline.spec.filters[].name`
+                        value exactly. Constrained to DNS-1123 label rules (lowercase
+                        alphanum + hyphens, max 63 chars) so it can safely flow into
+                        generated container / volume / env names.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    sourceRef:
+                      description: |-
+                        sourceRef references the PipelineSource resource that provides the
+                        input for the filter named by `filterName`.
+                      properties:
+                        name:
+                          description: name is the name of the PipelineSource resource
+                          type: string
+                        namespace:
+                          description: |-
+                            namespace is the namespace of the PipelineSource resource
+                            If not specified, the PipelineInstance's namespace is used
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - filterName
+                  - sourceRef
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - filterName
+                x-kubernetes-list-type: map
               tolerations:
                 description: |-
                   tolerations are appended to the pod spec, alongside any controller-injected
@@ -1061,8 +1120,12 @@ spec:
                 type: array
             required:
             - pipelineRef
-            - sourceRef
             type: object
+            x-kubernetes-validations:
+            - message: exactly one of `sourceRef` or `sources` must be set (sources
+                must be non-empty)
+              rule: (has(self.sourceRef) && !has(self.sources)) || (!has(self.sourceRef)
+                && has(self.sources) && size(self.sources) > 0)
           status:
             description: status defines the observed state of PipelineInstance
             properties:

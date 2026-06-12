@@ -168,7 +168,7 @@ func TestReconcileBatch_BuildAndApplyAreSiblingsOfReconcile(t *testing.T) {
 		},
 		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipeline.Name},
-			SourceRef:   pipelinesv1alpha1.SourceReference{Name: source.Name},
+			SourceRef:   &pipelinesv1alpha1.SourceReference{Name: source.Name},
 		},
 		Status: pipelinesv1alpha1.PipelineInstanceStatus{
 			StartTime: &startTime,
@@ -193,7 +193,7 @@ func TestReconcileBatch_BuildAndApplyAreSiblingsOfReconcile(t *testing.T) {
 	}
 
 	ctx, endReconcile := withReconcileSpan(context.Background())
-	if _, err := r.reconcileBatch(ctx, pi, pipeline, source); err != nil {
+	if _, err := r.reconcileBatch(ctx, pi, pipeline, []ResolvedSourceBinding{{Source: source}}); err != nil {
 		t.Fatalf("reconcileBatch returned error: %v", err)
 	}
 	endReconcile()
@@ -231,7 +231,7 @@ func makeStreamingFixtures(name string) (*pipelinesv1alpha1.Pipeline, *pipelines
 		},
 		Spec: pipelinesv1alpha1.PipelineInstanceSpec{
 			PipelineRef: pipelinesv1alpha1.PipelineReference{Name: pipeline.Name},
-			SourceRef:   pipelinesv1alpha1.SourceReference{Name: source.Name},
+			SourceRef:   &pipelinesv1alpha1.SourceReference{Name: source.Name},
 		},
 		Status: pipelinesv1alpha1.PipelineInstanceStatus{
 			StartTime: &startTime,
@@ -264,7 +264,7 @@ func TestReconcileStreaming_Create_BuildAndApplyAreSiblingsOfReconcile(t *testin
 	}
 
 	ctx, endReconcile := withReconcileSpan(context.Background())
-	if _, err := r.reconcileStreaming(ctx, pi, pipeline, source); err != nil {
+	if _, err := r.reconcileStreaming(ctx, pi, pipeline, []ResolvedSourceBinding{{Source: source}}); err != nil {
 		t.Fatalf("reconcileStreaming (create) returned error: %v", err)
 	}
 	endReconcile()
@@ -379,7 +379,7 @@ func TestReconcileStreaming_Update_BuildAndApplyAreSiblingsOfReconcile(t *testin
 	}
 
 	ctx, endReconcile := withReconcileSpan(context.Background())
-	if _, err := r.reconcileStreaming(ctx, pi, pipeline, source); err != nil {
+	if _, err := r.reconcileStreaming(ctx, pi, pipeline, []ResolvedSourceBinding{{Source: source}}); err != nil {
 		t.Fatalf("reconcileStreaming (update) returned error: %v", err)
 	}
 	endReconcile()

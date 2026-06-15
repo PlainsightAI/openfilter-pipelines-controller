@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*.*.*'
     paths-ignore:
       - 'deployment/**'
   pull_request:
@@ -12,6 +14,8 @@ jobs:
   lint:
     name: Run on Ubuntu
     runs-on: ubuntu-latest
+    # Go linting adds no signal on a release tag; only the parity gate needs to run there.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -31,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify version and appVersion match
+      - name: Verify version, appVersion, and release tag agree
         run: |
           set -eu
           CHART=deployment/openfilter-pipelines-controller/Chart.yaml
@@ -47,6 +51,21 @@ jobs:
             exit 1
           fi
           if [ "$VERSION" != "$APPVERSION" ]; then
-            echo "::error file=$CHART::version ($VERSION) and appVersion ($APPVERSION) drifted. The auto-bump workflow keeps these in lockstep on tag-driven releases (.github/workflows/update-helm-version.yml); manual edits must do the same. See PR #48 for the slip this catches."
+            echo "::error file=$CHART::version ($VERSION) and appVersion ($APPVERSION) drifted. Bump both together in the same commit. See PR #48 for the slip this catches."
             exit 1
           fi
+          # On a release tag (vX.Y.Z) Chart.yaml must already match the tag.
+          # The publish-chart job packages with --version derived from the tag
+          # (.github/workflows/docker-publish.yml), so a stale Chart.yaml ships a
+          # chart whose source tree disagrees with the version it was published
+          # under — which is exactly how main drifted to 0.5.1 while 0.6.x shipped.
+          case "${GITHUB_REF:-}" in
+            refs/tags/v*)
+              TAG="${GITHUB_REF_NAME#v}"
+              echo "release tag=$TAG"
+              if [ "$VERSION" != "$TAG" ]; then
+                echo "::error file=$CHART::Chart.yaml version ($VERSION) does not match release tag $GITHUB_REF_NAME (expected $TAG). Bump version and appVersion to $TAG before tagging."
+                exit 1
+              fi
+              ;;
+          esac

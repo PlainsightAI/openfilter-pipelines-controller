@@ -25,8 +25,11 @@ Docker Hub has a flat namespace, so the chart (whose OCI repository name is
 derived from the chart name) would share a repository with the controller
 image and overwrite the image manifest at each release tag.
 
-Replace `<version>` with the desired release (e.g. `0.5.2`); the published
-tags match the git tags on this repository (`vX.Y.Z` → chart `X.Y.Z`).
+Replace `<version>` with the desired release (e.g. `0.6.1`); the published
+tags match the git tags on this repository (`vX.Y.Z` → chart `X.Y.Z`) and are
+listed on the
+[Releases](https://github.com/PlainsightAI/openfilter-pipelines-controller/releases)
+page.
 
 Container images:
 [`plainsightai/openfilter-pipelines-controller`](https://hub.docker.com/r/plainsightai/openfilter-pipelines-controller)
@@ -228,6 +231,24 @@ helm template openfilter-pipelines-controller deployment/openfilter-pipelines-co
 helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --dry-run --debug
 ```
+
+## Releasing
+
+Releases are driven entirely by git tags. To cut version `X.Y.Z`:
+
+1. Bump `version` **and** `appVersion` in `Chart.yaml` to `X.Y.Z` in the same
+   commit and merge it via PR. The `chart-version-parity` CI check
+   (`.github/workflows/lint.yml`) keeps the two fields in lockstep and, on a
+   release tag, asserts they match the tag — so a stale `Chart.yaml` fails CI
+   before anything is published.
+2. Tag the merged commit `vX.Y.Z` and push the tag.
+
+On the tag push, `.github/workflows/docker-publish.yml`:
+
+- builds and pushes the controller + claimer images to Docker Hub,
+- packages the chart (with `--version`/`--app-version` derived from the tag)
+  and pushes it to `oci://ghcr.io/plainsightai/charts`, and
+- creates a GitHub Release for the tag with the packaged chart `.tgz` attached.
 
 ## License
 

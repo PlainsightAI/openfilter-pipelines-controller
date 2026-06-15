@@ -159,7 +159,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # create the GitHub Release for the tag
       packages: write
     steps:
       - name: Checkout code
@@ -195,6 +195,22 @@ jobs:
         run: |
           helm push openfilter-pipelines-controller-${{ steps.version.outputs.version }}.tgz \
             oci://ghcr.io/plainsightai/charts
+
+      # Publishing to GHCR alone leaves the GitHub Releases page frozen at the
+      # last chart-releaser release (0.5.1). Recreate a Release per tag so the
+      # tag is discoverable and the packaged chart is attached as an asset.
+      - name: Create GitHub Release with chart artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CHART_TGZ=openfilter-pipelines-controller-${{ steps.version.outputs.version }}.tgz
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$CHART_TGZ" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$CHART_TGZ" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
 
   deploy:
     needs: merge

@@ -83,7 +83,7 @@ jobs:
 
       - name: Upload digest
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digests-${{ matrix.image.name }}-${{ matrix.arch.name }}
           path: /tmp/digests/*
@@ -112,7 +112,7 @@ jobs:
           fi
 
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
           pattern: digests-${{ matrix.image }}-*

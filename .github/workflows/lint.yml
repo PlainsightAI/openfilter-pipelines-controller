@@ -46,7 +46,12 @@ jobs:
             echo "::error file=$CHART::could not parse version/appVersion from $CHART"
             exit 1
           fi
+          # version==appVersion is checked here (pre-merge, on PRs) for fast
+          # developer feedback. The stricter "Chart.yaml must equal the release
+          # tag" gate lives in the publish-chart job (docker-publish.yml), which
+          # is the only place the tag exists AND the only place we publish — so a
+          # mistagged release fails to publish rather than just flagging a check.
           if [ "$VERSION" != "$APPVERSION" ]; then
-            echo "::error file=$CHART::version ($VERSION) and appVersion ($APPVERSION) drifted. The auto-bump workflow keeps these in lockstep on tag-driven releases (.github/workflows/update-helm-version.yml); manual edits must do the same. See PR #48 for the slip this catches."
+            echo "::error file=$CHART::version ($VERSION) and appVersion ($APPVERSION) drifted. Bump both together in the same commit. See PR #48 for the slip this catches."
             exit 1
           fi

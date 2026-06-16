@@ -96,13 +96,13 @@ kubectl apply -f https://raw.githubusercontent.com/<org>/openfilter-pipelines-co
 
 ### Using the Helm Chart
 
-The Helm chart lives in this repository under `deployment/openfilter-pipelines-controller`. Clone the repo and install from the local chart:
+The chart is published as an OCI artifact to GitHub Container Registry (GHCR).
+Helm 3.8+ supports OCI directly — no `helm repo add` is needed:
 
 ```sh
-git clone https://github.com/PlainsightAI/openfilter-pipelines-controller
-cd openfilter-pipelines-controller
-
-helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller \
+  oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
+  --version 0.6.1 \
   --namespace pipelines-system \
   --create-namespace
 ```
@@ -110,7 +110,9 @@ helm install openfilter-pipelines-controller deployment/openfilter-pipelines-con
 Install with the bundled Valkey subchart enabled (optional):
 
 ```sh
-helm install openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
+helm install openfilter-pipelines-controller \
+  oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
+  --version 0.6.1 \
   --namespace pipelines-system \
   --create-namespace \
   --set valkey.enabled=true
@@ -119,9 +121,17 @@ helm install openfilter-pipelines-controller deployment/openfilter-pipelines-con
 To upgrade an existing installation:
 
 ```sh
-helm upgrade openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
+helm upgrade openfilter-pipelines-controller \
+  oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
+  --version 0.6.1 \
   --namespace pipelines-system
 ```
+
+Published chart versions track the git tags on this repository
+(`vX.Y.Z` → chart `X.Y.Z`); see the [Releases](https://github.com/PlainsightAI/openfilter-pipelines-controller/releases)
+page. Contributors hacking on the chart can also install from the local copy
+under `deployment/openfilter-pipelines-controller` — see the
+[chart README](deployment/openfilter-pipelines-controller/README.md).
 
 For more configuration options, see the [chart values](deployment/openfilter-pipelines-controller/values.yaml) and the [chart README](deployment/openfilter-pipelines-controller/README.md).
 

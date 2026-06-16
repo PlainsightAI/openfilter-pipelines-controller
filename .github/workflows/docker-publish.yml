@@ -169,6 +169,24 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
+      # Authoritative release gate: the chart is packaged with --version/--app-version
+      # derived from the tag, so if Chart.yaml disagrees we'd ship a chart whose
+      # source tree lies about its own version. Fail here, before publishing, so a
+      # mistagged release never reaches the registry (this is the only step that
+      # runs on the tag AND gates the publish).
+      - name: Assert Chart.yaml matches the release tag
+        run: |
+          set -eu
+          CHART=deployment/openfilter-pipelines-controller/Chart.yaml
+          TAG="${{ steps.version.outputs.version }}"
+          VERSION=$(awk '/^version:/    {print $2}' "$CHART" | tr -d '"')
+          APPVERSION=$(awk '/^appVersion:/ {print $2}' "$CHART" | tr -d '"')
+          echo "tag=$TAG  Chart.yaml version=$VERSION appVersion=$APPVERSION"
+          if [ "$VERSION" != "$TAG" ] || [ "$APPVERSION" != "$TAG" ]; then
+            echo "::error file=$CHART::Chart.yaml version/appVersion ($VERSION/$APPVERSION) does not match release tag $GITHUB_REF_NAME (expected $TAG). Bump Chart.yaml to $TAG and re-tag."
+            exit 1
+          fi
+
       - name: Set up Helm
         uses: azure/setup-helm@v5
 

@@ -171,6 +171,12 @@ type ServicePort struct {
 	// +kubebuilder:default=TCP
 	// +kubebuilder:validation:Enum=TCP;UDP
 	Protocol corev1.Protocol `json:"protocol,omitempty"`
+
+	// type defines the Kubernetes Service type to create for this port. Defaults to ClusterIP. Use LoadBalancer to expose the Service outside the cluster (note: cluster operators may restrict external types via ResourceQuota).
+	// +optional
+	// +kubebuilder:default=ClusterIP
+	// +kubebuilder:validation:Enum=ClusterIP;LoadBalancer;NodePort
+	Type corev1.ServiceType `json:"type,omitempty"`
 }
 
 // Filter defines a containerized processing step in the pipeline

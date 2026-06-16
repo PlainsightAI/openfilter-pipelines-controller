@@ -1,6 +1,6 @@
 image:
   repository: plainsightai/openfilter-pipelines-controller
-  tag: "d4b6cab01bc3948410477931c2dfbc67fa153421" # {"$imagepolicy": "development:openfilter-pipelines-controller:tag"}
+  tag: "ded9657002a082c0c57afee4920b9dedaedab2f0" # {"$imagepolicy": "development:openfilter-pipelines-controller:tag"}
 claimerImage:
   repository: plainsightai/openfilter-pipelines-claimer
 telemetry:

@@ -8,6 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
@@ -921,5 +923,199 @@ func TestBuildRTSPURLWithCredentials(t *testing.T) {
 				t.Errorf("buildRTSPURLWithCredentials() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+func makeReconcilerWithFakeClient() (*PipelineInstanceReconciler, error) {
+	// Add the api scheme to the fake client
+	if err := pipelinesv1alpha1.AddToScheme(scheme.Scheme); err != nil {
+		return nil, err
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme.Scheme).
+		Build()
+
+	return &PipelineInstanceReconciler{
+		Client: fakeClient,
+		Scheme: scheme.Scheme,
+	}, nil
+
+}
+
+func TestEnsureFilterServices_OpenFilterAddsReplyPortWithExplicitTargetPort(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+	pi := makeMinimalStreamingPipelineInstance()
+	targetPort := int32(9100)
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name:        "filter",
+					Port:        9000,
+					TargetPort:  &targetPort,
+					AppProtocol: pipelinesv1alpha1.AppProtocolOpenFilter,
+				},
+			},
+		},
+	}
+
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices returned error: %v", err)
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "stream-instance-filter-0", Namespace: "default"}, service); err != nil {
+		t.Fatalf("expected Service created: %v", err)
+	}
+
+	if got, want := len(service.Spec.Ports), 2; got != want {
+		t.Fatalf("expected 2 service ports, got %d", got)
+	}
+
+	first := service.Spec.Ports[0]
+	if first.Name != "filter" {
+		t.Errorf("first port name = %q, want %q", first.Name, "filter")
+	}
+	if first.Port != 9000 {
+		t.Errorf("first port = %d, want %d", first.Port, 9000)
+	}
+	if first.TargetPort.IntVal != 9100 {
+		t.Errorf("first targetPort = %d, want %d", first.TargetPort.IntVal, 9100)
+	}
+	if first.Protocol != corev1.ProtocolTCP {
+		t.Errorf("first protocol = %q, want %q", first.Protocol, corev1.ProtocolTCP)
+	}
+
+	second := service.Spec.Ports[1]
+	if second.Name != "filter-reply" {
+		t.Errorf("second port name = %q, want %q", second.Name, "filter-reply")
+	}
+	if second.Port != 9001 {
+		t.Errorf("second port = %d, want %d", second.Port, 9001)
+	}
+	if second.TargetPort.IntVal != 9101 {
+		t.Errorf("second targetPort = %d, want %d", second.TargetPort.IntVal, 9101)
+	}
+	if second.Protocol != corev1.ProtocolTCP {
+		t.Errorf("second protocol = %q, want %q", second.Protocol, corev1.ProtocolTCP)
+	}
+}
+
+func TestEnsureFilterServices_DefaultProtocolDoesNotAddReplyPort(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+	pi := makeMinimalStreamingPipelineInstance()
+	targetPort := int32(9100)
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name:       "filter",
+					Port:       9000,
+					TargetPort: &targetPort,
+				},
+			},
+		},
+	}
+
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices returned error: %v", err)
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "stream-instance-filter-0", Namespace: "default"}, service); err != nil {
+		t.Fatalf("expected Service created: %v", err)
+	}
+
+	if got, want := len(service.Spec.Ports), 1; got != want {
+		t.Fatalf("expected 1 service port, got %d", got)
+	}
+
+	only := service.Spec.Ports[0]
+	if only.Name != "filter" {
+		t.Errorf("port name = %q, want %q", only.Name, "filter")
+	}
+	if only.Port != 9000 {
+		t.Errorf("port = %d, want %d", only.Port, 9000)
+	}
+	if only.TargetPort.IntVal != 9100 {
+		t.Errorf("targetPort = %d, want %d", only.TargetPort.IntVal, 9100)
+	}
+	if only.Protocol != corev1.ProtocolTCP {
+		t.Errorf("protocol = %q, want %q", only.Protocol, corev1.ProtocolTCP)
+	}
+}
+
+func TestEnsureFilterServices_OpenFilterWithoutExplicitTargetPort(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name:        "filter",
+					Port:        9000,
+					TargetPort:  nil, // No explicit TargetPort, should fall back to Port
+					AppProtocol: pipelinesv1alpha1.AppProtocolOpenFilter,
+				},
+			},
+		},
+	}
+
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices returned error: %v", err)
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "stream-instance-filter-0", Namespace: "default"}, service); err != nil {
+		t.Fatalf("expected Service created: %v", err)
+	}
+
+	if got, want := len(service.Spec.Ports), 2; got != want {
+		t.Fatalf("expected 2 service ports (main + reply), got %d", got)
+	}
+
+	// First port: main data port
+	first := service.Spec.Ports[0]
+	if first.Name != "filter" {
+		t.Errorf("first port name = %q, want %q", first.Name, "filter")
+	}
+	if first.Port != 9000 {
+		t.Errorf("first port = %d, want %d", first.Port, 9000)
+	}
+	// When TargetPort is nil, should default to Port value
+	if first.TargetPort.IntVal != 9000 {
+		t.Errorf("first targetPort = %d, want %d (should default to Port when nil)", first.TargetPort.IntVal, 9000)
+	}
+	if first.Protocol != corev1.ProtocolTCP {
+		t.Errorf("first protocol = %q, want %q", first.Protocol, corev1.ProtocolTCP)
+	}
+
+	// Second port: reply channel (port + 1)
+	second := service.Spec.Ports[1]
+	if second.Name != "filter-reply" {
+		t.Errorf("second port name = %q, want %q", second.Name, "filter-reply")
+	}
+	if second.Port != 9001 {
+		t.Errorf("second port = %d, want %d", second.Port, 9001)
+	}
+	// Reply channel should also default to Port+1
+	if second.TargetPort.IntVal != 9001 {
+		t.Errorf("second targetPort = %d, want %d (should default to Port+1 when nil)", second.TargetPort.IntVal, 9001)
+	}
+	if second.Protocol != corev1.ProtocolTCP {
+		t.Errorf("second protocol = %q, want %q", second.Protocol, corev1.ProtocolTCP)
 	}
 }

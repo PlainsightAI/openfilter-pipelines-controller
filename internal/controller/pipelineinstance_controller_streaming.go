@@ -716,6 +716,15 @@ func (r *PipelineInstanceReconciler) ensureFilterServices(ctx context.Context, p
 				},
 			}
 
+			if svcPort.AppProtocol == pipelinesv1alpha1.AppProtocolOpenFilter {
+				desiredService.Spec.Ports = append(desiredService.Spec.Ports, corev1.ServicePort{
+					Name:       filterName + "-reply",
+					Port:       svcPort.Port + 1,
+					TargetPort: intstr.FromInt32(targetPort + 1),
+					Protocol:   protocol,
+				})
+			}
+
 			if apierrors.IsNotFound(err) {
 				// Create the Service
 				log.Info("Creating filter service", "service", serviceName, "filter", filterName, "port", svcPort.Port)

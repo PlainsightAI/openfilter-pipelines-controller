@@ -10,7 +10,7 @@ spec:
 
   filters:
     - name: video-in
-      image: plainsightai/openfilter-video-in:1.1.1
+      image: plainsightai/openfilter-video-in:1.1.2
       resources:
         requests:
           cpu: "1"

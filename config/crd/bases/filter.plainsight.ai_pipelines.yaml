@@ -395,6 +395,17 @@ spec:
                       maximum: 65535
                       minimum: 1
                       type: integer
+                    type:
+                      default: ClusterIP
+                      description: 'type defines the Kubernetes Service type to create
+                        for this port. Defaults to ClusterIP. Use LoadBalancer to
+                        expose the Service outside the cluster (note: cluster operators
+                        may restrict external types via ResourceQuota).'
+                      enum:
+                      - ClusterIP
+                      - LoadBalancer
+                      - NodePort
+                      type: string
                   required:
                   - name
                   - port

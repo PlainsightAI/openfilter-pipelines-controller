@@ -1161,3 +1161,40 @@ func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
 	}
 	t.Error("expected STREAM env var in claimer, not found")
 }
+
+func TestBuildJob_EnvFrom_Propagated(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "f-with-envfrom",
+					Image: "image:latest",
+					EnvFrom: []corev1.EnvFromSource{
+						{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "my-config"}}},
+						{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "my-secret"}}},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+	containers := job.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		t.Fatal("expected at least one container")
+	}
+	ef := containers[0].EnvFrom
+	if len(ef) != 2 {
+		t.Fatalf("expected 2 EnvFrom entries, got %d: %v", len(ef), ef)
+	}
+	if ef[0].ConfigMapRef == nil || ef[0].ConfigMapRef.Name != "my-config" {
+		t.Errorf("expected first EnvFrom to be ConfigMapRef my-config, got %v", ef[0].ConfigMapRef)
+	}
+	if ef[1].SecretRef == nil || ef[1].SecretRef.Name != "my-secret" {
+		t.Errorf("expected second EnvFrom to be SecretRef my-secret, got %v", ef[1].SecretRef)
+	}
+}

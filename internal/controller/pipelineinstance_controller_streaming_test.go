@@ -978,8 +978,9 @@ func TestEnsureFilterServices_OpenFilterAddsReplyPortWithExplicitTargetPort(t *t
 	}
 
 	first := service.Spec.Ports[0]
-	if first.Name != "filter" {
-		t.Errorf("first port name = %q, want %q", first.Name, "filter")
+	const filterName = "filter"
+	if first.Name != filterName {
+		t.Errorf("first port name = %q, want %q", first.Name, filterName)
 	}
 	if first.Port != 9000 {
 		t.Errorf("first port = %d, want %d", first.Port, 9000)

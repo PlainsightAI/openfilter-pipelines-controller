@@ -161,8 +161,7 @@ cd deployment/openfilter-pipelines-controller && helm dependency update
   - `deployment/openfilter-pipelines-controller/`: Main Helm chart
   - `deployment/openfilter-pipelines-controller/crds/`: CRD manifests (synced from config/crd/bases)
   - `deployment/openfilter-pipelines-controller/templates/`: Kubernetes resource templates
-  - `deployment/openfilter-pipelines-controller/overrides/`: Per-environment value overrides (development, lab, staging, production)
-  - `deployment/openfilter-pipelines-controller/values.yaml`: Default configuration values
+  - `deployment/openfilter-pipelines-controller/values.yaml`: Default configuration values (per-environment overrides live in the private `gitops` repo, not here)
 
 - **hack/**: Utility scripts
   - `hack/update-helm-crds.sh`: Script to sync CRDs from config/crd/bases to Helm chart

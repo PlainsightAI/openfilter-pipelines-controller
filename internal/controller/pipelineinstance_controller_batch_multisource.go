@@ -251,6 +251,7 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 				Spec: corev1.PodSpec{
 					RestartPolicy:    corev1.RestartPolicyNever,
 					NodeSelector:     nodeSelector,
+					RuntimeClassName: gpuRuntimeClassName(r.GPURuntimeClassName, pipelineRequiresGPU),
 					ImagePullSecrets: pipeline.Spec.ImagePullSecrets,
 					Volumes: []corev1.Volume{
 						{

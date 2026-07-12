@@ -662,6 +662,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 					// No special ServiceAccount required; default SA is sufficient
 					RestartPolicy:    corev1.RestartPolicyNever,
 					NodeSelector:     nodeSelector,
+					RuntimeClassName: gpuRuntimeClassName(r.GPURuntimeClassName, pipelineRequiresGPU),
 					ImagePullSecrets: pipeline.Spec.ImagePullSecrets,
 					Volumes: []corev1.Volume{
 						{

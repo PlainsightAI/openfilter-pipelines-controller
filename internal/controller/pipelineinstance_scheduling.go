@@ -157,3 +157,20 @@ func injectNvidiaVisibleDevices(container *corev1.Container) {
 func instanceGPUCount(_ pipelinesv1alpha1.PipelineInstanceSpec) int64 {
 	return defaultGPUCount
 }
+
+// gpuRuntimeClassName returns the RuntimeClass name to set on a pipeline pod,
+// but only when the pod requires a GPU and a name is configured; nil otherwise
+// (leaving RuntimeClassName unset, i.e. the cluster's default runtime).
+//
+// PLAT-1272: the device plugin allocates nvidia.com/gpu, but on clusters where
+// the nvidia runtime is not the default containerd runtime the driver/CUDA
+// libraries are only injected when the pod runs under a RuntimeClass that
+// selects the nvidia runtime (k3s auto-creates an `nvidia` RuntimeClass).
+// Setting it here removes the need to make nvidia the node-wide default runtime.
+func gpuRuntimeClassName(name string, pipelineRequiresGPU bool) *string {
+	if name == "" || !pipelineRequiresGPU {
+		return nil
+	}
+	rc := name
+	return &rc
+}

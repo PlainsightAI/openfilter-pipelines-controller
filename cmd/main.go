@@ -118,6 +118,7 @@ func main() {
 	var gpuNodeSelector string
 	var gpuLibraryPath string
 	var gpuBinPath string
+	var gpuRuntimeClass string
 	var telemetryExporterType string
 	var telemetryExporterOTLPEndpoint string
 	var otelExporterOTLPEndpoint string
@@ -154,6 +155,14 @@ func main() {
 			"this to the existing PATH at startup, preserving image-set paths. "+
 			"Set to an empty string to disable injection entirely. "+
 			"Can also be set via GPU_BIN_PATH env var.")
+	flag.StringVar(&gpuRuntimeClass, "gpu-runtime-class",
+		getEnvOrDefault("GPU_RUNTIME_CLASS", ""),
+		"RuntimeClass name set on pods that request nvidia.com/gpu (e.g. 'nvidia'). "+
+			"Needed on clusters where the nvidia runtime is not the default containerd "+
+			"runtime (e.g. k3s, which auto-creates an 'nvidia' RuntimeClass): without it "+
+			"the GPU is allocated but the driver/CUDA libraries are not injected. "+
+			"Empty string leaves RuntimeClassName unset (default runtime). "+
+			"Can also be set via GPU_RUNTIME_CLASS env var. See PLAT-1272.")
 	flag.StringVar(&telemetryExporterType, "telemetry-exporter-type",
 		getEnvOrDefault("TELEMETRY_EXPORTER_TYPE", ""),
 		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp'). "+
@@ -346,6 +355,7 @@ func main() {
 		GPUNodeSelectorLabels:         parseNodeSelectorLabels(gpuNodeSelector),
 		GPULibraryPath:                gpuLibraryPath,
 		GPUBinPath:                    gpuBinPath,
+		GPURuntimeClassName:           gpuRuntimeClass,
 		TelemetryExporterType:         telemetryExporterType,
 		TelemetryExporterOTLPEndpoint: telemetryExporterOTLPEndpoint,
 	}).SetupWithManager(mgr); err != nil {

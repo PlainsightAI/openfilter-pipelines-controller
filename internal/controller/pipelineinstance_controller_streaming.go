@@ -511,6 +511,7 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 					// No dedicated ServiceAccount required for streaming mode; default SA is sufficient
 					RestartPolicy:    corev1.RestartPolicyAlways,
 					NodeSelector:     nodeSelector,
+					RuntimeClassName: gpuRuntimeClassName(r.GPURuntimeClassName, pipelineRequiresGPU),
 					ImagePullSecrets: pipeline.Spec.ImagePullSecrets,
 					Containers:       containers,
 				},

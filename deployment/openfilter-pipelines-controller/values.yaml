@@ -157,6 +157,10 @@ gpuBinPath: "/usr/local/nvidia/bin"
 # runtime (e.g. k3s, which auto-creates an "nvidia" RuntimeClass) — without it
 # the GPU is allocated but the driver/CUDA libs are not injected. Empty string
 # leaves RuntimeClassName unset (default runtime). Set per env in the gitops repo.
+#
+# WARNING: the named RuntimeClass must exist on the target cluster. If it does
+# not, every GPU pod fails to schedule with "RuntimeClass not found". Leave empty
+# on GKE/SaaS (the managed driver injects CUDA under the default runtime).
 gpuRuntimeClass: ""
 
 # Telemetry exporter values injected into every filter container the controller

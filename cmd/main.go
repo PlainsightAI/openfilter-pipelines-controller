@@ -162,6 +162,9 @@ func main() {
 			"runtime (e.g. k3s, which auto-creates an 'nvidia' RuntimeClass): without it "+
 			"the GPU is allocated but the driver/CUDA libraries are not injected. "+
 			"Empty string leaves RuntimeClassName unset (default runtime). "+
+			"The named RuntimeClass MUST exist on the cluster: if it does not, every GPU "+
+			"pod fails to schedule with 'RuntimeClass not found'. Only set this where the "+
+			"class is present (k3s creates 'nvidia' automatically). "+
 			"Can also be set via GPU_RUNTIME_CLASS env var. See PLAT-1272.")
 	flag.StringVar(&telemetryExporterType, "telemetry-exporter-type",
 		getEnvOrDefault("TELEMETRY_EXPORTER_TYPE", ""),

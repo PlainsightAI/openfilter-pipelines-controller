@@ -81,6 +81,91 @@ func TestBuildJob_GPUNodeSelector_WithGPULimits(t *testing.T) {
 	}
 }
 
+func TestBuildJob_GPURuntimeClass_WithGPU(t *testing.T) {
+	r := makeMinimalReconciler()
+	r.GPURuntimeClassName = "nvidia"
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	rc := job.Spec.Template.Spec.RuntimeClassName
+	if rc == nil {
+		t.Fatal("expected RuntimeClassName to be set for GPU workload, got nil")
+	}
+	if *rc != "nvidia" {
+		t.Errorf("expected RuntimeClassName=nvidia, got %q", *rc)
+	}
+}
+
+func TestBuildJob_GPURuntimeClass_WithoutGPU(t *testing.T) {
+	r := makeMinimalReconciler()
+	r.GPURuntimeClassName = "nvidia"
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "cpu-filter",
+					Image: "cpu-filter:latest",
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	if rc := job.Spec.Template.Spec.RuntimeClassName; rc != nil {
+		t.Errorf("expected no RuntimeClassName for non-GPU workload, got %q", *rc)
+	}
+}
+
+func TestBuildJob_GPURuntimeClass_EmptyNameIsNoOp(t *testing.T) {
+	r := makeMinimalReconciler() // GPURuntimeClassName unset (zero value) — SaaS/GKE default
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Filters: []pipelinesv1alpha1.Filter{
+				{
+					Name:  "gpu-filter",
+					Image: "gpu-filter:latest",
+					Resources: &corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse("1"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	if rc := job.Spec.Template.Spec.RuntimeClassName; rc != nil {
+		t.Errorf("expected RuntimeClassName to stay unset when GPURuntimeClassName is empty, got %q", *rc)
+	}
+}
+
 func TestBuildJob_GPUNodeSelector_WithGPURequests(t *testing.T) {
 	r := makeMinimalReconciler()
 	r.GPUNodeSelectorLabels = map[string]string{"cloud.google.com/gke-gpu-driver-version": expectedDriverVersion}

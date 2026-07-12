@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	expectedDriverVersion = "latest"
-	testGPULibraryPath    = "/usr/local/nvidia/lib64"
-	testGPUBinPath        = "/usr/local/nvidia/bin"
+	expectedDriverVersion  = "latest"
+	testGPULibraryPath     = "/usr/local/nvidia/lib64"
+	testGPUBinPath         = "/usr/local/nvidia/bin"
+	testRuntimeClassNvidia = "nvidia"
 )
 
 func makeMinimalReconciler() *PipelineInstanceReconciler {
@@ -83,7 +84,7 @@ func TestBuildJob_GPUNodeSelector_WithGPULimits(t *testing.T) {
 
 func TestBuildJob_GPURuntimeClass_WithGPU(t *testing.T) {
 	r := makeMinimalReconciler()
-	r.GPURuntimeClassName = "nvidia"
+	r.GPURuntimeClassName = testRuntimeClassNvidia
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
@@ -109,14 +110,14 @@ func TestBuildJob_GPURuntimeClass_WithGPU(t *testing.T) {
 	if rc == nil {
 		t.Fatal("expected RuntimeClassName to be set for GPU workload, got nil")
 	}
-	if *rc != "nvidia" {
+	if *rc != testRuntimeClassNvidia {
 		t.Errorf("expected RuntimeClassName=nvidia, got %q", *rc)
 	}
 }
 
 func TestBuildJob_GPURuntimeClass_WithoutGPU(t *testing.T) {
 	r := makeMinimalReconciler()
-	r.GPURuntimeClassName = "nvidia"
+	r.GPURuntimeClassName = testRuntimeClassNvidia
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 

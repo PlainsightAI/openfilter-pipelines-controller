@@ -140,7 +140,7 @@ func TestBuildJob_GPURuntimeClass_WithoutGPU(t *testing.T) {
 }
 
 func TestBuildJob_GPURuntimeClass_EmptyNameIsNoOp(t *testing.T) {
-	r := makeMinimalReconciler() // GPURuntimeClassName unset (zero value) — SaaS/GKE default
+	r := makeMinimalReconciler() // GPURuntimeClassName unset (zero value): managed-platform default
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 

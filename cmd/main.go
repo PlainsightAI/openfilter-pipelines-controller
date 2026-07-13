@@ -165,7 +165,7 @@ func main() {
 			"The named RuntimeClass MUST exist on the cluster: if it does not, every GPU "+
 			"pod fails to schedule with 'RuntimeClass not found'. Only set this where the "+
 			"class is present (k3s creates 'nvidia' automatically). "+
-			"Can also be set via GPU_RUNTIME_CLASS env var. See PLAT-1272.")
+			"Can also be set via the GPU_RUNTIME_CLASS env var.")
 	flag.StringVar(&telemetryExporterType, "telemetry-exporter-type",
 		getEnvOrDefault("TELEMETRY_EXPORTER_TYPE", ""),
 		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp'). "+

@@ -166,7 +166,7 @@ type PipelineInstanceReconciler struct {
 	GPUNodeSelectorLabels map[string]string // Node selector labels applied to pods that request nvidia.com/gpu resources; nil disables the feature
 	GPULibraryPath        string            // Value injected as LD_LIBRARY_PATH for GPU containers; empty string disables injection
 	GPUBinPath            string            // Value injected as OPENFILTER_APPEND_PATH for GPU containers; empty string disables injection
-	GPURuntimeClassName   string            // RuntimeClass name set on pods that require a GPU (e.g. "nvidia"); empty disables (PLAT-1272)
+	GPURuntimeClassName   string            // RuntimeClass name set on pods that require a GPU (e.g. "nvidia"); empty disables
 
 	// TelemetryExporterType and TelemetryExporterOTLPEndpoint are injected into
 	// filter containers as TELEMETRY_EXPORTER_TYPE and TELEMETRY_EXPORTER_OTLP_ENDPOINT

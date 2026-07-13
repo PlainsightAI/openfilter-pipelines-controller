@@ -160,7 +160,7 @@ gpuBinPath: "/usr/local/nvidia/bin"
 #
 # WARNING: the named RuntimeClass must exist on the target cluster. If it does
 # not, every GPU pod fails to schedule with "RuntimeClass not found". Leave empty
-# on GKE/SaaS (the managed driver injects CUDA under the default runtime).
+# on managed platforms where the driver is injected under the default runtime.
 gpuRuntimeClass: ""
 
 # Telemetry exporter values injected into every filter container the controller

@@ -366,8 +366,8 @@ func TestMergeNodeSelector_Unit(t *testing.T) {
 	}
 }
 
-// TestGPURuntimeClassName_Unit covers the PLAT-1272 helper: a RuntimeClass is
-// only returned when a name is configured AND the pod requires a GPU.
+// TestGPURuntimeClassName_Unit covers the helper: a RuntimeClass is only
+// returned when a name is configured AND the pod requires a GPU.
 func TestGPURuntimeClassName_Unit(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 	tests := []struct {

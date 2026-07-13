@@ -162,19 +162,17 @@ func instanceGPUCount(_ pipelinesv1alpha1.PipelineInstanceSpec) int64 {
 // but only when the pod requires a GPU and a name is configured; nil otherwise
 // (leaving RuntimeClassName unset, i.e. the cluster's default runtime).
 //
-// PLAT-1272: the device plugin allocates nvidia.com/gpu, but on clusters where
-// the nvidia runtime is not the default containerd runtime the driver/CUDA
-// libraries are only injected when the pod runs under a RuntimeClass that
-// selects the nvidia runtime (k3s auto-creates an `nvidia` RuntimeClass).
-// Setting it here removes the need to make nvidia the node-wide default runtime.
+// The device plugin allocates nvidia.com/gpu, but on clusters where the nvidia
+// runtime is not the default containerd runtime the driver/CUDA libraries are
+// only injected when the pod runs under a RuntimeClass that selects the nvidia
+// runtime (k3s, for example, auto-creates an `nvidia` RuntimeClass). Setting it
+// here removes the need to make nvidia the node-wide default runtime.
 //
-// Why this lives in the controller and not only at the infra layer: on the
-// managed SaaS (GKE) the driver is injected by the platform, so no RuntimeClass
-// is set there and this stays a no-op (name is empty by default). It matters for
-// bring-your-own-cluster / self-hosted deployments (k3s, kubeadm, bare EKS) where
-// runc is the default runtime and the operator cannot or should not flip the
-// node-wide default. RuntimeClass is the Kubernetes-idiomatic, GPU-pod-scoped
-// alternative to that box-wide change, so OPC exposes it as an opt-in knob.
+// This is opt-in and a no-op by default (empty name): on managed platforms where
+// the driver is injected for you, leave it unset. It matters for self-managed
+// clusters (k3s, kubeadm, bare EKS) where runc is the default runtime and the
+// operator cannot or should not flip the node-wide default. RuntimeClass is the
+// Kubernetes-idiomatic, GPU-pod-scoped alternative to that node-wide change.
 func gpuRuntimeClassName(name string, pipelineRequiresGPU bool) *string {
 	if name == "" || !pipelineRequiresGPU {
 		return nil

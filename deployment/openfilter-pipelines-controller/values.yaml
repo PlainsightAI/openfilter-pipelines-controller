@@ -152,6 +152,17 @@ gpuLibraryPath: "/usr/local/nvidia/lib64"
 # Set to an empty string to disable injection entirely.
 gpuBinPath: "/usr/local/nvidia/bin"
 
+# GPU RuntimeClass: set on pods that request nvidia.com/gpu (e.g. "nvidia").
+# Needed on clusters where the nvidia runtime is not the default containerd
+# runtime (e.g. k3s, which auto-creates an "nvidia" RuntimeClass) — without it
+# the GPU is allocated but the driver/CUDA libs are not injected. Empty string
+# leaves RuntimeClassName unset (default runtime). Set per env in the gitops repo.
+#
+# WARNING: the named RuntimeClass must exist on the target cluster. If it does
+# not, every GPU pod fails to schedule with "RuntimeClass not found". Leave empty
+# on managed platforms where the driver is injected under the default runtime.
+gpuRuntimeClass: ""
+
 # Telemetry exporter values injected into every filter container the controller
 # spawns. When non-empty, the controller appends TELEMETRY_EXPORTER_TYPE and
 # TELEMETRY_EXPORTER_OTLP_ENDPOINT to the filter container env so openfilter's

@@ -157,3 +157,26 @@ func injectNvidiaVisibleDevices(container *corev1.Container) {
 func instanceGPUCount(_ pipelinesv1alpha1.PipelineInstanceSpec) int64 {
 	return defaultGPUCount
 }
+
+// gpuRuntimeClassName returns the RuntimeClass name to set on a pipeline pod,
+// but only when the pod requires a GPU and a name is configured; nil otherwise
+// (leaving RuntimeClassName unset, i.e. the cluster's default runtime).
+//
+// The device plugin allocates nvidia.com/gpu, but on clusters where the nvidia
+// runtime is not the default containerd runtime the driver/CUDA libraries are
+// only injected when the pod runs under a RuntimeClass that selects the nvidia
+// runtime (k3s, for example, auto-creates an `nvidia` RuntimeClass). Setting it
+// here removes the need to make nvidia the node-wide default runtime.
+//
+// This is opt-in and a no-op by default (empty name): on managed platforms where
+// the driver is injected for you, leave it unset. It matters for self-managed
+// clusters (k3s, kubeadm, bare EKS) where runc is the default runtime and the
+// operator cannot or should not flip the node-wide default. RuntimeClass is the
+// Kubernetes-idiomatic, GPU-pod-scoped alternative to that node-wide change.
+func gpuRuntimeClassName(name string, pipelineRequiresGPU bool) *string {
+	if name == "" || !pipelineRequiresGPU {
+		return nil
+	}
+	rc := name
+	return &rc
+}

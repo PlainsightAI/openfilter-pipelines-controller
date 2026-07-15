@@ -366,6 +366,36 @@ func TestMergeNodeSelector_Unit(t *testing.T) {
 	}
 }
 
+// TestGPURuntimeClassName_Unit covers the helper: a RuntimeClass is only
+// returned when a name is configured AND the pod requires a GPU.
+func TestGPURuntimeClassName_Unit(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	tests := []struct {
+		name        string
+		configured  string
+		requiresGPU bool
+		want        *string
+	}{
+		{name: "unset + non-GPU", configured: "", requiresGPU: false, want: nil},
+		{name: "unset + GPU", configured: "", requiresGPU: true, want: nil},
+		{name: "set + non-GPU", configured: "nvidia", requiresGPU: false, want: nil},
+		{name: "set + GPU", configured: "nvidia", requiresGPU: true, want: strPtr("nvidia")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gpuRuntimeClassName(tc.configured, tc.requiresGPU)
+			switch {
+			case tc.want == nil && got != nil:
+				t.Fatalf("expected nil, got %q", *got)
+			case tc.want != nil && got == nil:
+				t.Fatalf("expected %q, got nil", *tc.want)
+			case tc.want != nil && *got != *tc.want:
+				t.Errorf("= %q, want %q", *got, *tc.want)
+			}
+		})
+	}
+}
+
 // TestInjectNvidiaVisibleDevices_Idempotent confirms that calling the helper
 // twice does not append duplicate entries — the reconciler invokes it once
 // per filter today but defense-in-depth matters if a future call site

@@ -254,6 +254,8 @@ Filters can mount OCI images as read-only volumes via the Kubernetes `image` vol
 - A volume's `pullSecret` is merged into the pod's `imagePullSecrets` (skipped if already present) through a defensive copy — the Pipeline object's own slice is never mutated.
 - A pipeline without `imageVolumes` renders byte-identical to before the feature (streaming pods keep a nil `Volumes` slice), so the feature is opt-in purely through the CRD field.
 
+**Cluster-version gate (PLAT-1096):** at startup `cmd/main.go` probes the API server version once via discovery; `ImageVolumeSupportReason` returns a non-empty reason for clusters < 1.33 (probe/parse failures fail open). When the reason is set and a PipelineInstance's Pipeline declares `imageVolumes`, `rejectUnsupportedImageVolumes` fails it terminally — `Degraded=True/UnsupportedClusterVersion` + `Progressing=False`, a Warning Event via the reconciler's `Recorder`, and no requeue (no workload is created). Recovery requires a cluster upgrade plus controller restart (re-probe); the reason is in the clear-on-recovery list in `Reconcile`. Note: 1.31-1.32 clusters with the `ImageVolume` feature gate enabled are still rejected — the gate is not observable via discovery.
+
 ## General Guidelines
 
 - Always use context7 when I need code generation, setup or configuration steps, or library/API documentation. This means you should automatically use the Context7 MCP tools to resolve library id and get library docs without me having to explicitly ask

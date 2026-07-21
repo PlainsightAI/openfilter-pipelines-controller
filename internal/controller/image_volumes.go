@@ -17,13 +17,87 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
+	k8sversion "k8s.io/apimachinery/pkg/version"
+	ctrl "sigs.k8s.io/controller-runtime"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
+
+// minImageVolumeVersion is the first Kubernetes release that serves the image
+// volume source by default (beta, enabled by default from 1.33).
+var minImageVolumeVersion = utilversion.MustParseGeneric("1.33.0")
+
+// ImageVolumeSupportReason returns a non-empty operator-facing reason when the
+// given API server version cannot serve image volume sources, and "" when it
+// can (PLAT-1096). Nil or unparseable versions return "" — fail-open:
+// pipelines without imageVolumes are unaffected either way, and a cluster we
+// cannot classify should not block ones that might work. 1.31-1.32 clusters
+// with the ImageVolume feature gate enabled are still rejected — the gate is
+// not observable from here, which is why the message names it.
+func ImageVolumeSupportReason(info *k8sversion.Info) string {
+	if info == nil {
+		return ""
+	}
+	v, err := utilversion.ParseGeneric(info.GitVersion)
+	if err != nil {
+		return ""
+	}
+	if v.AtLeast(minImageVolumeVersion) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"the cluster does not support the image volume source: Kubernetes %s+ required (alpha in 1.31-1.32 behind the ImageVolume feature gate), detected server version %s",
+		minImageVolumeVersion, info.GitVersion)
+}
+
+// pipelineHasImageVolumes reports whether any filter declares imageVolumes.
+func pipelineHasImageVolumes(pipeline *pipelinesv1alpha1.Pipeline) bool {
+	for _, f := range pipeline.Spec.Filters {
+		if len(f.ImageVolumes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// rejectUnsupportedImageVolumes fails a PipelineInstance whose Pipeline
+// declares filter imageVolumes on a cluster that cannot serve the image
+// volume source (PLAT-1096). Without this, an older API server silently
+// prunes the unknown volume-source field and the failure surfaces as an
+// opaque pod-admission error or a filter crashing on a missing model.
+// Returns done=true when the caller must return the accompanying
+// result/error instead of continuing the reconcile.
+func (r *PipelineInstanceReconciler) rejectUnsupportedImageVolumes(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline) (bool, ctrl.Result, error) {
+	if r.ImageVolumesUnsupportedReason == "" || !pipelineHasImageVolumes(pipeline) {
+		return false, ctrl.Result{}, nil
+	}
+	log := logf.FromContext(ctx)
+	msg := fmt.Sprintf("pipeline %q declares filter imageVolumes but %s", pipeline.Name, r.ImageVolumesUnsupportedReason)
+	log.Info("Rejecting image-volume pipeline on unsupported cluster", "pipeline", pipeline.Name)
+	if r.Recorder != nil {
+		r.Recorder.Event(pipelineInstance, corev1.EventTypeWarning, ReasonUnsupportedClusterVersion, msg)
+	}
+	r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonUnsupportedClusterVersion, msg)
+	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, ReasonUnsupportedClusterVersion, msg)
+	if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
+		if apierrors.IsConflict(statusErr) {
+			return true, ctrl.Result{Requeue: true}, nil
+		}
+		log.Error(statusErr, "Failed to update status after image-volume cluster-support rejection")
+		return true, ctrl.Result{}, statusErr
+	}
+	return true, ctrl.Result{}, nil
+}
 
 // applyImageVolumes materializes every filter's imageVolumes (PLAT-1095) onto
 // an assembled pod spec: one pod-level image-source volume per distinct

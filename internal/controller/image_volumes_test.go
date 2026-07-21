@@ -2,9 +2,11 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	k8sversion "k8s.io/apimachinery/pkg/version"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
@@ -290,5 +292,53 @@ func TestBuildJob_ImageVolumes_StableNamesAcrossReordering(t *testing.T) {
 		if !reversed[name] {
 			t.Errorf("volume name %q not stable under filter reordering: forward=%v reversed=%v", name, forward, reversed)
 		}
+	}
+}
+
+func TestImageVolumeSupportReason(t *testing.T) {
+	cases := []struct {
+		name        string
+		gitVersion  string
+		wantBlocked bool
+	}{
+		{"exactly 1.33", "v1.33.0", false},
+		{"newer minor", "v1.34.1", false},
+		{"newer with vendor suffix", "v1.34.5-gke.100", false},
+		{"next major", "v2.0.0", false},
+		{"1.32 blocked", "v1.32.9", true},
+		{"1.31 blocked even though gate could be on", "v1.31.0", true},
+		{"much older", "v1.28.3+k3s1", true},
+		{"unparseable fails open", "weird-build", false},
+		{"empty fails open", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason := ImageVolumeSupportReason(&k8sversion.Info{GitVersion: tc.gitVersion})
+			if got := reason != ""; got != tc.wantBlocked {
+				t.Fatalf("ImageVolumeSupportReason(%q) = %q, wantBlocked=%v", tc.gitVersion, reason, tc.wantBlocked)
+			}
+			if tc.wantBlocked && !strings.Contains(reason, tc.gitVersion) {
+				t.Errorf("expected reason to name the detected version %q, got %q", tc.gitVersion, reason)
+			}
+		})
+	}
+	if ImageVolumeSupportReason(nil) != "" {
+		t.Error("expected nil version info to fail open")
+	}
+}
+
+func TestPipelineHasImageVolumes(t *testing.T) {
+	without := imageVolumePipeline(pipelinesv1alpha1.Filter{Name: "plain", Image: "plain:v1"})
+	if pipelineHasImageVolumes(without) {
+		t.Error("expected false for a pipeline without imageVolumes")
+	}
+	with := imageVolumePipeline(
+		pipelinesv1alpha1.Filter{Name: "plain", Image: "plain:v1"},
+		pipelinesv1alpha1.Filter{Name: "model", Image: "model:v1", ImageVolumes: []pipelinesv1alpha1.FilterImageVolume{
+			{Name: "m", Image: testModelImage, MountPath: "/opt/model"},
+		}},
+	)
+	if !pipelineHasImageVolumes(with) {
+		t.Error("expected true when any filter declares imageVolumes")
 	}
 }

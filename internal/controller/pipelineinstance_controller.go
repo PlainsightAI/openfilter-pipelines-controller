@@ -36,6 +36,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -80,6 +81,15 @@ const (
 	// reason string.
 	ReasonMultiSourceBatchInvalidSource = "MultiSourceBatchInvalidSource"
 	ReasonMultiSourceBatchMissingObject = "MultiSourceBatchMissingObject"
+
+	// ReasonUnsupportedClusterVersion marks a Degraded condition raised when a
+	// PipelineInstance's Pipeline declares filter imageVolumes but the
+	// connected cluster cannot serve the image volume source (K8s < 1.33,
+	// PLAT-1096). The support probe runs once at controller startup
+	// (cmd/main.go), so recovery requires a cluster upgrade plus a controller
+	// restart — which re-probes and lets the clear-on-recovery path below
+	// remove the condition.
+	ReasonUnsupportedClusterVersion = "UnsupportedClusterVersion"
 
 	// Reconciliation intervals
 	StatusUpdateInterval = 30 * time.Second
@@ -180,6 +190,17 @@ type PipelineInstanceReconciler struct {
 	// in tests that need to assert the post-grace Degraded path without waiting
 	// for wall-clock time to elapse.
 	PipelineRefGracePeriod time.Duration
+
+	// ImageVolumesUnsupportedReason, when non-empty, marks the connected
+	// cluster as unable to serve the image volume source and carries the
+	// operator-facing explanation (see ImageVolumeSupportReason). Empty means
+	// supported — including when the startup probe failed (fail-open).
+	// Written once at startup, read-only afterwards.
+	ImageVolumesUnsupportedReason string
+
+	// Recorder emits Kubernetes Events for operator-visible rejections.
+	// Nil-safe: unit tests construct bare reconcilers without one.
+	Recorder record.EventRecorder
 }
 
 // pipelineRefGracePeriod returns the configured grace period or the default
@@ -205,6 +226,7 @@ func (r *PipelineInstanceReconciler) pipelineRefGracePeriod() time.Duration {
 // +kubebuilder:rbac:groups=apps,resources=replicasets/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/status,verbs=get
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 
 // ensureNamespaceValkeyCredentials ensures a per-namespace Valkey ACL user and corresponding
@@ -553,6 +575,16 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
+	// Reject image-volume pipelines on clusters that cannot serve the image
+	// volume source (PLAT-1096). Same terminal-validation semantics as the
+	// unmatched-binding check above: Degraded, no requeue — retrying cannot
+	// help until the cluster is upgraded (the probe re-runs on controller
+	// restart) or the Pipeline drops its imageVolumes (the Pipeline watch
+	// re-triggers reconcile).
+	if done, res, err := r.rejectUnsupportedImageVolumes(ctx, pipelineInstance, pipeline); done {
+		return res, err
+	}
+
 	// Bindings resolve and validate — clear any stale Degraded left by a
 	// previous failing pass so external watchers see the recovery. Both
 	// reasons matter: SourceBindingUnmatched from a since-fixed filterName,
@@ -562,8 +594,11 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// re-reconciles us here once the sources land, and without this clear
 	// the stale condition lingers and the agent's provisioning monitor
 	// tears the instance down as degraded.
+	// UnsupportedClusterVersion is cleared here too: reaching this point
+	// means the image-volume check above passed (cluster upgraded and
+	// controller restarted, or imageVolumes removed from the Pipeline).
 	// Same conflict semantics as the PipelineNotFound clear above.
-	if err := r.clearDegradedReason(ctx, pipelineInstance, ReasonSourceBindingUnmatched, ReasonPipelineSourceNotFound); err != nil {
+	if err := r.clearDegradedReason(ctx, pipelineInstance, ReasonSourceBindingUnmatched, ReasonPipelineSourceNotFound, ReasonUnsupportedClusterVersion); err != nil {
 		if apierrors.IsConflict(err) {
 			log.V(1).Info("Status update conflict while clearing stale Degraded; requeueing",
 				"reason", ReasonSourceBindingUnmatched)

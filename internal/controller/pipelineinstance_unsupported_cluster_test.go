@@ -170,6 +170,19 @@ var _ = Describe("PipelineInstance reconcile on a cluster without image volume s
 		}
 	})
 
+	It("rejects safely when no Recorder is configured", func() {
+		// Unit-style callers construct bare reconcilers without an
+		// EventRecorder; the rejection must still land the conditions
+		// instead of panicking on the nil Recorder.
+		reconciler.Recorder = nil
+		reconcileTwice()
+		refreshInstance()
+
+		degraded := meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded)
+		Expect(degraded).NotTo(BeNil())
+		Expect(degraded.Reason).To(Equal(ReasonUnsupportedClusterVersion))
+	})
+
 	It("does not reject a pipeline without imageVolumes", func() {
 		plain := &pipelinesv1alpha1.Pipeline{
 			ObjectMeta: metav1.ObjectMeta{

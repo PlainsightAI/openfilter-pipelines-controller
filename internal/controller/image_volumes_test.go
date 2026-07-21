@@ -9,7 +9,10 @@ import (
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
 
-const testModelImage = "registry.example.com/model@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+const (
+	testModelImage      = "registry.example.com/model@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	workspaceVolumeName = "workspace"
+)
 
 func imageVolumePipeline(filters ...pipelinesv1alpha1.Filter) *pipelinesv1alpha1.Pipeline {
 	return &pipelinesv1alpha1.Pipeline{
@@ -54,7 +57,7 @@ func TestBuildJob_NoImageVolumes_Unchanged(t *testing.T) {
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
 	podSpec := job.Spec.Template.Spec
-	if len(podSpec.Volumes) != 1 || podSpec.Volumes[0].Name != "workspace" {
+	if len(podSpec.Volumes) != 1 || podSpec.Volumes[0].Name != workspaceVolumeName {
 		t.Fatalf("expected only the workspace volume, got %v", podSpec.Volumes)
 	}
 	if len(podSpec.ImagePullSecrets) != 1 || podSpec.ImagePullSecrets[0].Name != "existing" {
@@ -103,7 +106,7 @@ func TestBuildJob_ImageVolumes_SharedAcrossFilters(t *testing.T) {
 
 	// The claimer initContainer must stay untouched (workspace mount only).
 	claimer := podSpec.InitContainers[0]
-	if len(claimer.VolumeMounts) != 1 || claimer.VolumeMounts[0].Name != "workspace" {
+	if len(claimer.VolumeMounts) != 1 || claimer.VolumeMounts[0].Name != workspaceVolumeName {
 		t.Errorf("expected claimer initContainer untouched, got mounts %v", claimer.VolumeMounts)
 	}
 }
@@ -231,5 +234,61 @@ func TestBuildMultiSourceBatchJob_ImageVolumes(t *testing.T) {
 	mount := findMount(podContainer(t, podSpec, "detector"), "/opt/model")
 	if mount == nil || !mount.ReadOnly {
 		t.Fatalf("expected read-only /opt/model mount on multi-source container, got %v", mount)
+	}
+}
+
+func TestBuildMultiSourceBatchJob_NoImageVolumes_Unchanged(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	pipeline := imageVolumePipeline(pipelinesv1alpha1.Filter{Name: "plain", Image: "plain:v1"})
+
+	job := r.buildMultiSourceBatchJob(context.Background(), pi, pipeline, nil, "test-job")
+
+	podSpec := job.Spec.Template.Spec
+	if len(podSpec.Volumes) != 1 || podSpec.Volumes[0].Name != workspaceVolumeName {
+		t.Fatalf("expected only the workspace volume on the multi-source pod, got %v", podSpec.Volumes)
+	}
+	if got := len(podContainer(t, podSpec, "plain").VolumeMounts); got != 1 {
+		t.Fatalf("expected only the workspace mount on the filter container, got %d mounts", got)
+	}
+}
+
+func TestBuildJob_ImageVolumes_StableNamesAcrossReordering(t *testing.T) {
+	r := makeMinimalReconciler()
+	ps := makeMinimalPipelineSource()
+	filterA := pipelinesv1alpha1.Filter{
+		Name: "detector", Image: "detector:v1",
+		ImageVolumes: []pipelinesv1alpha1.FilterImageVolume{
+			{Name: "model-a", Image: "registry.example.com/a:v1", MountPath: "/opt/a"},
+		},
+	}
+	filterB := pipelinesv1alpha1.Filter{
+		Name: "classifier", Image: "classifier:v1",
+		ImageVolumes: []pipelinesv1alpha1.FilterImageVolume{
+			{Name: "model-b", Image: "registry.example.com/b:v1", MountPath: "/opt/b", PullSecret: "reg-secret"},
+		},
+	}
+
+	volumeNames := func(filters ...pipelinesv1alpha1.Filter) map[string]bool {
+		job := r.buildJob(context.Background(), makeMinimalPipelineInstance(), imageVolumePipeline(filters...), ps, "test-job")
+		names := map[string]bool{}
+		for _, v := range job.Spec.Template.Spec.Volumes {
+			if v.Image != nil {
+				names[v.Name] = true
+			}
+		}
+		return names
+	}
+
+	forward := volumeNames(filterA, filterB)
+	reversed := volumeNames(filterB, filterA)
+
+	if len(forward) != 2 {
+		t.Fatalf("expected 2 image volumes, got %v", forward)
+	}
+	for name := range forward {
+		if !reversed[name] {
+			t.Errorf("volume name %q not stable under filter reordering: forward=%v reversed=%v", name, forward, reversed)
+		}
 	}
 }

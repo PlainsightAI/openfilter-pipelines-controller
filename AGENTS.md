@@ -242,6 +242,18 @@ The controller supports injecting NodeSelector labels into pods that request `nv
 
 When `gpuNodeSelector` is set in `values.yaml`, the Helm chart injects it as the `GPU_NODE_SELECTOR` env var into the controller Deployment. An empty value disables the feature entirely (no NodeSelector is applied to any pod).
 
+## Filter Image Volumes Feature
+
+Filters can mount OCI images as read-only volumes via the Kubernetes `image` volume source (requires K8s 1.33+). Declared per filter as `spec.filters[].imageVolumes[]` on the Pipeline CRD (`FilterImageVolume`: required `name`/`image`/`mountPath`, optional `pullPolicy`/`subPath`/`pullSecret`).
+
+**How it works:**
+
+- `applyImageVolumes` (`internal/controller/image_volumes.go`) runs at the end of all three pod builders — `buildJob` (batch), `buildStreamingDeployment` (streaming), and `buildMultiSourceBatchJob` (multi-source batch).
+- Pod-level volumes are deduplicated by `(image, pullSecret)`: filters sharing a model image share one pod volume (first declaration's `pullPolicy` wins). Volume names are content-addressed (`imgvol-<hash>`) so reordering filters never renames them.
+- Each declaring filter's container gets a read-only `VolumeMount`; the claimer initContainer is never touched.
+- A volume's `pullSecret` is merged into the pod's `imagePullSecrets` (skipped if already present) through a defensive copy — the Pipeline object's own slice is never mutated.
+- A pipeline without `imageVolumes` renders byte-identical to before the feature (streaming pods keep a nil `Volumes` slice), so the feature is opt-in purely through the CRD field.
+
 ## General Guidelines
 
 - Always use context7 when I need code generation, setup or configuration steps, or library/API documentation. This means you should automatically use the Context7 MCP tools to resolve library id and get library docs without me having to explicitly ask

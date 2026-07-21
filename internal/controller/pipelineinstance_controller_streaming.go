@@ -524,6 +524,9 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 	// stays in place; Affinity has no controller-side baseline today.
 	applyInstanceScheduling(&deployment.Spec.Template.Spec, pipelineInstance.Spec)
 
+	// Mount filter image volumes (PLAT-1095); no-op when no filter declares any.
+	applyImageVolumes(&deployment.Spec.Template.Spec, pipeline.Spec.Filters)
+
 	return deployment
 }
 

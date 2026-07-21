@@ -269,6 +269,9 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 	}
 
 	applyInstanceScheduling(&job.Spec.Template.Spec, pipelineInstance.Spec)
+
+	// Mount filter image volumes (PLAT-1095); no-op when no filter declares any.
+	applyImageVolumes(&job.Spec.Template.Spec, pipeline.Spec.Filters)
 	return job
 }
 

@@ -173,6 +173,45 @@ type ServicePort struct {
 	Protocol corev1.Protocol `json:"protocol,omitempty"`
 }
 
+// FilterImageVolume defines an OCI image mounted into a filter's container as a
+// read-only volume via the Kubernetes image volume source.
+// Requires Kubernetes 1.33+ (the image volume source is beta and enabled by
+// default from 1.33; older clusters reject or silently drop the volume).
+type FilterImageVolume struct {
+	// name is a unique identifier for this image volume within the filter
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// image is the OCI image reference to mount (e.g., "myregistry/model@sha256:abc..." or "myregistry/model:v1")
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+
+	// mountPath is the absolute path inside the filter container where the
+	// image's filesystem is mounted read-only
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^/`
+	MountPath string `json:"mountPath"`
+
+	// pullPolicy determines when to pull the volume image
+	// +optional
+	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
+	// +kubebuilder:default=IfNotPresent
+	PullPolicy corev1.PullPolicy `json:"pullPolicy,omitempty"`
+
+	// subPath is a path within the image's filesystem to mount instead of its root
+	// +optional
+	SubPath string `json:"subPath,omitempty"`
+
+	// pullSecret is the name of a docker-registry Secret in the same namespace
+	// used to pull the volume image. It is merged into the Pod's imagePullSecrets.
+	// +optional
+	PullSecret string `json:"pullSecret,omitempty"`
+}
+
 // Filter defines a containerized processing step in the pipeline
 type Filter struct {
 	// name is a unique identifier for this filter within the pipeline
@@ -214,6 +253,14 @@ type Filter struct {
 	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
 	// +kubebuilder:default=IfNotPresent
 	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+
+	// imageVolumes is a list of OCI images to mount into this filter's
+	// container as read-only volumes (Kubernetes image volume source,
+	// requires Kubernetes 1.33+). Entries are keyed by name.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	ImageVolumes []FilterImageVolume `json:"imageVolumes,omitempty"`
 }
 
 // PipelineSpec defines the desired state of Pipeline

@@ -1,0 +1,105 @@
+# Example Job manifest showing how filter image volumes are rendered
+# (PLAT-1097). Requires Kubernetes 1.33+ — the `image` volume source is beta
+# and enabled by default from 1.33; the controller rejects PipelineInstances
+# that use imageVolumes on older clusters with a Degraded condition
+# (UnsupportedClusterVersion).
+#
+# Operators author this via the Pipeline CRD, not by writing Jobs. The Job
+# below is what the controller renders from a filter declared as:
+#
+#   spec:
+#     filters:
+#       - name: example-filter
+#         image: plainsightai/filter-protege-model:latest
+#         imageVolumes:
+#           # Trained-model case: the platform's export resolver emits a
+#           # digest-pinned reference to the org's model registry and the
+#           # org-scoped registry pull secret.
+#           - name: trained-model
+#             image: us-docker.pkg.dev/acme-org/models/defect-detector@sha256:6c3c624b58dbbcd3c0dd82b4c53f04194d1247c6eebdaab7c610cf7d66709b3b
+#             mountPath: /opt/model
+#             pullSecret: org-gar-pull-secret
+#           # BYO case: any registry, free-text reference, cluster-admin
+#           # managed docker-registry Secret (created out-of-band).
+#           - name: byo-weights
+#             image: docker.io/acme/custom-weights:v3
+#             mountPath: /opt/extra-weights
+#             subPath: weights
+#             pullSecret: acme-registry-secret
+#
+# Rendering rules (see internal/controller/image_volumes.go):
+#   - Pod-level volumes are deduplicated by (image, pullSecret): two filters
+#     mounting the same model image share one volume and the node's layer cache.
+#   - Volume names are content-addressed (imgvol-<hash>), so reordering
+#     filters never renames a volume.
+#   - Mounts are always read-only; each pullSecret is merged into the Pod's
+#     imagePullSecrets. The claimer init container is untouched.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: example-pipeline-instance-with-image-volumes
+  namespace: default
+spec:
+  completionMode: NonIndexed
+  completions: 10
+  parallelism: 3
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        filter.plainsight.ai/instance: "example-instance-abc123"
+    spec:
+      restartPolicy: Never
+
+      # Pull secrets: pipeline-level entries first, then the image-volume
+      # pullSecrets appended (deduplicated by name).
+      imagePullSecrets:
+        - name: org-gar-pull-secret
+        - name: acme-registry-secret
+
+      volumes:
+        - name: workspace
+          emptyDir: {}
+
+        # Trained-model image volume (digest-pinned, kubelet pulls and
+        # mounts the image filesystem read-only — no cp, no EmptyDir copy)
+        - name: imgvol-8c6f2a01de
+          image:
+            reference: us-docker.pkg.dev/acme-org/models/defect-detector@sha256:6c3c624b58dbbcd3c0dd82b4c53f04194d1247c6eebdaab7c610cf7d66709b3b
+            pullPolicy: IfNotPresent
+
+        # BYO image volume
+        - name: imgvol-1b9d4e77aa
+          image:
+            reference: docker.io/acme/custom-weights:v3
+            pullPolicy: IfNotPresent
+
+      initContainers:
+        # Claimer init container is unchanged by image volumes — see
+        # job_with_claimer.yaml for its full env reference.
+        - name: claimer
+          image: plainsightai/openfilter-pipelines-claimer:latest
+          volumeMounts:
+            - name: workspace
+              mountPath: /ws
+
+      containers:
+        - name: example-filter
+          image: plainsightai/filter-protege-model:latest
+          env:
+            # The filter reads the model from the mounted image; the
+            # platform's trained-model picker sets this to
+            # <mountPath><internal_path> when the user opts in.
+            - name: FILTER_MODEL_ARTIFACT_PATH
+              value: /opt/model/app/models/defect-detector
+          volumeMounts:
+            - name: workspace
+              mountPath: /ws
+            - name: imgvol-8c6f2a01de
+              mountPath: /opt/model
+              readOnly: true
+            - name: imgvol-1b9d4e77aa
+              mountPath: /opt/extra-weights
+              subPath: weights
+              readOnly: true

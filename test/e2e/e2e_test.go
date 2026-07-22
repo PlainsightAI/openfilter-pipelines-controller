@@ -390,6 +390,10 @@ spec:
 				patchCmd := exec.Command("kubectl", "patch", "pipelineinstance", ivInstance, "-n", ivNamespace,
 					"--type=merge", "-p", `{"metadata":{"finalizers":null}}`)
 				_, _ = utils.Run(patchCmd)
+				// The strip is only an unwedge so the suite teardown can
+				// complete — a deletion-reconciliation failure must never
+				// produce a green run.
+				Fail(fmt.Sprintf("graceful deletion of the image-volume CRs timed out — deletion reconciliation is broken (controller logs dumped above): %v", err))
 			}
 			_ = os.Remove(ivManifestFile)
 		})

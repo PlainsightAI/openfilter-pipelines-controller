@@ -65,13 +65,13 @@ spec:
 
         # Trained-model image volume (digest-pinned, kubelet pulls and
         # mounts the image filesystem read-only — no cp, no EmptyDir copy)
-        - name: imgvol-8c6f2a01de
+        - name: imgvol-155638cb49
           image:
             reference: us-docker.pkg.dev/acme-org/models/defect-detector@sha256:6c3c624b58dbbcd3c0dd82b4c53f04194d1247c6eebdaab7c610cf7d66709b3b
             pullPolicy: IfNotPresent
 
         # BYO image volume
-        - name: imgvol-1b9d4e77aa
+        - name: imgvol-afb168d738
           image:
             reference: docker.io/acme/custom-weights:v3
             pullPolicy: IfNotPresent
@@ -97,10 +97,10 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /ws
-            - name: imgvol-8c6f2a01de
+            - name: imgvol-155638cb49
               mountPath: /opt/model
               readOnly: true
-            - name: imgvol-1b9d4e77aa
+            - name: imgvol-afb168d738
               mountPath: /opt/extra-weights
               subPath: weights
               readOnly: true

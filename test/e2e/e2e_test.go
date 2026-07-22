@@ -25,6 +25,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -289,7 +291,177 @@ var _ = Describe("Manager", Ordered, func() {
 		//    strings.ToLower(<Kind>),
 		// ))
 	})
+
+	// Filter image volumes (PLAT-1097): a streaming pipeline whose filter
+	// mounts an OCI image as a read-only volume. Streaming is used (not
+	// batch) because its pods run the filter containers directly — no
+	// claimer waiting on Valkey/S3 — so the pod goes Ready if and only if
+	// the kubelet actually pulled and mounted the image volume. Requires
+	// K8s 1.35+ (first release with the ImageVolume gate on by default);
+	// skipped on older clusters, where the controller rejects such
+	// instances at admission (PLAT-1096) instead.
+	Context("Filter image volumes", func() {
+		const (
+			ivNamespace = "default"
+			ivPipeline  = "e2e-imagevolume-pipeline"
+			ivSource    = "e2e-imagevolume-source"
+			ivInstance  = "e2e-imagevolume-instance"
+			// The "model" OCI image: busybox's filesystem must appear at
+			// the mount path (checked via /bin/busybox below).
+			ivModelImage = "busybox:1.36"
+			ivMountPath  = "/opt/model"
+		)
+		ivDeployment := ivInstance + "-deploy"
+
+		ivManifests := fmt.Sprintf(`
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: Pipeline
+metadata:
+  name: %[1]s
+  namespace: %[2]s
+spec:
+  mode: stream
+  filters:
+    - name: sleeper
+      image: busybox:1.36
+      command: ["/bin/sh", "-c"]
+      args: ["sleep 3600"]
+      imageVolumes:
+        - name: model
+          image: %[3]s
+          mountPath: %[4]s
+---
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineSource
+metadata:
+  name: %[5]s
+  namespace: %[2]s
+spec:
+  rtsp:
+    host: rtsp-nonexistent.default
+    port: 8554
+    path: /stream
+---
+apiVersion: filter.plainsight.ai/v1alpha1
+kind: PipelineInstance
+metadata:
+  name: %[6]s
+  namespace: %[2]s
+spec:
+  pipelineRef:
+    name: %[1]s
+  sourceRef:
+    name: %[5]s
+`, ivPipeline, ivNamespace, ivModelImage, ivMountPath, ivSource, ivInstance)
+
+		ivManifestFile := filepath.Join(os.TempDir(), "e2e-image-volume-crs.yaml")
+
+		BeforeAll(func() {
+			By("checking the cluster serves the image volume source by default (K8s 1.35+)")
+			major, minor := serverVersion()
+			if major == 1 && minor < 35 {
+				Skip(fmt.Sprintf("cluster is v%d.%d; the image volume source is default-enabled from 1.35", major, minor))
+			}
+
+			By("applying the image-volume Pipeline, PipelineSource, and PipelineInstance")
+			Expect(os.WriteFile(ivManifestFile, []byte(ivManifests), os.FileMode(0o644))).To(Succeed())
+			cmd := exec.Command("kubectl", "apply", "-f", ivManifestFile)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to apply image-volume CRs")
+		})
+
+		AfterAll(func() {
+			// Wait for full deletion (finalizer processing) while the
+			// controller is still deployed: the Manager-level teardown that
+			// follows deletes the CRDs via `kubectl delete -k`, and a
+			// PipelineInstance still carrying finalizers at that point wedges
+			// the CRD in Terminating and hangs the whole teardown.
+			By("deleting the image-volume CRs and waiting for finalizers")
+			cmd := exec.Command("kubectl", "delete", "-f", ivManifestFile, "--ignore-not-found", "--timeout=120s")
+			if _, err := utils.Run(cmd); err != nil {
+				// The controller did not process the finalizers in time.
+				// Dump its logs for diagnosis, then strip the finalizers so
+				// the suite-level teardown cannot wedge on a Terminating CR.
+				_, _ = fmt.Fprintf(GinkgoWriter, "graceful CR deletion failed (%v); dumping controller logs and force-removing finalizers\n", err)
+				logsCmd := exec.Command("kubectl", "logs", "-n", namespace, "-l", "control-plane=controller-manager", "--tail=100")
+				if out, lerr := utils.Run(logsCmd); lerr == nil {
+					_, _ = fmt.Fprintf(GinkgoWriter, "controller logs:\n%s\n", out)
+				}
+				patchCmd := exec.Command("kubectl", "patch", "pipelineinstance", ivInstance, "-n", ivNamespace,
+					"--type=merge", "-p", `{"metadata":{"finalizers":null}}`)
+				_, _ = utils.Run(patchCmd)
+				// The strip is only an unwedge so the suite teardown can
+				// complete — a deletion-reconciliation failure must never
+				// produce a green run.
+				Fail(fmt.Sprintf("graceful deletion of the image-volume CRs timed out — deletion reconciliation is broken (controller logs dumped above): %v", err))
+			}
+			_ = os.Remove(ivManifestFile)
+		})
+
+		It("renders the image volume into the streaming pod spec", func() {
+			By("waiting for the streaming Deployment to exist")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", ivDeployment, "-n", ivNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "streaming Deployment not created yet")
+			}).Should(Succeed())
+
+			By("asserting the pod template has the image-source volume")
+			cmd := exec.Command("kubectl", "get", "deployment", ivDeployment, "-n", ivNamespace,
+				"-o", "jsonpath={.spec.template.spec.volumes[0].image.reference}")
+			out, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(Equal(ivModelImage))
+
+			By("asserting the filter container has the read-only mount")
+			cmd = exec.Command("kubectl", "get", "deployment", ivDeployment, "-n", ivNamespace,
+				"-o", "jsonpath={.spec.template.spec.containers[0].volumeMounts[0]}")
+			out, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring(fmt.Sprintf(`"mountPath":"%s"`, ivMountPath)))
+			Expect(out).To(ContainSubstring(`"readOnly":true`))
+		})
+
+		It("runs the pod with the OCI image filesystem mounted", func() {
+			By("waiting for the streaming pod to become Ready (kubelet pulled and mounted the image volume)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "wait", "--for=condition=Ready", "pod",
+					"-l", fmt.Sprintf("pipelineinstance=%s", ivInstance),
+					"-n", ivNamespace, "--timeout=10s")
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "streaming pod not Ready yet")
+			}, 4*time.Minute).Should(Succeed())
+
+			By("asserting the mounted image's filesystem is visible in the filter container")
+			cmd := exec.Command("kubectl", "exec", "deploy/"+ivDeployment, "-n", ivNamespace,
+				"--", "ls", ivMountPath+"/bin/busybox")
+			out, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "mounted image filesystem not visible: %s", out)
+		})
+	})
 })
+
+// serverVersion returns the cluster's major/minor server version, tolerating
+// vendor suffixes like "33+" in the minor field.
+func serverVersion() (int, int) {
+	GinkgoHelper()
+	cmd := exec.Command("kubectl", "version", "-o", "json")
+	out, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to query server version")
+	var v struct {
+		ServerVersion struct {
+			Major string `json:"major"`
+			Minor string `json:"minor"`
+		} `json:"serverVersion"`
+	}
+	Expect(json.Unmarshal([]byte(out), &v)).To(Succeed())
+	digits := func(s string) int {
+		n, err := strconv.Atoi(strings.TrimRight(s, "+"))
+		Expect(err).NotTo(HaveOccurred(), "unparseable server version component %q", s)
+		return n
+	}
+	return digits(v.ServerVersion.Major), digits(v.ServerVersion.Minor)
+}
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
 // It uses the Kubernetes TokenRequest API to generate a token by directly sending a request

@@ -693,6 +693,9 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	// stays in place; Affinity has no controller-side baseline today.
 	applyInstanceScheduling(&job.Spec.Template.Spec, pipelineInstance.Spec)
 
+	// Mount filter image volumes (PLAT-1095); no-op when no filter declares any.
+	applyImageVolumes(&job.Spec.Template.Spec, pipeline.Spec.Filters)
+
 	log.Info("Built Job spec", "job", jobName, "completions", totalFiles, "parallelism", parallelism)
 	return job
 }

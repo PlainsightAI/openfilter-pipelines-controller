@@ -286,7 +286,10 @@ func (r *PipelineInstanceReconciler) buildDirectClaimerEnv(b ResolvedSourceBindi
 		{Name: "VIDEO_INPUT_PATH", Value: destPath},
 		{Name: "S3_ENDPOINT", Value: bucket.Endpoint},
 		{Name: "S3_REGION", Value: bucket.Region},
-		{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", bucket.UsePathStyle)},
+		// A custom endpoint forces path-style — non-AWS S3-compatible services
+		// (rclone/MinIO/Ceph/SeaweedFS) only support path-style addressing. See
+		// the single-source batch path for the full rationale.
+		{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", bucket.UsePathStyle || bucket.Endpoint != "")},
 		{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", bucket.InsecureSkipTLSVerify)},
 	}
 	if bucket.CredentialsSecret != nil {

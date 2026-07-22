@@ -1247,3 +1247,50 @@ func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
 	}
 	t.Error("expected STREAM env var in claimer, not found")
 }
+
+func TestBuildJob_S3PathStyleForCustomEndpoint(t *testing.T) {
+	// A custom S3 endpoint means a non-AWS, S3-compatible service (rclone serve
+	// s3, MinIO, Ceph, SeaweedFS) that only supports path-style addressing, so
+	// the claimer must be told to use it. Only real AWS S3 (no custom endpoint)
+	// keeps virtual-host addressing. An explicit usePathStyle always wins.
+	cases := []struct {
+		name         string
+		endpoint     string
+		usePathStyle bool
+		want         string
+	}{
+		{"custom endpoint forces path-style", "http://smb-s3-bridge.plainsight-platform.svc.cluster.local:8080", false, "true"},
+		{"explicit usePathStyle honored without endpoint", "", true, "true"},
+		{"no endpoint (AWS) keeps virtual-host", "", false, "false"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := makeMinimalReconciler()
+			pi := makeMinimalPipelineInstance()
+			ps := makeMinimalPipelineSource()
+			ps.Spec.Bucket = &pipelinesv1alpha1.BucketSource{
+				Name:         "videos",
+				Endpoint:     tc.endpoint,
+				UsePathStyle: tc.usePathStyle,
+			}
+			pipeline := &pipelinesv1alpha1.Pipeline{
+				Spec: pipelinesv1alpha1.PipelineSpec{
+					Filters: []pipelinesv1alpha1.Filter{{Name: "filter", Image: "filter:latest"}},
+				},
+			}
+
+			job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+			claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+
+			for _, env := range claimerEnv {
+				if env.Name == "S3_USE_PATH_STYLE" {
+					if env.Value != tc.want {
+						t.Errorf("S3_USE_PATH_STYLE = %q, want %q", env.Value, tc.want)
+					}
+					return
+				}
+			}
+			t.Error("expected S3_USE_PATH_STYLE env var in claimer, not found")
+		})
+	}
+}

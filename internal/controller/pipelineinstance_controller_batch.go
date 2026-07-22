@@ -480,7 +480,13 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			{Name: "S3_BUCKET", Value: pipelineSource.Spec.Bucket.Name},
 			{Name: "S3_ENDPOINT", Value: pipelineSource.Spec.Bucket.Endpoint},
 			{Name: "S3_REGION", Value: pipelineSource.Spec.Bucket.Region},
-			{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", pipelineSource.Spec.Bucket.UsePathStyle)},
+			// A custom endpoint means a non-AWS, S3-compatible service (rclone
+			// serve s3, MinIO, Ceph RGW, SeaweedFS, ...), which addresses buckets
+			// path-style (endpoint/bucket); virtual-host (bucket.endpoint) does not
+			// resolve there. Force path-style whenever an endpoint is set — only
+			// real AWS S3 (no custom endpoint) keeps virtual-host. An explicit
+			// usePathStyle still wins.
+			{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", pipelineSource.Spec.Bucket.UsePathStyle || pipelineSource.Spec.Bucket.Endpoint != "")},
 			{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", pipelineSource.Spec.Bucket.InsecureSkipTLSVerify)},
 		}...)
 	}

@@ -244,7 +244,7 @@ When `gpuNodeSelector` is set in `values.yaml`, the Helm chart injects it as the
 
 ## Filter Image Volumes Feature
 
-Filters can mount OCI images as read-only volumes via the Kubernetes `image` volume source (requires K8s 1.33+). Declared per filter as `spec.filters[].imageVolumes[]` on the Pipeline CRD (`FilterImageVolume`: required `name`/`image`/`mountPath`, optional `pullPolicy`/`subPath`/`pullSecret`).
+Filters can mount OCI images as read-only volumes via the Kubernetes `image` volume source (requires K8s 1.35+; the ImageVolume feature gate is off by default through 1.34). Declared per filter as `spec.filters[].imageVolumes[]` on the Pipeline CRD (`FilterImageVolume`: required `name`/`image`/`mountPath`, optional `pullPolicy`/`subPath`/`pullSecret`).
 
 **How it works:**
 
@@ -253,6 +253,8 @@ Filters can mount OCI images as read-only volumes via the Kubernetes `image` vol
 - Each declaring filter's container gets a read-only `VolumeMount`; the claimer initContainer is never touched.
 - A volume's `pullSecret` is merged into the pod's `imagePullSecrets` (skipped if already present) through a defensive copy — the Pipeline object's own slice is never mutated.
 - A pipeline without `imageVolumes` renders byte-identical to before the feature (streaming pods keep a nil `Volumes` slice), so the feature is opt-in purely through the CRD field.
+
+**Cluster-version gate (PLAT-1096):** at startup `cmd/main.go` probes the API server version once via discovery; `ImageVolumeSupportReason` returns a non-empty reason for clusters < 1.35 — the first release with the ImageVolume gate on by default (probe/parse failures fail open). When the reason is set and a PipelineInstance's Pipeline declares `imageVolumes`, `rejectUnsupportedImageVolumes` fails it terminally — `Degraded=True/UnsupportedClusterVersion` + `Progressing=False`, a Warning Event via the reconciler's `Recorder`, and no requeue (no workload is created). Recovery requires a cluster upgrade plus controller restart (re-probe); the reason is in the clear-on-recovery list in `Reconcile`. Note: 1.31-1.34 clusters with the `ImageVolume` feature gate explicitly enabled are still rejected — the gate is not observable via discovery. Also note the probe reads the API server version while the mount happens on the kubelet: kubelets may lawfully run up to three minor versions behind the control plane, so a 1.35+ control plane with 1.33/1.34 node pools passes the probe and can still fail at mount time (a per-node probe is out of scope).
 
 ## General Guidelines
 

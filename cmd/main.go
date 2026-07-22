@@ -31,6 +31,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -341,6 +342,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Probe the API server version once at startup: the image volume source
+	// (PLAT-1096) needs Kubernetes 1.35+ (gate off by default through 1.34),
+	// and PipelineInstances whose Pipeline
+	// declares imageVolumes on an older cluster are rejected with an explicit
+	// Degraded condition instead of failing opaquely at pod admission. Probe
+	// errors fail open (empty reason = treated as supported).
+	imageVolumesUnsupportedReason := ""
+	if dc, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig()); err != nil {
+		setupLog.Error(err, "unable to build discovery client for the image-volume support probe; assuming supported")
+	} else if serverVersion, err := dc.ServerVersion(); err != nil {
+		setupLog.Error(err, "unable to probe API server version for image-volume support; assuming supported")
+	} else {
+		imageVolumesUnsupportedReason = controller.ImageVolumeSupportReason(serverVersion)
+		setupLog.Info("probed API server version for image-volume support",
+			"serverVersion", serverVersion.GitVersion,
+			"imageVolumesSupported", imageVolumesUnsupportedReason == "")
+	}
+
 	if err := (&controller.PipelineReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -361,6 +380,8 @@ func main() {
 		GPURuntimeClassName:           gpuRuntimeClass,
 		TelemetryExporterType:         telemetryExporterType,
 		TelemetryExporterOTLPEndpoint: telemetryExporterOTLPEndpoint,
+		ImageVolumesUnsupportedReason: imageVolumesUnsupportedReason,
+		Recorder:                      mgr.GetEventRecorderFor("pipelineinstance-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PipelineInstance")
 		os.Exit(1)

@@ -175,8 +175,9 @@ type ServicePort struct {
 
 // FilterImageVolume defines an OCI image mounted into a filter's container as a
 // read-only volume via the Kubernetes image volume source.
-// Requires Kubernetes 1.33+ (the image volume source is beta and enabled by
-// default from 1.33; older clusters reject or silently drop the volume).
+// Requires Kubernetes 1.35+ — the image volume source exists behind the
+// ImageVolume feature gate from 1.31 but is only enabled by default from
+// 1.35; older clusters reject or silently drop the volume.
 type FilterImageVolume struct {
 	// name is a unique identifier for this image volume within the filter
 	// +kubebuilder:validation:Required
@@ -256,7 +257,8 @@ type Filter struct {
 
 	// imageVolumes is a list of OCI images to mount into this filter's
 	// container as read-only volumes (Kubernetes image volume source,
-	// requires Kubernetes 1.33+). Entries are keyed by name.
+	// requires Kubernetes 1.35+; the ImageVolume feature gate is off by
+	// default through 1.34). Entries are keyed by name.
 	// +optional
 	// +listType=map
 	// +listMapKey=name

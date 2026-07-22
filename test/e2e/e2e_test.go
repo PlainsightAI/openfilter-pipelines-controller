@@ -378,7 +378,19 @@ spec:
 			// the CRD in Terminating and hangs the whole teardown.
 			By("deleting the image-volume CRs and waiting for finalizers")
 			cmd := exec.Command("kubectl", "delete", "-f", ivManifestFile, "--ignore-not-found", "--timeout=120s")
-			_, _ = utils.Run(cmd)
+			if _, err := utils.Run(cmd); err != nil {
+				// The controller did not process the finalizers in time.
+				// Dump its logs for diagnosis, then strip the finalizers so
+				// the suite-level teardown cannot wedge on a Terminating CR.
+				_, _ = fmt.Fprintf(GinkgoWriter, "graceful CR deletion failed (%v); dumping controller logs and force-removing finalizers\n", err)
+				logsCmd := exec.Command("kubectl", "logs", "-n", namespace, "-l", "control-plane=controller-manager", "--tail=100")
+				if out, lerr := utils.Run(logsCmd); lerr == nil {
+					_, _ = fmt.Fprintf(GinkgoWriter, "controller logs:\n%s\n", out)
+				}
+				patchCmd := exec.Command("kubectl", "patch", "pipelineinstance", ivInstance, "-n", ivNamespace,
+					"--type=merge", "-p", `{"metadata":{"finalizers":null}}`)
+				_, _ = utils.Run(patchCmd)
+			}
 			_ = os.Remove(ivManifestFile)
 		})
 

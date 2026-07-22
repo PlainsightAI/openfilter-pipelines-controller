@@ -227,6 +227,7 @@ func (r *PipelineInstanceReconciler) pipelineRefGracePeriod() time.Duration {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 
 // ensureNamespaceValkeyCredentials ensures a per-namespace Valkey ACL user and corresponding

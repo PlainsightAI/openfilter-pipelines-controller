@@ -371,8 +371,13 @@ spec:
 		})
 
 		AfterAll(func() {
-			By("deleting the image-volume CRs")
-			cmd := exec.Command("kubectl", "delete", "-f", ivManifestFile, "--ignore-not-found", "--wait=false")
+			// Wait for full deletion (finalizer processing) while the
+			// controller is still deployed: the Manager-level teardown that
+			// follows deletes the CRDs via `kubectl delete -k`, and a
+			// PipelineInstance still carrying finalizers at that point wedges
+			// the CRD in Terminating and hangs the whole teardown.
+			By("deleting the image-volume CRs and waiting for finalizers")
+			cmd := exec.Command("kubectl", "delete", "-f", ivManifestFile, "--ignore-not-found", "--timeout=120s")
 			_, _ = utils.Run(cmd)
 			_ = os.Remove(ivManifestFile)
 		})

@@ -1,7 +1,8 @@
 # Example Job manifest showing how filter image volumes are rendered
-# (PLAT-1097). Requires Kubernetes 1.33+ — the `image` volume source is beta
-# and enabled by default from 1.33; the controller rejects PipelineInstances
-# that use imageVolumes on older clusters with a Degraded condition
+# (PLAT-1097). Requires Kubernetes 1.35+ — the `image` volume source exists
+# behind the ImageVolume feature gate from 1.31 but is only enabled by
+# default from 1.35; the controller rejects PipelineInstances that use
+# imageVolumes on older clusters with a Degraded condition
 # (UnsupportedClusterVersion).
 #
 # Operators author this via the Pipeline CRD, not by writing Jobs. The Job

@@ -297,9 +297,9 @@ var _ = Describe("Manager", Ordered, func() {
 	// batch) because its pods run the filter containers directly — no
 	// claimer waiting on Valkey/S3 — so the pod goes Ready if and only if
 	// the kubelet actually pulled and mounted the image volume. Requires
-	// K8s 1.33+ (image volume source beta+default); skipped on older
-	// clusters, where the controller rejects such instances at admission
-	// (PLAT-1096) instead.
+	// K8s 1.35+ (first release with the ImageVolume gate on by default);
+	// skipped on older clusters, where the controller rejects such
+	// instances at admission (PLAT-1096) instead.
 	Context("Filter image volumes", func() {
 		const (
 			ivNamespace = "default"
@@ -357,10 +357,10 @@ spec:
 		ivManifestFile := filepath.Join(os.TempDir(), "e2e-image-volume-crs.yaml")
 
 		BeforeAll(func() {
-			By("checking the cluster serves the image volume source (K8s 1.33+)")
+			By("checking the cluster serves the image volume source by default (K8s 1.35+)")
 			major, minor := serverVersion()
-			if major == 1 && minor < 33 {
-				Skip(fmt.Sprintf("cluster is v%d.%d; image volume source needs 1.33+", major, minor))
+			if major == 1 && minor < 35 {
+				Skip(fmt.Sprintf("cluster is v%d.%d; the image volume source is default-enabled from 1.35", major, minor))
 			}
 
 			By("applying the image-volume Pipeline, PipelineSource, and PipelineInstance")

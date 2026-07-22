@@ -254,6 +254,63 @@ spec:
                       - Never
                       - IfNotPresent
                       type: string
+                    imageVolumes:
+                      description: |-
+                        imageVolumes is a list of OCI images to mount into this filter's
+                        container as read-only volumes (Kubernetes image volume source,
+                        requires Kubernetes 1.33+). Entries are keyed by name.
+                      items:
+                        description: |-
+                          FilterImageVolume defines an OCI image mounted into a filter's container as a
+                          read-only volume via the Kubernetes image volume source.
+                          Requires Kubernetes 1.33+ (the image volume source is beta and enabled by
+                          default from 1.33; older clusters reject or silently drop the volume).
+                        properties:
+                          image:
+                            description: image is the OCI image reference to mount
+                              (e.g., "myregistry/model@sha256:abc..." or "myregistry/model:v1")
+                            minLength: 1
+                            type: string
+                          mountPath:
+                            description: |-
+                              mountPath is the absolute path inside the filter container where the
+                              image's filesystem is mounted read-only
+                            minLength: 1
+                            pattern: ^/
+                            type: string
+                          name:
+                            description: name is a unique identifier for this image
+                              volume within the filter
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                          pullPolicy:
+                            default: IfNotPresent
+                            description: pullPolicy determines when to pull the volume
+                              image
+                            enum:
+                            - Always
+                            - Never
+                            - IfNotPresent
+                            type: string
+                          pullSecret:
+                            description: |-
+                              pullSecret is the name of a docker-registry Secret in the same namespace
+                              used to pull the volume image. It is merged into the Pod's imagePullSecrets.
+                            type: string
+                          subPath:
+                            description: subPath is a path within the image's filesystem
+                              to mount instead of its root
+                            type: string
+                        required:
+                        - image
+                        - mountPath
+                        - name
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
                     name:
                       description: name is a unique identifier for this filter within
                         the pipeline

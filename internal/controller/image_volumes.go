@@ -34,16 +34,19 @@ import (
 )
 
 // minImageVolumeVersion is the first Kubernetes release that serves the image
-// volume source by default (beta, enabled by default from 1.33).
-var minImageVolumeVersion = utilversion.MustParseGeneric("1.33.0")
+// volume source by default. The source is alpha from 1.31 and beta from 1.33,
+// but the ImageVolume feature gate stays Default:false through 1.34 (upstream
+// kube_features.go); 1.35 is the first release with the gate on by default
+// (GA 1.36).
+var minImageVolumeVersion = utilversion.MustParseGeneric("1.35.0")
 
 // ImageVolumeSupportReason returns a non-empty operator-facing reason when the
 // given API server version cannot serve image volume sources, and "" when it
 // can (PLAT-1096). Nil or unparseable versions return "" — fail-open:
 // pipelines without imageVolumes are unaffected either way, and a cluster we
-// cannot classify should not block ones that might work. 1.31-1.32 clusters
-// with the ImageVolume feature gate enabled are still rejected — the gate is
-// not observable from here, which is why the message names it.
+// cannot classify should not block ones that might work. 1.31-1.34 clusters
+// with the ImageVolume feature gate explicitly enabled are still rejected —
+// the gate is not observable from here, which is why the message names it.
 func ImageVolumeSupportReason(info *k8sversion.Info) string {
 	if info == nil {
 		return ""
@@ -56,7 +59,7 @@ func ImageVolumeSupportReason(info *k8sversion.Info) string {
 		return ""
 	}
 	return fmt.Sprintf(
-		"the cluster does not support the image volume source: Kubernetes %s+ required (alpha in 1.31-1.32 behind the ImageVolume feature gate), detected server version %s",
+		"the cluster does not serve the image volume source by default: Kubernetes %s+ required (the ImageVolume feature gate exists from 1.31 but is off by default through 1.34), detected server version %s",
 		minImageVolumeVersion, info.GitVersion)
 }
 
@@ -107,7 +110,7 @@ func (r *PipelineInstanceReconciler) rejectUnsupportedImageVolumes(ctx context.C
 // pod's imagePullSecrets. A pipeline without imageVolumes is a complete
 // no-op, so existing pipelines render byte-identical.
 //
-// The image volume source requires Kubernetes 1.33+; admission gating for
+// The image volume source requires Kubernetes 1.35+ by default; admission gating for
 // older clusters is PLAT-1096. Filters dedup on (image, pullSecret) only, so
 // the first declaration's pullPolicy wins for a shared volume.
 func applyImageVolumes(podSpec *corev1.PodSpec, filters []pipelinesv1alpha1.Filter) {

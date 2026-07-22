@@ -343,7 +343,8 @@ func main() {
 	}
 
 	// Probe the API server version once at startup: the image volume source
-	// (PLAT-1096) needs Kubernetes 1.33+, and PipelineInstances whose Pipeline
+	// (PLAT-1096) needs Kubernetes 1.35+ (gate off by default through 1.34),
+	// and PipelineInstances whose Pipeline
 	// declares imageVolumes on an older cluster are rejected with an explicit
 	// Degraded condition instead of failing opaquely at pod admission. Probe
 	// errors fail open (empty reason = treated as supported).

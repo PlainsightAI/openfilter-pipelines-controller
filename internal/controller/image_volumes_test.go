@@ -301,10 +301,12 @@ func TestImageVolumeSupportReason(t *testing.T) {
 		gitVersion  string
 		wantBlocked bool
 	}{
-		{"exactly 1.33", "v1.33.0", false},
-		{"newer minor", "v1.34.1", false},
-		{"newer with vendor suffix", "v1.34.5-gke.100", false},
+		{"exactly 1.35 (first gate-on-by-default release)", "v1.35.0", false},
+		{"newer minor", "v1.36.1", false},
+		{"newer with vendor suffix", "v1.35.2-gke.100", false},
 		{"next major", "v2.0.0", false},
+		{"1.34 blocked: beta but gate off by default", "v1.34.5", true},
+		{"1.33 blocked: beta but gate off by default", "v1.33.9", true},
 		{"1.32 blocked", "v1.32.9", true},
 		{"1.31 blocked even though gate could be on", "v1.31.0", true},
 		{"much older", "v1.28.3+k3s1", true},

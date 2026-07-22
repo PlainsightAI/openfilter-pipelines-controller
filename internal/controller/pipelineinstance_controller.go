@@ -84,7 +84,7 @@ const (
 
 	// ReasonUnsupportedClusterVersion marks a Degraded condition raised when a
 	// PipelineInstance's Pipeline declares filter imageVolumes but the
-	// connected cluster cannot serve the image volume source (K8s < 1.33,
+	// connected cluster cannot serve the image volume source (K8s < 1.35,
 	// PLAT-1096). The support probe runs once at controller startup
 	// (cmd/main.go), so recovery requires a cluster upgrade plus a controller
 	// restart — which re-probes and lets the clear-on-recovery path below

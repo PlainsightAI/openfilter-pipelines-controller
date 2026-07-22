@@ -42,7 +42,7 @@ import (
 var _ = Describe("PipelineInstance reconcile on a cluster without image volume support", func() {
 	const (
 		namespace         = "default"
-		unsupportedReason = "the cluster does not support the image volume source: Kubernetes 1.33.0+ required (alpha in 1.31-1.32 behind the ImageVolume feature gate), detected server version v1.30.0"
+		unsupportedReason = "the cluster does not serve the image volume source by default: Kubernetes 1.35.0+ required (the ImageVolume feature gate exists from 1.31 but is off by default through 1.34), detected server version v1.30.0"
 	)
 
 	ctx := context.Background()

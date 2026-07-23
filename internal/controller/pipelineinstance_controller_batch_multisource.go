@@ -374,15 +374,15 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 		env = append(env, filter.Env...)
 
 		c := corev1.Container{
-			Name:            filter.Name,
-			Image:           filter.Image,
-			Command:         filter.Command,
-			Args:            filter.Args,
-			Env:             env,
+			Name:    filter.Name,
+			Image:   filter.Image,
+			Command: filter.Command,
+			Args:    filter.Args,
+			Env:     env,
 			// Surface the filter's real error in the pod termination message so a
 			// failed run is diagnosable from status, not just "backoff limit" (PLAT-1353).
 			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-			ImagePullPolicy: filter.ImagePullPolicy,
+			ImagePullPolicy:          filter.ImagePullPolicy,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/ws"},
 			},

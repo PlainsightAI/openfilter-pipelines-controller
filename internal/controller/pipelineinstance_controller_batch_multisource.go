@@ -155,9 +155,19 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 			if reason == "" {
 				reason = "JobFailed"
 			}
-			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, reason, c.Message)
-			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, reason, c.Message)
-			r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionFalse, reason, c.Message)
+			msg := c.Message
+			// Enrich with the claimer/filter's real error so the Degraded status is
+			// diagnosable, not just "backoff limit" (PLAT-1353).
+			if detail := r.failedContainerMessages(ctx, pipelineInstance); detail != "" {
+				if msg != "" {
+					msg = fmt.Sprintf("%s [%s]", msg, detail)
+				} else {
+					msg = detail
+				}
+			}
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, reason, msg)
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, reason, msg)
+			r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionFalse, reason, msg)
 			if pipelineInstance.Status.CompletionTime == nil {
 				now := metav1.Now()
 				pipelineInstance.Status.CompletionTime = &now
@@ -214,6 +224,9 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 			Name:  claimerContainerName(b.FilterName),
 			Image: r.ClaimerImage,
 			Env:   r.buildDirectClaimerEnv(b, downloadPath[b.FilterName]),
+			// Capture the claimer's real error in the pod termination message so a
+			// failed run surfaces the actual cause, not just "backoff limit" (PLAT-1353).
+			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/ws"},
 			},
@@ -366,6 +379,9 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 			Command:         filter.Command,
 			Args:            filter.Args,
 			Env:             env,
+			// Surface the filter's real error in the pod termination message so a
+			// failed run is diagnosable from status, not just "backoff limit" (PLAT-1353).
+			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 			ImagePullPolicy: filter.ImagePullPolicy,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/ws"},

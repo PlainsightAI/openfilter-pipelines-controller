@@ -610,6 +610,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			Command:         filter.Command,
 			Args:            filter.Args,
 			Env:             containerEnv,
+			EnvFrom:         filter.EnvFrom,
 			ImagePullPolicy: filter.ImagePullPolicy,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/ws"},

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -63,6 +64,33 @@ func TestFailedContainerMessages(t *testing.T) {
 		)
 		if got := newR(pod).failedContainerMessages(context.Background(), pi); got != "" {
 			t.Errorf("expected empty for a successful container, got %q", got)
+		}
+	})
+
+	t.Run("bounds the summary so it stays under the condition.message CRD cap", func(t *testing.T) {
+		// A wide pipeline: many containers, each failing with a distinct multi-KiB
+		// FallbackToLogsOnError tail. Unbounded, the join would exceed the CRD's
+		// maxLength: 32768 and wedge Status().Update. It must stay well under.
+		statuses := make([]corev1.ContainerStatus, 0, 64)
+		for i := range 64 {
+			// Distinct per container (so de-dup can't collapse them) and multi-line
+			// (so the whitespace-collapse path is exercised), ~4KiB each.
+			msg := fmt.Sprintf("container-%d error:\n%s", i, strings.Repeat("x\t", 2048))
+			statuses = append(statuses, corev1.ContainerStatus{
+				Name:  fmt.Sprintf("filter-%d", i),
+				State: term(1, msg, "Error"),
+			})
+		}
+		got := newR(failedPod("pi-job-wide", nil, statuses)).failedContainerMessages(context.Background(), pi)
+
+		if len([]rune(got)) >= 32768 {
+			t.Errorf("summary must stay under the 32768 CRD cap, got %d runes", len([]rune(got)))
+		}
+		if !strings.Contains(got, "more)") {
+			t.Errorf("expected a truncation marker when containers are dropped, got %q", got)
+		}
+		if strings.ContainsAny(got, "\n\t") {
+			t.Errorf("internal newlines/tabs must be collapsed, got %q", got)
 		}
 	})
 }

@@ -713,13 +713,38 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	return job
 }
 
+const (
+	// maxContainerDetailLen bounds each per-container error line and
+	// maxJoinedDetailLen bounds their join, so the enriched Degraded message
+	// stays well under the CRD's maxLength: 32768 on condition.message even for
+	// a wide pipeline whose containers each fail with a distinct multi-KiB
+	// FallbackToLogsOnError termination tail. Without the bound the apiserver
+	// would reject Status().Update and wedge the reconcile in a requeue loop —
+	// worse than the plain "backoff limit" message this replaces. PLAT-1353.
+	maxContainerDetailLen = 512
+	maxJoinedDetailLen    = 4096
+)
+
+// oneLine flattens internal newlines/tabs/space-runs to single spaces (the MinIO
+// SDK's error text is multi-line) and trims the ends, then truncates to at most
+// max runes with an ellipsis so one pathological container can't blow the budget.
+func oneLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
 // failedContainerMessages inspects the pods of a batch PipelineInstance and
 // returns a short, operator-facing summary of the real container errors — the
 // claimer's download failure (e.g. "The specified bucket does not exist") or a
 // filter's crash — pulled from each terminated-with-error container's
 // termination message (populated via TerminationMessageFallbackToLogsOnError on
 // the container specs). Returns "" when nothing is available, so callers keep
-// the Job-level message ("backoff limit") as a fallback. PLAT-1353.
+// the Job-level message ("backoff limit") as a fallback. The result is bounded
+// (per-line and total) to stay under the condition.message CRD cap. PLAT-1353.
 func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) string {
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
@@ -730,6 +755,8 @@ func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context
 
 	seen := map[string]bool{}
 	var msgs []string
+	total := 0
+	dropped := 0
 	collect := func(statuses []corev1.ContainerStatus) {
 		for _, cs := range statuses {
 			term := cs.State.Terminated
@@ -739,25 +766,38 @@ func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context
 			if term == nil || term.ExitCode == 0 {
 				continue
 			}
-			detail := strings.TrimSpace(term.Message)
+			detail := oneLine(term.Message, maxContainerDetailLen)
 			if detail == "" {
-				detail = strings.TrimSpace(term.Reason)
+				detail = oneLine(term.Reason, maxContainerDetailLen)
 			}
 			if detail == "" {
 				continue
 			}
 			line := fmt.Sprintf("%s: %s", cs.Name, detail)
-			if !seen[line] {
-				seen[line] = true
-				msgs = append(msgs, line)
+			if seen[line] {
+				continue
 			}
+			seen[line] = true
+			// Bound the joined total; once over budget, count the rest so the
+			// summary ends with an explicit "(+N more)" instead of silently
+			// truncating.
+			if total+len(line) > maxJoinedDetailLen {
+				dropped++
+				continue
+			}
+			total += len(line) + len("; ")
+			msgs = append(msgs, line)
 		}
 	}
 	for i := range podList.Items {
 		collect(podList.Items[i].Status.InitContainerStatuses)
 		collect(podList.Items[i].Status.ContainerStatuses)
 	}
-	return strings.Join(msgs, "; ")
+	result := strings.Join(msgs, "; ")
+	if dropped > 0 {
+		result = fmt.Sprintf("%s; (+%d more)", result, dropped)
+	}
+	return result
 }
 
 // handleCompletedPods processes pods that have completed (succeeded or failed)

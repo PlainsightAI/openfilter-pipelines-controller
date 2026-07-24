@@ -4,14 +4,19 @@ on:
   pull_request:
     paths:
       - 'api/**'
+      - 'internal/**'
       - 'config/crd/**'
+      - 'config/rbac/**'
       - 'deployment/openfilter-pipelines-controller/crds/**'
+      - 'deployment/openfilter-pipelines-controller/templates/rbac.yaml'
   push:
     branches:
       - main
     paths:
       - 'api/**'
+      - 'internal/**'
       - 'config/crd/**'
+      - 'config/rbac/**'
 
 jobs:
   check-helm-crds:
@@ -30,18 +35,27 @@ jobs:
         run: |
           make controller-gen
 
-      - name: Generate CRDs
+      - name: Generate CRDs and RBAC
         run: |
           make manifests
+
+      - name: Check generated manifests are committed
+        run: |
+          git diff --exit-code config/ || \
+          (echo "Error: config/ is out of sync with the kubebuilder markers. Please run 'make manifests' and commit the changes." && exit 1)
 
       - name: Update Helm CRDs
         run: |
           ./hack/update-helm-crds.sh
 
+      - name: Update Helm RBAC
+        run: |
+          ./hack/update-helm-rbac.sh
+
       - name: Check for uncommitted changes
         run: |
-          git diff --exit-code deployment/openfilter-pipelines-controller/crds/ || \
-          (echo "Error: Helm CRDs are out of sync with generated CRDs. Please run 'make helm-update-crds' and commit the changes." && exit 1)
+          git diff --exit-code deployment/openfilter-pipelines-controller/ || \
+          (echo "Error: the Helm chart is out of sync with the generated manifests. Please run 'make helm-update-crds helm-update-rbac' and commit the changes." && exit 1)
 
       - name: Verify Helm chart
         if: always()

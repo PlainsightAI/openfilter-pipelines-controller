@@ -62,48 +62,44 @@ metadata:
   labels:
     {{- include "openfilter-pipelines-controller.labels" . | nindent 4 }}
 rules:
+# BEGIN manager-role rules — generated from config/rbac/role.yaml by
+# hack/update-helm-rbac.sh (make helm-update-rbac); do not edit by hand.
 - apiGroups:
-  - filter.plainsight.ai
+  - ""
   resources:
-  - pipelines
-  - pipelineinstances
+  - events
   verbs:
   - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
   - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - filter.plainsight.ai
-  resources:
-  - pipelines/finalizers
-  - pipelineinstances/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - filter.plainsight.ai
-  resources:
-  - pipelines/status
-  - pipelineinstances/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - filter.plainsight.ai
-  resources:
-  - pipelinesources
-  verbs:
   - get
   - list
   - watch
 - apiGroups:
   - ""
   resources:
-  - pods
+  - pods/status
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
   - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - services
   verbs:
   - create
@@ -112,13 +108,6 @@ rules:
   - list
   - patch
   - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - pods/status
-  verbs:
-  - get
   - watch
 - apiGroups:
   - apps
@@ -166,12 +155,43 @@ rules:
   verbs:
   - get
 - apiGroups:
-  - ""
+  - filter.plainsight.ai
   resources:
-  - events
+  - pipelineinstances
+  - pipelines
   verbs:
   - create
+  - delete
+  - get
+  - list
   - patch
+  - update
+  - watch
+- apiGroups:
+  - filter.plainsight.ai
+  resources:
+  - pipelineinstances/finalizers
+  - pipelines/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - filter.plainsight.ai
+  resources:
+  - pipelineinstances/status
+  - pipelines/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - filter.plainsight.ai
+  resources:
+  - pipelinesources
+  verbs:
+  - get
+  - list
+  - watch
+# END manager-role rules
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

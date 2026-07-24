@@ -192,7 +192,8 @@ When modifying CRD types or controller RBAC:
 3. Run `make manifests` to regenerate CRDs and RBAC
 4. Run `make generate` to regenerate DeepCopy methods
 5. Run `make helm-update-crds` to sync CRDs to Helm chart
-6. Run `make` or `make build` to compile (auto-runs manifests, generate, fmt, vet)
+6. If RBAC markers changed, run `make helm-update-rbac` to sync the chart's manager ClusterRole rules from the generated `config/rbac/role.yaml` — the chart role is generated between BEGIN/END markers in `templates/rbac.yaml`, never edited by hand (PLAT-1352; hand-maintained drift caused three silent-Forbidden bugs in one week)
+7. Run `make` or `make build` to compile (auto-runs manifests, generate, fmt, vet)
 
 **Important:** Always run `make helm-update-crds` after modifying API types to keep the Helm chart CRDs in sync. The CI pipeline will verify this automatically.
 

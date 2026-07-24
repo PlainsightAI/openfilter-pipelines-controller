@@ -62,6 +62,10 @@ helm-update-crds: manifests ## Update CRDs in Helm chart from config/crd/bases
 	@echo "Updating CRDs in Helm chart..."
 	@./hack/update-helm-crds.sh
 
+.PHONY: helm-update-rbac
+helm-update-rbac: manifests ## Sync the Helm chart's manager ClusterRole rules from the generated config/rbac/role.yaml
+	@./hack/update-helm-rbac.sh
+
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...

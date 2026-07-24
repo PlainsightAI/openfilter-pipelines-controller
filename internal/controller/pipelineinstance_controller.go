@@ -91,6 +91,15 @@ const (
 	// remove the condition.
 	ReasonUnsupportedClusterVersion = "UnsupportedClusterVersion"
 
+	// ReasonPipelinePodFailed marks a Degraded condition raised when a streaming
+	// pipeline pod has a container that cannot start or has crashed — a
+	// misconfigured filter that CrashLoopBackOffs, an image-pull failure, or a
+	// container that terminated with an error while the pod phase stays Running.
+	// Without it a broken stream is reported as a perpetual Running/Starting
+	// (PLAT-1254). The clear-on-recovery path in reconcileStreaming removes it
+	// once the pods are healthy again.
+	ReasonPipelinePodFailed = "PipelinePodFailed"
+
 	// Reconciliation intervals
 	StatusUpdateInterval = 30 * time.Second
 

@@ -165,6 +165,8 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 					msg = detail
 				}
 			}
+			// Bound the whole composed message (prefix + detail) under the CRD cap.
+			msg = boundConditionMessage(msg)
 			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, reason, msg)
 			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, reason, msg)
 			r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionFalse, reason, msg)

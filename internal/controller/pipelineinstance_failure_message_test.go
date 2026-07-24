@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -31,8 +32,13 @@ func TestFailedContainerMessages(t *testing.T) {
 	term := func(exit int32, msg, reason string) corev1.ContainerState {
 		return corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: exit, Message: msg, Reason: reason}}
 	}
-	newR := func(pod *corev1.Pod) *PipelineInstanceReconciler {
-		cli := fake.NewClientBuilder().WithScheme(sch).WithObjects(pi, pod).Build()
+	newR := func(pods ...*corev1.Pod) *PipelineInstanceReconciler {
+		objs := make([]client.Object, 0, 1+len(pods))
+		objs = append(objs, pi)
+		for _, p := range pods {
+			objs = append(objs, p)
+		}
+		cli := fake.NewClientBuilder().WithScheme(sch).WithObjects(objs...).Build()
 		return &PipelineInstanceReconciler{Client: cli, Scheme: sch}
 	}
 
@@ -91,6 +97,50 @@ func TestFailedContainerMessages(t *testing.T) {
 		}
 		if strings.ContainsAny(got, "\n\t") {
 			t.Errorf("internal newlines/tabs must be collapsed, got %q", got)
+		}
+	})
+
+	t.Run("gives claimer/init errors budget priority across multiple pods", func(t *testing.T) {
+		// parallelism > 1: several pods fail. The pod carrying the claimer's real
+		// download error must not be starved of budget by noisier filter pods
+		// visited first — init statuses are collected across all pods before any
+		// main container, so the claimer line survives even when the main-container
+		// errors overflow into (+N more). Distinct messages defeat the dedup.
+		claimerPod := failedPod("pi-job-claimer",
+			[]corev1.ContainerStatus{{Name: "claimer-video-in", State: term(1, "Claimer failed: The specified bucket does not exist", "Error")}},
+			nil,
+		)
+		noisy := make([]*corev1.Pod, 0, 8)
+		for i := range 8 {
+			noisy = append(noisy, failedPod(fmt.Sprintf("pi-job-noisy-%d", i), nil,
+				[]corev1.ContainerStatus{{Name: fmt.Sprintf("filter-%d", i), State: term(1, strings.Repeat("noise ", 512)+fmt.Sprintf("#%d", i), "Error")}},
+			))
+		}
+		got := newR(append(noisy, claimerPod)...).failedContainerMessages(context.Background(), pi)
+
+		if !strings.Contains(got, "claimer-video-in: Claimer failed: The specified bucket does not exist") {
+			t.Errorf("claimer's real error must survive the budget, got %q", got)
+		}
+	})
+}
+
+func TestBoundConditionMessage(t *testing.T) {
+	// The Job-level prefix (Job.Status.Conditions[].Message) has no k8s API
+	// length bound, so the whole composed message — not just the appended
+	// detail — must be capped under the condition.message CRD cap (32768).
+	t.Run("passes short messages through unchanged", func(t *testing.T) {
+		msg := "Job pi-abc failed: backoff limit exceeded [claimer-video-in: NoSuchBucket]"
+		if got := boundConditionMessage(msg); got != msg {
+			t.Errorf("short message must be unchanged, got %q", got)
+		}
+	})
+	t.Run("truncates an oversized prefix under the CRD cap", func(t *testing.T) {
+		got := boundConditionMessage(strings.Repeat("x", 40000))
+		if len([]rune(got)) >= 32768 {
+			t.Errorf("must stay under the 32768 CRD cap, got %d runes", len([]rune(got)))
+		}
+		if !strings.HasSuffix(got, "…") {
+			t.Errorf("truncation must be marked with an ellipsis, got %q tail", got[len(got)-4:])
 		}
 	})
 }

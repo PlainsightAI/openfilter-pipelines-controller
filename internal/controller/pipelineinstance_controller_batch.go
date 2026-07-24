@@ -160,6 +160,8 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 		if detail := r.failedContainerMessages(ctx, pipelineInstance); detail != "" {
 			failureMessage = fmt.Sprintf("%s [%s]", failureMessage, detail)
 		}
+		// Bound the whole composed message (prefix + detail) under the CRD cap.
+		failureMessage = boundConditionMessage(failureMessage)
 
 		r.flushOutstandingWork(ctx, pipelineInstance, failureReason, failureMessage)
 
@@ -723,7 +725,26 @@ const (
 	// worse than the plain "backoff limit" message this replaces. PLAT-1353.
 	maxContainerDetailLen = 512
 	maxJoinedDetailLen    = 4096
+
+	// maxConditionMessageLen caps the whole composed Degraded message — not just
+	// the appended container detail — so it stays under the condition.message CRD
+	// cap (maxLength: 32768). The Job-level prefix comes from
+	// Job.Status.Conditions[].Message, which the k8s API does not length-bound and
+	// which the PodFailurePolicy path builds dynamically (container/pod/namespace
+	// names), so the detail cap alone does not bound the total. PLAT-1353.
+	maxConditionMessageLen = 8192
 )
+
+// boundConditionMessage truncates a composed condition message to at most
+// maxConditionMessageLen runes (with an ellipsis) so no Degraded/Progressing/
+// Succeeded condition can exceed the CRD cap and get Status().Update() rejected.
+func boundConditionMessage(msg string) string {
+	r := []rune(msg)
+	if len(r) <= maxConditionMessageLen {
+		return msg
+	}
+	return string(r[:maxConditionMessageLen-1]) + "…"
+}
 
 // oneLine flattens internal newlines/tabs/space-runs to single spaces (the MinIO
 // SDK's error text is multi-line) and trims the ends, then truncates to at most
@@ -789,8 +810,13 @@ func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context
 			msgs = append(msgs, line)
 		}
 	}
+	// Two passes so every pod's init containers (the claimers — the download
+	// error PLAT-1353 most wants to surface) get budget priority over main
+	// containers, regardless of the cached client's non-deterministic pod order.
 	for i := range podList.Items {
 		collect(podList.Items[i].Status.InitContainerStatuses)
+	}
+	for i := range podList.Items {
 		collect(podList.Items[i].Status.ContainerStatuses)
 	}
 	result := strings.Join(msgs, "; ")

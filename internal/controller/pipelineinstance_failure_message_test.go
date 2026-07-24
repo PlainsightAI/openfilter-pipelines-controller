@@ -106,8 +106,21 @@ func TestFailedContainerMessages(t *testing.T) {
 		// visited first — init statuses are collected across all pods before any
 		// main container, so the claimer line survives even when the main-container
 		// errors overflow into (+N more). Distinct messages defeat the dedup.
-		claimerPod := failedPod("pi-job-claimer",
-			[]corev1.ContainerStatus{{Name: "claimer-video-in", State: term(1, "Claimer failed: The specified bucket does not exist", "Error")}},
+		//
+		// Two things make this actually gate the two-pass split:
+		//   1. The claimer pod is named so it sorts AFTER every noisy pod (the fake
+		//      client returns pods sorted by name), so under the old single
+		//      interleaved loop its init is reached last.
+		//   2. The claimer's own line is large (padded past the per-line cap), so it
+		//      can't slip into the budget left over after the big noisy lines drop —
+		//      a short claimer line otherwise fits regardless of ordering. The real
+		//      "bucket does not exist" substring is at the front, so it survives the
+		//      512-rune truncation and the assertion still checks the meaningful text.
+		// Result: under the pre-fix interleaved loop the claimer line is dropped into
+		// (+N more); under the two-pass split its init is collected first and survives.
+		claimerMsg := "Claimer failed: The specified bucket does not exist " + strings.Repeat("x", 1000)
+		claimerPod := failedPod("pi-job-zzz-claimer",
+			[]corev1.ContainerStatus{{Name: "claimer-video-in", State: term(1, claimerMsg, "Error")}},
 			nil,
 		)
 		noisy := make([]*corev1.Pod, 0, 8)

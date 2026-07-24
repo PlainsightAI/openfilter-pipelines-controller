@@ -155,6 +155,13 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 		} else {
 			failureMessage = fmt.Sprintf("Job %s failed: %s", pipelineInstance.Status.JobName, failureMessage)
 		}
+		// Enrich with the claimer/filter's real error so the Degraded status is
+		// diagnosable, not just "backoff limit" (PLAT-1353).
+		if detail := r.failedContainerMessages(ctx, pipelineInstance); detail != "" {
+			failureMessage = fmt.Sprintf("%s [%s]", failureMessage, detail)
+		}
+		// Bound the whole composed message (prefix + detail) under the CRD cap.
+		failureMessage = boundConditionMessage(failureMessage)
 
 		r.flushOutstandingWork(ctx, pipelineInstance, failureReason, failureMessage)
 
@@ -611,6 +618,9 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			Args:            filter.Args,
 			Env:             containerEnv,
 			ImagePullPolicy: filter.ImagePullPolicy,
+			// Surface the filter's real error in the pod termination message so a
+			// failed run is diagnosable from status, not just "backoff limit" (PLAT-1353).
+			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/ws"},
 			},
@@ -677,6 +687,11 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 							Name:  "claimer",
 							Image: r.ClaimerImage,
 							Env:   claimerEnv,
+							// Capture the claimer's real error (e.g. the download's
+							// "NoSuchBucket") in the pod termination message so a failed
+							// PipelineInstance surfaces the actual cause instead of only
+							// "backoff limit". PLAT-1353.
+							TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "workspace", MountPath: "/ws"},
 							},
@@ -698,6 +713,117 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 
 	log.Info("Built Job spec", "job", jobName, "completions", totalFiles, "parallelism", parallelism)
 	return job
+}
+
+const (
+	// maxContainerDetailLen bounds each per-container error line and
+	// maxJoinedDetailLen bounds their join, so the enriched Degraded message
+	// stays well under the CRD's maxLength: 32768 on condition.message even for
+	// a wide pipeline whose containers each fail with a distinct multi-KiB
+	// FallbackToLogsOnError termination tail. Without the bound the apiserver
+	// would reject Status().Update and wedge the reconcile in a requeue loop —
+	// worse than the plain "backoff limit" message this replaces. PLAT-1353.
+	maxContainerDetailLen = 512
+	maxJoinedDetailLen    = 4096
+
+	// maxConditionMessageLen caps the whole composed Degraded message — not just
+	// the appended container detail — so it stays under the condition.message CRD
+	// cap (maxLength: 32768). The Job-level prefix comes from
+	// Job.Status.Conditions[].Message, which the k8s API does not length-bound and
+	// which the PodFailurePolicy path builds dynamically (container/pod/namespace
+	// names), so the detail cap alone does not bound the total. PLAT-1353.
+	maxConditionMessageLen = 8192
+)
+
+// boundConditionMessage truncates a composed condition message to at most
+// maxConditionMessageLen runes (with an ellipsis) so no Degraded/Progressing/
+// Succeeded condition can exceed the CRD cap and get Status().Update() rejected.
+func boundConditionMessage(msg string) string {
+	r := []rune(msg)
+	if len(r) <= maxConditionMessageLen {
+		return msg
+	}
+	return string(r[:maxConditionMessageLen-1]) + "…"
+}
+
+// oneLine flattens internal newlines/tabs/space-runs to single spaces (the MinIO
+// SDK's error text is multi-line) and trims the ends, then truncates to at most
+// max runes with an ellipsis so one pathological container can't blow the budget.
+func oneLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
+// failedContainerMessages inspects the pods of a batch PipelineInstance and
+// returns a short, operator-facing summary of the real container errors — the
+// claimer's download failure (e.g. "The specified bucket does not exist") or a
+// filter's crash — pulled from each terminated-with-error container's
+// termination message (populated via TerminationMessageFallbackToLogsOnError on
+// the container specs). Returns "" when nothing is available, so callers keep
+// the Job-level message ("backoff limit") as a fallback. The result is bounded
+// (per-line and total) to stay under the condition.message CRD cap. PLAT-1353.
+func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) string {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
+		"filter.plainsight.ai/instance": pipelineInstance.GetInstanceID(),
+	}); err != nil {
+		return ""
+	}
+
+	seen := map[string]bool{}
+	var msgs []string
+	total := 0
+	dropped := 0
+	collect := func(statuses []corev1.ContainerStatus) {
+		for _, cs := range statuses {
+			term := cs.State.Terminated
+			if term == nil {
+				term = cs.LastTerminationState.Terminated
+			}
+			if term == nil || term.ExitCode == 0 {
+				continue
+			}
+			detail := oneLine(term.Message, maxContainerDetailLen)
+			if detail == "" {
+				detail = oneLine(term.Reason, maxContainerDetailLen)
+			}
+			if detail == "" {
+				continue
+			}
+			line := fmt.Sprintf("%s: %s", cs.Name, detail)
+			if seen[line] {
+				continue
+			}
+			seen[line] = true
+			// Bound the joined total; once over budget, count the rest so the
+			// summary ends with an explicit "(+N more)" instead of silently
+			// truncating.
+			if total+len(line) > maxJoinedDetailLen {
+				dropped++
+				continue
+			}
+			total += len(line) + len("; ")
+			msgs = append(msgs, line)
+		}
+	}
+	// Two passes so every pod's init containers (the claimers — the download
+	// error PLAT-1353 most wants to surface) get budget priority over main
+	// containers, regardless of the cached client's non-deterministic pod order.
+	for i := range podList.Items {
+		collect(podList.Items[i].Status.InitContainerStatuses)
+	}
+	for i := range podList.Items {
+		collect(podList.Items[i].Status.ContainerStatuses)
+	}
+	result := strings.Join(msgs, "; ")
+	if dropped > 0 {
+		result = fmt.Sprintf("%s; (+%d more)", result, dropped)
+	}
+	return result
 }
 
 // handleCompletedPods processes pods that have completed (succeeded or failed)

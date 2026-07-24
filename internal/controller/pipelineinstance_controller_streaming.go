@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -174,12 +175,29 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 		}
 	}
 
-	// Step 4: Update conditions based on deployment status
-	if pipelineInstance.Status.Streaming.ReadyReplicas > 0 {
-		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Running", "Stream is processing")
-		// Note: We don't set Available=True for streaming runs as they run indefinitely
+	// Step 4: Update conditions based on deployment + pod health.
+	//
+	// A crashed pipeline pod must surface as Degraded rather than a perpetual
+	// "Running"/"Starting": a misconfigured filter that CrashLoopBackOffs, an
+	// image-pull failure, or a container that crashed while the pod phase stays
+	// Running (one container dead, another alive) would otherwise be reported as
+	// healthy (PLAT-1254). The pod-health check takes precedence over the
+	// ready-replica count.
+	if msg, failed := r.streamingPodFailure(ctx, pipelineInstance); failed {
+		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, ReasonPipelinePodFailed, msg)
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, ReasonPipelinePodFailed, msg)
 	} else {
-		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Starting", "Waiting for stream to become ready")
+		// Healthy pods — clear a stale pod-failure Degraded left by a prior crash
+		// that has since recovered (only ours; never another dimension's).
+		if cond := meta.FindStatusCondition(pipelineInstance.Status.Conditions, ConditionTypeDegraded); cond != nil && cond.Reason == ReasonPipelinePodFailed {
+			meta.RemoveStatusCondition(&pipelineInstance.Status.Conditions, ConditionTypeDegraded)
+		}
+		if pipelineInstance.Status.Streaming.ReadyReplicas > 0 {
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Running", "Stream is processing")
+			// Note: We don't set Available=True for streaming runs as they run indefinitely
+		} else {
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Starting", "Waiting for stream to become ready")
+		}
 	}
 
 	if err := r.Status().Update(ctx, pipelineInstance); err != nil {
@@ -346,6 +364,9 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 			Name:            filter.Name,
 			Image:           filter.Image,
 			ImagePullPolicy: filter.ImagePullPolicy,
+			// Surface the filter's real error in the pod termination message so a
+			// crashed streaming container is diagnosable from status (PLAT-1254).
+			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 		}
 
 		if len(filter.Command) > 0 {
@@ -568,6 +589,63 @@ func (r *PipelineInstanceReconciler) updateStreamingStatus(ctx context.Context, 
 	pipelineInstance.Status.Streaming.ContainerRestarts = totalRestarts
 
 	return nil
+}
+
+// streamingPodFailure inspects the streaming pods and returns an operator-facing
+// Degraded message when any pod has a container that cannot start (ImagePullBackOff,
+// CrashLoopBackOff, config error) or has crashed while the pod stays Running. It
+// reuses the batch path's detectPodStartFailure/detectContainerCrash so both paths
+// classify failures identically, then enriches with the container's real error tail
+// (surfaced via TerminationMessageFallbackToLogsOnError) and bounds the whole string
+// under the condition.message CRD cap. Returns ("", false) when every pod is healthy.
+// PLAT-1254.
+func (r *PipelineInstanceReconciler) streamingPodFailure(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (string, bool) {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{"pipelineinstance": pipelineInstance.Name}); err != nil {
+		return "", false
+	}
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		reason, ok := detectPodStartFailure(pod)
+		if !ok {
+			reason, ok = detectContainerCrash(pod)
+		}
+		if !ok {
+			continue
+		}
+		msg := reason
+		if detail := crashDetail(pod); detail != "" {
+			msg = fmt.Sprintf("%s [%s]", reason, detail)
+		}
+		return boundConditionMessage(msg), true
+	}
+	return "", false
+}
+
+// crashDetail pulls the real error tail from the first container that terminated
+// with an error (current or last state), collapsed to one line and length-capped.
+// Init containers are checked first so a claimer/init failure wins over a
+// downstream filter's noise.
+func crashDetail(pod *corev1.Pod) string {
+	scan := func(statuses []corev1.ContainerStatus) string {
+		for _, cs := range statuses {
+			term := cs.State.Terminated
+			if term == nil {
+				term = cs.LastTerminationState.Terminated
+			}
+			if term == nil || term.ExitCode == 0 {
+				continue
+			}
+			if d := oneLine(term.Message, maxContainerDetailLen); d != "" {
+				return fmt.Sprintf("%s: %s", cs.Name, d)
+			}
+		}
+		return ""
+	}
+	if d := scan(pod.Status.InitContainerStatuses); d != "" {
+		return d
+	}
+	return scan(pod.Status.ContainerStatuses)
 }
 
 // checkIdleTimeout checks if the streaming run should complete due to idle timeout

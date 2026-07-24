@@ -43,16 +43,37 @@ except ValueError:
     sys.exit("config/rbac/role.yaml has no top-level 'rules:' — regenerate with 'make manifests'")
 rules = "\n".join(role_lines[start:]).rstrip() + "\n"
 
-chart = open(chart_path).read()
-anchor = '-manager-role'
+chart_lines = open(chart_path).read().splitlines(keepends=True)
 
-# Locate the manager ClusterRole's rules block: from the first `rules:` line
-# after the manager-role name anchor, up to (excluding) the next `---`.
-name_idx = chart.find(anchor)
-if name_idx == -1:
+# Locate the manager ClusterRole document by its kind+name pair: split the
+# template on `---` lines and pick the document whose TOP-LEVEL kind is
+# ClusterRole and whose name ends in `-manager-role`. Both checks matter, and
+# the kind check must be unindented: the manager ClusterRoleBinding's roleRef
+# block contains the indented pair `kind: ClusterRole` + `name: …-manager-role`,
+# so a whitespace-stripped or plain substring match would splice into the
+# binding if the documents were ever reordered. The rules block runs to the end
+# of the document.
+seps = [i for i, l in enumerate(chart_lines) if l.rstrip("\n") == "---"]
+starts = [0] + [i + 1 for i in seps]
+ends = seps + [len(chart_lines)]
+target = None
+for start, end in zip(starts, ends):
+    doc = chart_lines[start:end]
+    if any(l.rstrip("\n") == "kind: ClusterRole" for l in doc) and any(
+        l.strip().startswith("name:") and l.rstrip("\n").endswith("-manager-role")
+        for l in doc
+    ):
+        target = (start, end)
+        break
+if target is None:
     sys.exit("chart rbac.yaml has no manager-role ClusterRole")
-rules_idx = chart.index("\nrules:\n", name_idx) + len("\nrules:\n")
-end_idx = chart.index("\n---", rules_idx) + 1
+
+start, end = target
+rules_idx = next(
+    (i for i in range(start, end) if chart_lines[i].rstrip("\n") == "rules:"), None
+)
+if rules_idx is None:
+    sys.exit("manager-role ClusterRole has no rules block")
 
 generated = (
     "# BEGIN manager-role rules — generated from config/rbac/role.yaml by\n"
@@ -61,7 +82,9 @@ generated = (
     + "# END manager-role rules\n"
 )
 
-open(chart_path, "w").write(chart[:rules_idx] + generated + chart[end_idx:])
+open(chart_path, "w").write(
+    "".join(chart_lines[: rules_idx + 1]) + generated + "".join(chart_lines[end:])
+)
 print("synced manager ClusterRole rules from config/rbac/role.yaml")
 PYEOF
 

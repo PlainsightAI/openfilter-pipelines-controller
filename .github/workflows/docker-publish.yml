@@ -96,6 +96,7 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read
+      id-token: write # keyless cosign for the SBOM attestation below
     strategy:
       fail-fast: false
       matrix:
@@ -148,6 +149,18 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect plainsightai/${{ matrix.image }}:${{ steps.meta.outputs.version }}
+
+      # Attach a signed SPDX SBOM attestation (one per platform) to the merged multi-arch
+      # manifest, so the released image is verifiable and shows up scanned (not no_sbom) in
+      # grype-release-metric. Public image -> Rekor (tlog=true, the action default). Best-effort:
+      # the image is already pushed, so a Sigstore blip must not fail the release. Still logged
+      # in to Docker Hub above, and the job holds id-token: write.
+      - name: Attest SBOM (signed, per-platform)
+        continue-on-error: true
+        uses: PlainsightAI/gh-actions-public/attest-sbom@main
+        with:
+          image: plainsightai/${{ matrix.image }}:${{ steps.meta.outputs.version }}
+          platforms: linux/amd64,linux/arm64
 
   # Charts are published to GHCR under a charts/ prefix, NOT to Docker Hub.
   # `helm push` derives the OCI repository from the chart name, so pushing to

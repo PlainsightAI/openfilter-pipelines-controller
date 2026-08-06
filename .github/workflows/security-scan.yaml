@@ -1,0 +1,18 @@
+name: Security Scan
+
+# Shift-left vulnerability scan: Grype reads go.mod/go.sum from the checkout and fails the
+# build on a CRITICAL with a known fix. Uses the shared reusable (language-agnostic) so the
+# CVE-ignore policy stays in one place, shared with the filters.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  scan:
+    permissions:
+      contents: read
+      id-token: write
+    uses: PlainsightAI/gh-actions-public/.github/workflows/security-scan.yaml@main
+    with:
+      language: go

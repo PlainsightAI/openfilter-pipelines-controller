@@ -117,19 +117,19 @@ func TestEnsureStreamingDeployment_BuildAndApplySpansCarryEnrichment(t *testing.
 	bAttrs := attrsByKey(build)
 
 	if v, ok := bAttrs[tracing.AttrBuildContainerCount]; !ok || v.AsInt64() != 2 {
-		t.Errorf("build.container.count: got %v ok=%v, want 2", v.Emit(), ok)
+		t.Errorf("build.container.count: got %v ok=%v, want 2", v.String(), ok)
 	}
 	if v, ok := bAttrs[tracing.AttrBuildGPU]; !ok || !v.AsBool() {
-		t.Errorf("build.gpu: got %v ok=%v, want true", v.Emit(), ok)
+		t.Errorf("build.gpu: got %v ok=%v, want true", v.String(), ok)
 	}
 	if v, ok := bAttrs[tracing.AttrBuildReplicas]; !ok || v.AsInt64() != 1 {
-		t.Errorf("build.replicas: got %v ok=%v, want 1", v.Emit(), ok)
+		t.Errorf("build.replicas: got %v ok=%v, want 1", v.String(), ok)
 	}
 
 	apply := findSpanByName(t, spans, "PipelineInstanceReconciler.apply")
 	aAttrs := attrsByKey(apply)
 	if v, ok := aAttrs[tracing.AttrApplyResult]; !ok || v.AsString() != string(tracing.ApplyResultCreated) {
-		t.Errorf("apply.result: got %v ok=%v, want %q", v.Emit(), ok, tracing.ApplyResultCreated)
+		t.Errorf("apply.result: got %v ok=%v, want %q", v.String(), ok, tracing.ApplyResultCreated)
 	}
 }
 
@@ -169,7 +169,7 @@ func TestEnsureStreamingDeployment_UpdatePathSetsApplyResultUpdated(t *testing.T
 	apply := findSpanByName(t, recorder.Ended(), "PipelineInstanceReconciler.apply")
 	aAttrs := attrsByKey(apply)
 	if v, ok := aAttrs[tracing.AttrApplyResult]; !ok || v.AsString() != string(tracing.ApplyResultUpdated) {
-		t.Errorf("apply.result on update path: got %v ok=%v, want %q", v.Emit(), ok, tracing.ApplyResultUpdated)
+		t.Errorf("apply.result on update path: got %v ok=%v, want %q", v.String(), ok, tracing.ApplyResultUpdated)
 	}
 }
 

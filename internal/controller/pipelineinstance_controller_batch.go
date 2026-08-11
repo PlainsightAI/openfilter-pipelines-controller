@@ -617,6 +617,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			Command:         filter.Command,
 			Args:            filter.Args,
 			Env:             containerEnv,
+			EnvFrom:         filter.EnvFrom,
 			ImagePullPolicy: filter.ImagePullPolicy,
 			// Surface the filter's real error in the pod termination message so a
 			// failed run is diagnosable from status, not just "backoff limit" (PLAT-1353).

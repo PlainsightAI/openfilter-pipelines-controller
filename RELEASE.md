@@ -1,5 +1,15 @@
 # Release notes
 
+## v0.7.1
+
+### Changed
+
+- Update the bundled OpenFilter builtin image pins (video-in, image-out, webvis) to `1.2.2` (#107, #108, #109). Pipelines now render on the apt-upgraded 1.2.2 builtins, clearing the OS-package + pip-bundled ffmpeg CVEs the older pins carried.
+
+### Added
+
+- SBOM attestation + shift-left security scan for the released controller image (#105).
+
 ## v0.7.0
 
 ### Added

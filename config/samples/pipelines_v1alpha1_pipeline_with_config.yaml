@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-with-config-example
 spec:
-  videoInputPath: /ws/input.mp4
+  videoInputPath: /ws/input
 
   filters:
     - name: video-decoder

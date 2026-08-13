@@ -168,17 +168,22 @@ func TestSourcePathResolution(t *testing.T) {
 // TestWriteSourceURIFile checks the sidecar the claimer writes so an entry filter can
 // report the object's real source URI as meta['src'] (PLAT-1498/1499).
 func TestWriteSourceURIFile(t *testing.T) {
-	dir := t.TempDir()
-	sourcePath := filepath.Join(dir, "input")
-
-	writeSourceURIFile(sourcePath, "my-bucket", "nested/path/original.png")
-
-	got, err := os.ReadFile(sourcePath + sourceURIFileSuffix)
-	if err != nil {
-		t.Fatalf("expected sidecar file to be written: %v", err)
+	cases := []struct{ name, key, want string }{
+		{"plain key", "nested/path/original.png", "s3://my-bucket/nested/path/original.png"},
+		{"leading slash trimmed (no double slash)", "/nested/path/original.png", "s3://my-bucket/nested/path/original.png"},
 	}
-	if want := "s3://my-bucket/nested/path/original.png"; string(got) != want {
-		t.Errorf("expected %q, got %q", want, string(got))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sourcePath := filepath.Join(t.TempDir(), "input")
+			writeSourceURIFile(sourcePath, "my-bucket", tc.key)
+			got, err := os.ReadFile(sourcePath + sourceURIFileSuffix)
+			if err != nil {
+				t.Fatalf("expected sidecar file to be written: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("expected %q, got %q", tc.want, string(got))
+			}
+		})
 	}
 }
 

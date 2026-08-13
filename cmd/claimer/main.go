@@ -420,7 +420,8 @@ func createMinIOClient(cfg *Config) (*minio.Client, error) {
 // the media is already on disk, so a write failure must not fail the claim — the filter
 // simply falls back to the physical path (losing per-file attribution) but still runs.
 func writeSourceURIFile(sourcePath, bucket, key string) {
-	uri := fmt.Sprintf("s3://%s/%s", bucket, key)
+	// Trim a leading slash so an already-absolute key can't produce s3://bucket//key.
+	uri := fmt.Sprintf("s3://%s/%s", bucket, strings.TrimPrefix(key, "/"))
 	dest := sourcePath + sourceURIFileSuffix
 	if err := os.WriteFile(dest, []byte(uri), 0644); err != nil {
 		log.Printf("warning: failed to write source URI file %s: %v", dest, err)

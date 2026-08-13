@@ -241,6 +241,11 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 	for _, c := range initContainers {
 		objKey := envValue(c.Env, "S3_OBJECT_KEY")
 		dest := envValue(c.Env, "VIDEO_INPUT_PATH")
+		// SOURCE_PATH is the new name for the same value (PLAT-1499); VIDEO_INPUT_PATH
+		// is kept as a deprecated alias, so both must carry the download destination.
+		if sp := envValue(c.Env, "SOURCE_PATH"); sp != dest {
+			t.Errorf("claimer %q SOURCE_PATH = %q, want %q (alias of VIDEO_INPUT_PATH)", c.Name, sp, dest)
+		}
 		switch c.Name {
 		case "claimer-front-cam":
 			if objKey != "front.mp4" {
@@ -276,6 +281,23 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 	}
 	if got := envValue(back.Env, "VIDEO_INPUT_PATH"); got != "/ws/back-cam.mp4" {
 		t.Errorf("back-cam VIDEO_INPUT_PATH = %q, want %q", got, "/ws/back-cam.mp4")
+	}
+	// SOURCE_PATH (new name, same value) + the per-filter source-URI sidecar env (PLAT-1499).
+	if got := envValue(front.Env, "SOURCE_PATH"); got != "/ws/front-cam.mp4" {
+		t.Errorf("front-cam SOURCE_PATH = %q, want %q", got, "/ws/front-cam.mp4")
+	}
+	if got := envValue(front.Env, "FILTER_OVERRIDE_SOURCE_URI_FILE"); got != "/ws/front-cam.mp4.source_uri" {
+		t.Errorf("front-cam FILTER_OVERRIDE_SOURCE_URI_FILE = %q, want %q", got, "/ws/front-cam.mp4.source_uri")
+	}
+	if got := envValue(back.Env, "SOURCE_PATH"); got != "/ws/back-cam.mp4" {
+		t.Errorf("back-cam SOURCE_PATH = %q, want %q", got, "/ws/back-cam.mp4")
+	}
+	if got := envValue(back.Env, "FILTER_OVERRIDE_SOURCE_URI_FILE"); got != "/ws/back-cam.mp4.source_uri" {
+		t.Errorf("back-cam FILTER_OVERRIDE_SOURCE_URI_FILE = %q, want %q", got, "/ws/back-cam.mp4.source_uri")
+	}
+	// image-out (downstream consumer) must NOT get the source-URI sidecar env.
+	if got := envValue(imageOut.Env, "FILTER_OVERRIDE_SOURCE_URI_FILE"); got != "" {
+		t.Errorf("image-out must not receive FILTER_OVERRIDE_SOURCE_URI_FILE, got %q", got)
 	}
 	// ORDERING contract: VIDEO_INPUT_PATH must precede every FILTER_* env
 	// entry. Kubernetes dependent-env expansion only resolves $(VAR)

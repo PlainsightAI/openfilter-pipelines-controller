@@ -27,3 +27,6 @@ go.work
 *.swo
 *~
 .secrets
+
+# stray root build artifact from `go build ./cmd/claimer/`
+/claimer

@@ -16,10 +16,10 @@
 #     single-file medias ship from the platform — no prefix scans in
 #     multi-source mode).
 #
-# The controller injects `VIDEO_INPUT_PATH = /ws/<filterName><ext>` into
+# The controller injects `SOURCE_PATH = /ws/<filterName><ext>` into
 # ONLY the filter container whose name matches the binding's filterName, so
 # the referenced Pipeline authors each VideoIn source as
-# `file://$(VIDEO_INPUT_PATH)` — the value resolves per container.
+# `file://$(SOURCE_PATH)` — the value resolves per container.
 #
 # The same two openfilter authoring constraints as the streaming
 # multi-source sample apply: stagger output ports by 2 (5550, 5552, …) and
@@ -31,13 +31,13 @@
 #     - name: front-cam
 #       config:
 #         - name: sources
-#           value: "file://$(VIDEO_INPUT_PATH);front-cam"
+#           value: "file://$(SOURCE_PATH);front-cam"
 #         - name: outputs
 #           value: tcp://*:5550
 #     - name: back-cam
 #       config:
 #         - name: sources
-#           value: "file://$(VIDEO_INPUT_PATH);back-cam"
+#           value: "file://$(SOURCE_PATH);back-cam"
 #         - name: outputs
 #           value: tcp://*:5552                # +2 not +1
 #     - name: tracker

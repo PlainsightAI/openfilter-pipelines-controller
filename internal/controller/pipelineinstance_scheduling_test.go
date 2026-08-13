@@ -723,3 +723,41 @@ func TestAddGPUSharingNodeSelector_DoesNotOverrideInstance(t *testing.T) {
 		t.Errorf("input map must not be mutated: %v", in)
 	}
 }
+
+// TestApplyGPUContainerSharing_DevicePlugin_NormalizesMismatch verifies that the
+// device-plugin mode forces BOTH the limit and the request to 1 regardless of a
+// container's initial (possibly mismatched) GPU resources. nvidia.com/gpu is an
+// extended resource, so request must equal limit or the API server rejects the
+// pod — this guards that applyGPUContainerSharing is defensive about odd inputs.
+func TestApplyGPUContainerSharing_DevicePlugin_NormalizesMismatch(t *testing.T) {
+	containers := []corev1.Container{
+		{
+			// limit of 2, no request
+			Name: "limit-only-2",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("2")},
+			},
+		},
+		{
+			// request set, no limit
+			Name: "request-only",
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+			},
+		},
+	}
+
+	applyGPUContainerSharing(containers, 1, "time-sharing")
+
+	for _, name := range []string{"limit-only-2", "request-only"} {
+		c := findContainer(t, containers, name)
+		q, ok := c.Resources.Limits["nvidia.com/gpu"]
+		if !ok || q.Value() != 1 {
+			t.Errorf("%s nvidia.com/gpu limit = %v, ok=%v; want 1 (normalized)", name, q, ok)
+		}
+		qr, okR := c.Resources.Requests["nvidia.com/gpu"]
+		if !okR || qr.Value() != 1 {
+			t.Errorf("%s nvidia.com/gpu request = %v, ok=%v; want 1 (must equal limit)", name, qr, okR)
+		}
+	}
+}

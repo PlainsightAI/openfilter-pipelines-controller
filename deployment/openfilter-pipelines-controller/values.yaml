@@ -172,6 +172,9 @@ gpuRuntimeClass: ""
 # on-prem behavior: one lead container holds the limit and the rest share via
 # NVIDIA_VISIBLE_DEVICES=all (which requires gpuRuntimeClass). Set per env in the
 # gitops repo — "time-sharing" on GKE (prod/staging/dev), empty on-prem (lab/cpd).
+# Allowed values: "time-sharing", "mps", or "" (disables sharing / uses the
+# on-prem RuntimeClass + NVIDIA_VISIBLE_DEVICES path). Any other value fails the
+# controller fast at startup.
 gpuSharingStrategy: ""
 
 # Telemetry exporter values injected into every filter container the controller

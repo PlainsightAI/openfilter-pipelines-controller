@@ -151,3 +151,16 @@ func TestParseNodeSelectorLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateGPUSharingStrategy(t *testing.T) {
+	for _, v := range []string{"", "time-sharing", "mps"} {
+		if err := validateGPUSharingStrategy(v); err != nil {
+			t.Errorf("validateGPUSharingStrategy(%q) = %v, want nil", v, err)
+		}
+	}
+	for _, v := range []string{"time-share", "enabled", "timesharing", "MPS"} {
+		if err := validateGPUSharingStrategy(v); err == nil {
+			t.Errorf("validateGPUSharingStrategy(%q) = nil, want error", v)
+		}
+	}
+}

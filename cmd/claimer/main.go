@@ -55,16 +55,29 @@ const (
 	EnvS3SecretKey    = "S3_SECRET_ACCESS_KEY"
 	EnvS3PathStyle    = "S3_USE_PATH_STYLE"
 	EnvS3SkipTLS      = "S3_INSECURE_SKIP_TLS_VERIFY"
-	EnvVideoInput     = "VIDEO_INPUT_PATH"
+	// EnvSourcePath is where the claimer writes the downloaded media. Renamed from
+	// VIDEO_INPUT_PATH (still accepted as a deprecated alias) because the value is any
+	// media, not just video. The default is deliberately extension-less (/ws/input):
+	// entry filters are extension-agnostic, and the object's real source URI travels via
+	// the sidecar file below rather than being encoded in the filename.
+	EnvSourcePath = "SOURCE_PATH"
+	EnvVideoInput = "VIDEO_INPUT_PATH" // deprecated alias of SOURCE_PATH
 	// EnvS3ObjectKey selects "direct download" mode for the multi-source
 	// batch path (PLAT-1071). When set, the claimer skips Valkey and
-	// downloads exactly this S3 object key to VIDEO_INPUT_PATH, then
+	// downloads exactly this S3 object key to SOURCE_PATH, then
 	// exits. Used by the per-VideoIn init claimer the batch reconciler
 	// emits for multi-source bindings.
 	EnvS3ObjectKey = "S3_OBJECT_KEY"
 
 	// Volume mount paths
-	defaultInputPath = "/ws/input.mp4"
+	defaultInputPath = "/ws/input"
+
+	// sourceURIFileSuffix is appended to the download path to form the sidecar file the
+	// claimer writes with the object's logical source URI (s3://bucket/key). Entry filters
+	// read it via FILTER_OVERRIDE_SOURCE_URI_FILE and report it as meta['src'] (PLAT-1498),
+	// so per-file identity survives even though the media is downloaded to a fixed generic
+	// path. The controller must set FILTER_OVERRIDE_SOURCE_URI_FILE to <SOURCE_PATH> + this.
+	sourceURIFileSuffix = ".source_uri"
 
 	// Pod annotations are no longer used; controller derives queue state directly
 )
@@ -103,15 +116,16 @@ func run() error {
 	// binding, each pointing at its bound media's object. No Valkey
 	// work-queue is involved.
 	if cfg.S3ObjectKey != "" {
-		log.Printf("Direct-download mode: bucket=%s, key=%s, dest=%s", cfg.S3Bucket, cfg.S3ObjectKey, cfg.VideoInputPath)
+		log.Printf("Direct-download mode: bucket=%s, key=%s, dest=%s", cfg.S3Bucket, cfg.S3ObjectKey, cfg.SourcePath)
 		minioClient, err := createMinIOClient(cfg)
 		if err != nil {
 			return fmt.Errorf("failed to create MinIO client: %w", err)
 		}
-		if err := downloadFile(ctx, minioClient, cfg.S3Bucket, cfg.S3ObjectKey, cfg.VideoInputPath); err != nil {
+		if err := downloadFile(ctx, minioClient, cfg.S3Bucket, cfg.S3ObjectKey, cfg.SourcePath); err != nil {
 			return fmt.Errorf("failed to download file: %w", err)
 		}
-		log.Printf("Downloaded %s to %s", cfg.S3ObjectKey, cfg.VideoInputPath)
+		log.Printf("Downloaded %s to %s", cfg.S3ObjectKey, cfg.SourcePath)
+		writeSourceURIFile(cfg.SourcePath, cfg.S3Bucket, cfg.S3ObjectKey)
 		return nil
 	}
 
@@ -160,10 +174,11 @@ func run() error {
 	}
 
 	// Download file from S3
-	if err := downloadFile(ctx, minioClient, cfg.S3Bucket, msg.File, cfg.VideoInputPath); err != nil {
+	if err := downloadFile(ctx, minioClient, cfg.S3Bucket, msg.File, cfg.SourcePath); err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}
-	log.Printf("Downloaded file %s to %s", msg.File, cfg.VideoInputPath)
+	log.Printf("Downloaded file %s to %s", msg.File, cfg.SourcePath)
+	writeSourceURIFile(cfg.SourcePath, cfg.S3Bucket, msg.File)
 
 	// No Kubernetes API calls are required; controller will infer ownership via consumer name.
 
@@ -186,7 +201,7 @@ type Config struct {
 	S3SecretKey    string
 	S3UsePathStyle bool
 	S3SkipTLS      bool
-	VideoInputPath string
+	SourcePath     string
 	// S3ObjectKey selects direct-download mode (PLAT-1071). Empty in the
 	// legacy queue-based path.
 	S3ObjectKey string
@@ -207,8 +222,11 @@ func loadConfig() (*Config, error) {
 		S3Region:       os.Getenv(EnvS3Region),
 		S3AccessKey:    os.Getenv(EnvS3AccessKey),
 		S3SecretKey:    os.Getenv(EnvS3SecretKey),
-		VideoInputPath: func() string {
-			if value := os.Getenv(EnvVideoInput); value != "" {
+		SourcePath: func() string {
+			if value := os.Getenv(EnvSourcePath); value != "" {
+				return value
+			}
+			if value := os.Getenv(EnvVideoInput); value != "" { // deprecated alias
 				return value
 			}
 			return defaultInputPath
@@ -234,8 +252,8 @@ func loadConfig() (*Config, error) {
 	if cfg.S3Bucket == "" {
 		return nil, fmt.Errorf("S3_BUCKET is required")
 	}
-	if cfg.VideoInputPath == "" {
-		return nil, fmt.Errorf("VIDEO_INPUT_PATH is required")
+	if cfg.SourcePath == "" {
+		return nil, fmt.Errorf("SOURCE_PATH (or VIDEO_INPUT_PATH) is required")
 	}
 
 	return cfg, nil
@@ -394,6 +412,21 @@ func createMinIOClient(cfg *Config) (*minio.Client, error) {
 	}
 
 	return minioClient, nil
+}
+
+// writeSourceURIFile records the object's logical source URI (s3://bucket/key) in a
+// sidecar file next to the downloaded media, so extension-agnostic entry filters can
+// report it as meta['src'] via FILTER_OVERRIDE_SOURCE_URI_FILE (PLAT-1498). Best-effort:
+// the media is already on disk, so a write failure must not fail the claim — the filter
+// simply falls back to the physical path (losing per-file attribution) but still runs.
+func writeSourceURIFile(sourcePath, bucket, key string) {
+	uri := fmt.Sprintf("s3://%s/%s", bucket, key)
+	dest := sourcePath + sourceURIFileSuffix
+	if err := os.WriteFile(dest, []byte(uri), 0644); err != nil {
+		log.Printf("warning: failed to write source URI file %s: %v", dest, err)
+		return
+	}
+	log.Printf("Wrote source URI %s to %s", uri, dest)
 }
 
 func downloadFile(ctx context.Context, client *minio.Client, bucket, key, destPath string) error {

@@ -1,5 +1,15 @@
 # Release notes
 
+## [Unreleased]
+
+### Added
+
+- **Batch runs preserve per-source-file identity (PLAT-1499)**: the claimer writes each downloaded object's real source URI (`s3://bucket/key`) to a `<SOURCE_PATH>.source_uri` sidecar, and the controller wires `FILTER_OVERRIDE_SOURCE_URI_FILE` into every entry filter, so the pipeline reports the true source file as `meta['src']` (openfilter PLAT-1498) even though the media is downloaded to a fixed generic path. This is what lets event-sink/BigQuery data be attributed per source file for `external_videos`/`external_images` folder batches.
+
+### Changed
+
+- **`videoInputPath` default is now `/ws/input` (extension-less), and the path is exposed to filters as `SOURCE_PATH`** (with `VIDEO_INPUT_PATH` kept as a deprecated alias). The old `/ws/input.mp4` forced a `.mp4` extension onto every downloaded object, which silently broke the extension-sensitive `image-in` filter in the batch queue path (images written to `input.mp4` were skipped). Entry filters are now extension-agnostic (openfilter PLAT-1498), so a generic name is correct; authors can reference `file://$(SOURCE_PATH)` or the legacy `file://$(VIDEO_INPUT_PATH)`. Pipelines that set `videoInputPath` explicitly are unaffected. (PLAT-1499)
+
 ## v0.7.1
 
 ### Changed

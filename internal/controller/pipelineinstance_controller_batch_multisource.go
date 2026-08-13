@@ -303,7 +303,8 @@ func (r *PipelineInstanceReconciler) buildDirectClaimerEnv(b ResolvedSourceBindi
 	env := []corev1.EnvVar{
 		{Name: "S3_BUCKET", Value: bucket.Name},
 		{Name: "S3_OBJECT_KEY", Value: bindingObjectKey(b)},
-		{Name: "VIDEO_INPUT_PATH", Value: destPath},
+		{Name: "SOURCE_PATH", Value: destPath},
+		{Name: "VIDEO_INPUT_PATH", Value: destPath}, // deprecated alias of SOURCE_PATH
 		{Name: "S3_ENDPOINT", Value: bucket.Endpoint},
 		{Name: "S3_REGION", Value: bucket.Region},
 		{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", bucket.UsePathStyle)},
@@ -360,10 +361,14 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 		// references to variables defined EARLIER — a forward reference
 		// stays a literal string and the VideoIn fails to open its input.
 		// (Mirrors the streaming builder's RTSP-env-first ordering.)
-		env := make([]corev1.EnvVar, 0, len(configEnv)+1)
+		env := make([]corev1.EnvVar, 0, len(configEnv)+3)
 		if path, ok := downloadPath[filter.Name]; ok {
 			env = append(env,
-				corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: path},
+				corev1.EnvVar{Name: "SOURCE_PATH", Value: path},
+				corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: path}, // deprecated alias of SOURCE_PATH
+				// The claimer wrote the object's real source URI to this sidecar; the entry
+				// filter reports it as meta['src'] (PLAT-1498) so per-file identity survives.
+				corev1.EnvVar{Name: "FILTER_OVERRIDE_SOURCE_URI_FILE", Value: path + ".source_uri"},
 			)
 		}
 		env = append(env, configEnv...)

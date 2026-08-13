@@ -536,15 +536,17 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		},
 	)
 
-	// Provide video input path to claimer for storing downloaded files.
+	// Provide source path to claimer for storing downloaded files. SOURCE_PATH is the
+	// new name; VIDEO_INPUT_PATH is kept as a deprecated alias so in-flight pipeline
+	// specs referencing $(VIDEO_INPUT_PATH) keep resolving during rollout.
 	videoInputPath := pipeline.Spec.VideoInputPath
 	if videoInputPath == "" {
 		videoInputPath = DefaultVideoInputPath
 	}
-	claimerEnv = append(claimerEnv, corev1.EnvVar{
-		Name:  "VIDEO_INPUT_PATH",
-		Value: videoInputPath,
-	})
+	claimerEnv = append(claimerEnv,
+		corev1.EnvVar{Name: "SOURCE_PATH", Value: videoInputPath},
+		corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: videoInputPath},
+	)
 
 	// Build filter containers from Pipeline spec
 	filterContainers := make([]corev1.Container, 0, len(pipeline.Spec.Filters))
@@ -575,11 +577,15 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		// per-filter binding to key on — legacy broadcast); only VideoIn
 		// entries reference it. Same contract the multi-source path
 		// provides per-binding (see buildBatchFilterContainersForMultiSource).
-		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env)+1)
-		containerEnv = append(containerEnv, corev1.EnvVar{
-			Name:  "VIDEO_INPUT_PATH",
-			Value: videoInputPath,
-		})
+		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env)+3)
+		containerEnv = append(containerEnv,
+			corev1.EnvVar{Name: "SOURCE_PATH", Value: videoInputPath},
+			corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: videoInputPath},
+			// Entry filters read the object's real source URI from this sidecar file
+			// (written by the claimer next to the download) and report it as meta['src']
+			// (PLAT-1498), so per-file identity survives the fixed generic download path.
+			corev1.EnvVar{Name: "FILTER_OVERRIDE_SOURCE_URI_FILE", Value: videoInputPath + ".source_uri"},
+		)
 		containerEnv = append(containerEnv, configEnvVars...)
 
 		// Inject GPU env vars before user env vars so users can override if needed.

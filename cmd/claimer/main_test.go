@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -105,18 +107,79 @@ func TestLoadConfig_DirectMode(t *testing.T) {
 		}
 	})
 
-	t.Run("video_input_path_default_applies_in_direct_mode", func(t *testing.T) {
+	t.Run("source_path_default_applies_in_direct_mode", func(t *testing.T) {
 		t.Setenv("S3_BUCKET", "test-bucket")
 		t.Setenv("S3_OBJECT_KEY", "media/front.mp4")
+		t.Setenv("SOURCE_PATH", "")
 		t.Setenv("VIDEO_INPUT_PATH", "")
 		cfg, err := loadConfig()
 		if err != nil {
 			t.Fatalf("expected default path to satisfy validation, got: %v", err)
 		}
-		if cfg.VideoInputPath == "" {
-			t.Error("expected defaultInputPath to be applied, got empty")
+		if cfg.SourcePath != defaultInputPath {
+			t.Errorf("expected default %q, got %q", defaultInputPath, cfg.SourcePath)
 		}
 	})
+}
+
+// TestSourcePathResolution covers the SOURCE_PATH / VIDEO_INPUT_PATH (deprecated
+// alias) precedence and the extension-less default introduced with PLAT-1499.
+func TestSourcePathResolution(t *testing.T) {
+	t.Setenv("S3_BUCKET", "test-bucket")
+	t.Setenv("S3_OBJECT_KEY", "media/front.mp4") // direct mode so validation passes
+
+	t.Run("SOURCE_PATH wins over VIDEO_INPUT_PATH", func(t *testing.T) {
+		t.Setenv("SOURCE_PATH", "/ws/custom")
+		t.Setenv("VIDEO_INPUT_PATH", "/ws/legacy")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SourcePath != "/ws/custom" {
+			t.Errorf("expected SOURCE_PATH to win, got %q", cfg.SourcePath)
+		}
+	})
+
+	t.Run("VIDEO_INPUT_PATH used as deprecated alias", func(t *testing.T) {
+		t.Setenv("SOURCE_PATH", "")
+		t.Setenv("VIDEO_INPUT_PATH", "/ws/legacy.mp4")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SourcePath != "/ws/legacy.mp4" {
+			t.Errorf("expected VIDEO_INPUT_PATH alias, got %q", cfg.SourcePath)
+		}
+	})
+
+	t.Run("default is extension-less /ws/input", func(t *testing.T) {
+		t.Setenv("SOURCE_PATH", "")
+		t.Setenv("VIDEO_INPUT_PATH", "")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SourcePath != "/ws/input" {
+			t.Errorf("expected /ws/input, got %q", cfg.SourcePath)
+		}
+	})
+}
+
+// TestWriteSourceURIFile checks the sidecar the claimer writes so an entry filter can
+// report the object's real source URI as meta['src'] (PLAT-1498/1499).
+func TestWriteSourceURIFile(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "input")
+
+	writeSourceURIFile(sourcePath, "my-bucket", "nested/path/original.png")
+
+	got, err := os.ReadFile(sourcePath + sourceURIFileSuffix)
+	if err != nil {
+		t.Fatalf("expected sidecar file to be written: %v", err)
+	}
+	if want := "s3://my-bucket/nested/path/original.png"; string(got) != want {
+		t.Errorf("expected %q, got %q", want, string(got))
+	}
 }
 
 func TestLoadConfig_ValkeyPassword(t *testing.T) {

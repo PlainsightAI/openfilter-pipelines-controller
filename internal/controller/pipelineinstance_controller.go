@@ -121,8 +121,10 @@ const (
 	// usually wins anyway.
 	pipelineRefMissingRequeueAfter = 1 * time.Second
 
-	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not overridden.
-	DefaultVideoInputPath = "/ws/input.mp4"
+	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not
+	// overridden. Extension-less on purpose: entry filters are extension-agnostic and the
+	// real source URI travels via the .source_uri sidecar, not the filename (PLAT-1498/1499).
+	DefaultVideoInputPath = "/ws/input"
 
 	// DefaultValkeyNSSecretName is the default name for per-namespace Valkey credentials secrets.
 	DefaultValkeyNSSecretName = "valkey-ns-credentials"

@@ -456,6 +456,27 @@ func sanitizeInputPath(raw string) (resolved string, invalid bool) {
 	return DefaultInputPath, true
 }
 
+// buildSourceEnvVars returns the source-path env the claimer and filter containers share: the
+// download destination as both SOURCE_PATH and the deprecated VIDEO_INPUT_PATH alias, and — for
+// filter containers (includeSidecar) — FILTER_OVERRIDE_SOURCE_URI_FILE pointing at the
+// .source_uri sidecar. Centralized so the single- and multi-source batch builders can't drift.
+// SOURCE_PATH/VIDEO_INPUT_PATH must precede any FILTER_* config env (Kubernetes dependent-env
+// expansion only resolves $(VAR) references to variables defined earlier), so callers append the
+// result before the config vars.
+func buildSourceEnvVars(basePath string, includeSidecar bool) []corev1.EnvVar {
+	vars := []corev1.EnvVar{
+		{Name: EnvSourcePath, Value: basePath},
+		{Name: EnvVideoInputPath, Value: basePath},
+	}
+	if includeSidecar {
+		vars = append(vars, corev1.EnvVar{
+			Name:  EnvFilterOverrideSourceURIFile,
+			Value: basePath + SourceURIFileSuffix,
+		})
+	}
+	return vars
+}
+
 // buildJob constructs the Job specification for the PipelineInstance
 func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, jobName string) *batchv1.Job {
 	log := logf.FromContext(ctx)
@@ -562,10 +583,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		log.Info("invalid videoInputPath (must be under /ws/); falling back to default",
 			"videoInputPath", pipeline.Spec.VideoInputPath, "default", DefaultInputPath)
 	}
-	claimerEnv = append(claimerEnv,
-		corev1.EnvVar{Name: EnvSourcePath, Value: inputPath},
-		corev1.EnvVar{Name: EnvVideoInputPath, Value: inputPath},
-	)
+	claimerEnv = append(claimerEnv, buildSourceEnvVars(inputPath, false)...)
 
 	// Build filter containers from Pipeline spec
 	filterContainers := make([]corev1.Container, 0, len(pipeline.Spec.Filters))
@@ -596,15 +614,11 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		// per-filter binding to key on — legacy broadcast); only VideoIn
 		// entries reference it. Same contract the multi-source path
 		// provides per-binding (see buildBatchFilterContainersForMultiSource).
+		// buildSourceEnvVars includes the FILTER_OVERRIDE_SOURCE_URI_FILE sidecar var: entry
+		// filters read the object's real source URI from it and report it as meta['src']
+		// (PLAT-1498), so per-file identity survives the fixed generic download path.
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env)+3)
-		containerEnv = append(containerEnv,
-			corev1.EnvVar{Name: EnvSourcePath, Value: inputPath},
-			corev1.EnvVar{Name: EnvVideoInputPath, Value: inputPath},
-			// Entry filters read the object's real source URI from this sidecar file
-			// (written by the claimer next to the download) and report it as meta['src']
-			// (PLAT-1498), so per-file identity survives the fixed generic download path.
-			corev1.EnvVar{Name: EnvFilterOverrideSourceURIFile, Value: inputPath + SourceURIFileSuffix},
-		)
+		containerEnv = append(containerEnv, buildSourceEnvVars(inputPath, true)...)
 		containerEnv = append(containerEnv, configEnvVars...)
 
 		// Inject GPU env vars before user env vars so users can override if needed.

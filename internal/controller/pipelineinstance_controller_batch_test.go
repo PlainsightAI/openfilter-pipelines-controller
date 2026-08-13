@@ -1282,3 +1282,41 @@ func TestSanitizeInputPath(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildJob_InvalidVideoInputPath_FallsBackToDefault is the end-to-end complement to
+// TestSanitizeInputPath: it asserts buildJob actually wires the fallback into the filter
+// container env when the CRD carries a traversal/outside-workspace path, so a malicious spec
+// never lands SOURCE_PATH pointing outside /ws (PLAT-1499).
+func TestBuildJob_InvalidVideoInputPath_FallsBackToDefault(t *testing.T) {
+	r := makeMinimalReconciler()
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			VideoInputPath: "/ws/../etc/passwd", // escapes the workspace → must fall back
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "entry-filter", Image: "entry-filter:latest"},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	env := job.Spec.Template.Spec.Containers[0].Env
+	src, ok := findEnvVar(env, EnvSourcePath)
+	if !ok {
+		t.Fatal("expected SOURCE_PATH on the filter container")
+	}
+	if src.Value != DefaultInputPath {
+		t.Errorf("SOURCE_PATH = %q, want fallback %q", src.Value, DefaultInputPath)
+	}
+	if sidecar, ok := findEnvVar(env, EnvFilterOverrideSourceURIFile); !ok || sidecar.Value != DefaultInputPath+SourceURIFileSuffix {
+		t.Errorf("FILTER_OVERRIDE_SOURCE_URI_FILE = %q (ok=%v), want %q", sidecar.Value, ok, DefaultInputPath+SourceURIFileSuffix)
+	}
+	for _, e := range env {
+		if strings.Contains(e.Value, "etc/passwd") {
+			t.Errorf("env %s leaked the rejected path: %q", e.Name, e.Value)
+		}
+	}
+}

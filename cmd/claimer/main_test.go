@@ -171,6 +171,8 @@ func TestWriteSourceURIFile(t *testing.T) {
 	cases := []struct{ name, key, want string }{
 		{"plain key", "nested/path/original.png", "s3://my-bucket/nested/path/original.png"},
 		{"leading slash trimmed (no double slash)", "/nested/path/original.png", "s3://my-bucket/nested/path/original.png"},
+		{"multiple leading slashes trimmed", "///nested/path/original.png", "s3://my-bucket/nested/path/original.png"},
+		{"empty key", "", "s3://my-bucket/"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

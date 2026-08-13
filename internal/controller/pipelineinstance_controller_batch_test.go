@@ -1303,6 +1303,16 @@ func TestBuildJob_InvalidVideoInputPath_FallsBackToDefault(t *testing.T) {
 
 	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
 
+	// The claimer (init container) is the security-sensitive entry point that performs the
+	// download/write, so assert its SOURCE_PATH also falls back to the default.
+	if len(job.Spec.Template.Spec.InitContainers) == 0 {
+		t.Fatal("expected the claimer init container")
+	}
+	claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+	if claimerSrc, ok := findEnvVar(claimerEnv, EnvSourcePath); !ok || claimerSrc.Value != DefaultInputPath {
+		t.Errorf("claimer SOURCE_PATH = %q (ok=%v), want fallback %q", claimerSrc.Value, ok, DefaultInputPath)
+	}
+
 	env := job.Spec.Template.Spec.Containers[0].Env
 	src, ok := findEnvVar(env, EnvSourcePath)
 	if !ok {

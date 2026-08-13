@@ -95,7 +95,8 @@ func validateGPUSharingStrategy(strategy string) error {
 		return nil
 	default:
 		return fmt.Errorf(
-			"--gpu-sharing-strategy=%q is invalid: use \"time-sharing\", \"mps\", or \"\" (empty = on-prem NVIDIA_VISIBLE_DEVICES sharing)",
+			"--gpu-sharing-strategy=%q is invalid: use \"time-sharing\", \"mps\", or \"\" "+
+				"(empty = on-prem NVIDIA_VISIBLE_DEVICES sharing)",
 			strategy,
 		)
 	}

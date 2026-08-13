@@ -131,6 +131,11 @@ func applyGPUContainerSharing(containers []corev1.Container, gpuCount int64, sha
 		// for its own (time-shared) device. One per container — the per-instance
 		// count is not multiplied across containers; sharing onto a single
 		// physical GPU is arranged by the node selector, not the resource count.
+		// Set BOTH limits and requests to 1: nvidia.com/gpu is an extended
+		// resource, so the API server requires request == limit — leaving a
+		// filter's pre-existing GPU request untouched (or unset) risks a
+		// request!=limit rejection.
+		one := *resource.NewQuantity(1, resource.DecimalSI)
 		for i := range containers {
 			if !containerResourcesRequireGPU(containers[i].Resources) {
 				continue
@@ -138,7 +143,11 @@ func applyGPUContainerSharing(containers []corev1.Container, gpuCount int64, sha
 			if containers[i].Resources.Limits == nil {
 				containers[i].Resources.Limits = corev1.ResourceList{}
 			}
-			containers[i].Resources.Limits["nvidia.com/gpu"] = *resource.NewQuantity(1, resource.DecimalSI)
+			if containers[i].Resources.Requests == nil {
+				containers[i].Resources.Requests = corev1.ResourceList{}
+			}
+			containers[i].Resources.Limits["nvidia.com/gpu"] = one
+			containers[i].Resources.Requests["nvidia.com/gpu"] = one
 		}
 		return
 	}
@@ -231,6 +240,12 @@ func gpuContainerCount(containers []corev1.Container) int {
 // mode (empty strategy) or a single GPU container (exclusive — no sharing needed).
 // max-shared-clients-per-gpu is the GPU-container count so node auto-provisioning
 // creates exactly enough time-share/MPS slots on one card for this pod's stages.
+//
+// A single-GPU-container pod gets no sharing labels and stays exclusive: with node
+// auto-provisioning it lands on a dedicated GPU node, and it still schedules onto
+// an existing shared node (the sharing label is not required, only advertised). On
+// a cluster that ONLY has statically shared GPU pools and needs the label matched,
+// set it explicitly via PipelineInstance.Spec.NodeSelector (it wins on merge).
 func gpuSharingNodeSelector(sharingStrategy string, gpuContainers int) map[string]string {
 	if sharingStrategy == "" || gpuContainers < 2 {
 		return nil

@@ -652,12 +652,17 @@ func TestApplyGPUContainerSharing_DevicePlugin(t *testing.T) {
 
 	applyGPUContainerSharing(containers, 2, "time-sharing")
 
-	// Both GPU containers must keep a nvidia.com/gpu: 1 limit (nothing stripped).
+	// Both GPU containers must keep a nvidia.com/gpu: 1 limit AND request (nothing
+	// stripped; request==limit is required for the extended resource).
 	for _, name := range []string{"gpu-a", "gpu-b"} {
 		c := findContainer(t, containers, name)
 		q, ok := c.Resources.Limits["nvidia.com/gpu"]
 		if !ok || q.Value() != 1 {
-			t.Errorf("%s nvidia.com/gpu = %v, ok=%v; want 1, true (device-plugin mode must not strip)", name, q, ok)
+			t.Errorf("%s nvidia.com/gpu limit = %v, ok=%v; want 1, true (device-plugin mode must not strip)", name, q, ok)
+		}
+		qr, okR := c.Resources.Requests["nvidia.com/gpu"]
+		if !okR || qr.Value() != 1 {
+			t.Errorf("%s nvidia.com/gpu request = %v, ok=%v; want 1, true (request must equal limit)", name, qr, okR)
 		}
 	}
 	// CPU-only container is untouched.

@@ -240,11 +240,11 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 	filterContainers := r.buildBatchFilterContainersForMultiSource(pipeline, pipelineInstance, downloadPath)
 
 	// GPU sharing reuse (same shape as single-source batch).
-	if requiresGPU(filterContainers) {
+	pipelineRequiresGPU := requiresGPU(filterContainers)
+	if pipelineRequiresGPU {
 		applyGPUContainerSharing(filterContainers, instanceGPUCount(pipelineInstance.Spec), r.GPUSharingStrategy)
 	}
 
-	pipelineRequiresGPU := requiresGPU(filterContainers)
 	nodeSelector := mergeNodeSelector(r.GPUNodeSelectorLabels, pipelineInstance.Spec.NodeSelector, pipelineRequiresGPU)
 	if pipelineRequiresGPU {
 		// device-plugin sharing mode: pack this pod's GPU containers onto one

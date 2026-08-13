@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -539,13 +540,22 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	// Provide source path to claimer for storing downloaded files. SOURCE_PATH is the
 	// new name; VIDEO_INPUT_PATH is kept as a deprecated alias so in-flight pipeline
 	// specs referencing $(VIDEO_INPUT_PATH) keep resolving during rollout.
-	videoInputPath := pipeline.Spec.VideoInputPath
-	if videoInputPath == "" {
-		videoInputPath = DefaultVideoInputPath
+	inputPath := pipeline.Spec.VideoInputPath
+	if inputPath == "" {
+		inputPath = DefaultInputPath
+	} else if cleaned := filepath.Clean(inputPath); !strings.HasPrefix(cleaned, workspaceDir) {
+		// inputPath is user-controlled; reject a traversal / outside-workspace path
+		// (e.g. "../../etc/passwd" or "/etc/passwd") and fall back to the safe default so
+		// the claimer can't download/write the .source_uri sidecar outside /ws.
+		log.Info("invalid inputPath (must be under /ws/); falling back to default",
+			"inputPath", inputPath, "default", DefaultInputPath)
+		inputPath = DefaultInputPath
+	} else {
+		inputPath = cleaned
 	}
 	claimerEnv = append(claimerEnv,
-		corev1.EnvVar{Name: "SOURCE_PATH", Value: videoInputPath},
-		corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: videoInputPath},
+		corev1.EnvVar{Name: EnvSourcePath, Value: inputPath},
+		corev1.EnvVar{Name: EnvVideoInputPath, Value: inputPath},
 	)
 
 	// Build filter containers from Pipeline spec
@@ -579,12 +589,12 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		// provides per-binding (see buildBatchFilterContainersForMultiSource).
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env)+3)
 		containerEnv = append(containerEnv,
-			corev1.EnvVar{Name: "SOURCE_PATH", Value: videoInputPath},
-			corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: videoInputPath},
+			corev1.EnvVar{Name: EnvSourcePath, Value: inputPath},
+			corev1.EnvVar{Name: EnvVideoInputPath, Value: inputPath},
 			// Entry filters read the object's real source URI from this sidecar file
 			// (written by the claimer next to the download) and report it as meta['src']
 			// (PLAT-1498), so per-file identity survives the fixed generic download path.
-			corev1.EnvVar{Name: "FILTER_OVERRIDE_SOURCE_URI_FILE", Value: videoInputPath + ".source_uri"},
+			corev1.EnvVar{Name: EnvFilterOverrideSourceURIFile, Value: inputPath + SourceURIFileSuffix},
 		)
 		containerEnv = append(containerEnv, configEnvVars...)
 
@@ -902,7 +912,7 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 			continue
 		}
 
-		filepath := msgs[0].Values["file"]
+		queueFile := msgs[0].Values["file"]
 		attempts := parseAttempts(msgs[0].Values["attempts"], 0)
 
 		if pod.Status.Phase == corev1.PodSucceeded {
@@ -911,10 +921,10 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 				log.Error(err, "Failed to ACK message", "messageID", messageID)
 				continue
 			}
-			log.Info("ACKed successful message", "pod", pod.Name, "file", filepath)
+			log.Info("ACKed successful message", "pod", pod.Name, "file", queueFile)
 
 		} else if pod.Status.Phase == corev1.PodFailed || hasStartFailure || hasCrash {
-			r.handleFailedPodMessage(ctx, pipelineInstance, &pod, messageID, filepath, attempts, maxAttempts, podFailureInfo{
+			r.handleFailedPodMessage(ctx, pipelineInstance, &pod, messageID, queueFile, attempts, maxAttempts, podFailureInfo{
 				startFailureReason: startFailureReason,
 				crashReason:        crashReason,
 				hasStartFailure:    hasStartFailure,
@@ -943,7 +953,7 @@ func (r *PipelineInstanceReconciler) handleFailedPodMessage(
 	ctx context.Context,
 	pipelineInstance *pipelinesv1alpha1.PipelineInstance,
 	pod *corev1.Pod,
-	messageID, filepath string,
+	messageID, queueFile string,
 	attempts int,
 	maxAttempts int32,
 	info podFailureInfo,
@@ -958,18 +968,18 @@ func (r *PipelineInstanceReconciler) handleFailedPodMessage(
 	requeueOK := false
 	if attempts < int(maxAttempts) {
 		// Re-enqueue with incremented attempts
-		if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, filepath, attempts); err != nil {
-			log.Error(err, "Failed to re-enqueue file", "file", filepath)
+		if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, pipelineInstance.GetQueueStream(), instanceID, queueFile, attempts); err != nil {
+			log.Error(err, "Failed to re-enqueue file", "file", queueFile)
 		} else {
-			log.Info("Re-enqueued failed file", "file", filepath, "attempts", attempts)
+			log.Info("Re-enqueued failed file", "file", queueFile, "attempts", attempts)
 			requeueOK = true
 		}
 	} else {
 		// Add to DLQ
-		if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, filepath, attempts, reason); err != nil {
-			log.Error(err, "Failed to add to DLQ", "file", filepath)
+		if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, queueFile, attempts, reason); err != nil {
+			log.Error(err, "Failed to add to DLQ", "file", queueFile)
 		} else {
-			log.Info("Added file to DLQ", "file", filepath, "reason", reason)
+			log.Info("Added file to DLQ", "file", queueFile, "reason", reason)
 			requeueOK = true
 		}
 	}
@@ -977,7 +987,7 @@ func (r *PipelineInstanceReconciler) handleFailedPodMessage(
 	// Only ACK the original message if the re-enqueue or DLQ write succeeded.
 	// Skipping ACK on failure keeps the message pending so it can be retried on the next reconcile.
 	if !requeueOK {
-		log.Error(nil, "Skipping ACK — re-enqueue/DLQ write failed; message will be retried on next reconcile", "file", filepath, "messageID", messageID)
+		log.Error(nil, "Skipping ACK — re-enqueue/DLQ write failed; message will be retried on next reconcile", "file", queueFile, "messageID", messageID)
 		return
 	}
 
@@ -1198,7 +1208,7 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 	dlqKey := pipelineInstance.GetQueueDLQ()
 
 	for _, msg := range messages {
-		filepath := msg.Values["file"]
+		queueFile := msg.Values["file"]
 		entryConsumer := reclaimConsumers[msg.ID]
 
 		// If the consumer's pod succeeded, the work is already done.
@@ -1211,7 +1221,7 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 			if err := r.ValkeyClient.DeleteMessages(ctx, streamKey, msg.ID); err != nil {
 				log.Error(err, "Failed to delete message for succeeded pod from stream", "messageID", msg.ID)
 			}
-			log.Info("Cleaned up stale message for succeeded pod", "consumer", entryConsumer, "file", filepath)
+			log.Info("Cleaned up stale message for succeeded pod", "consumer", entryConsumer, "file", queueFile)
 			continue
 		}
 
@@ -1222,14 +1232,14 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 
 		var processingErr error
 		if attempts < int(maxAttempts) {
-			if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, streamKey, instanceID, filepath, attempts); err != nil {
-				log.Error(err, "Failed to re-enqueue reclaimed file; will retry on next cycle", "file", filepath)
+			if _, err := r.ValkeyClient.EnqueueFileWithAttempts(ctx, streamKey, instanceID, queueFile, attempts); err != nil {
+				log.Error(err, "Failed to re-enqueue reclaimed file; will retry on next cycle", "file", queueFile)
 				processingErr = err
 			}
 		} else {
 			reason := "Max attempts exceeded (reclaimed stale message)"
-			if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, filepath, attempts, reason); err != nil {
-				log.Error(err, "Failed to add reclaimed file to DLQ; will retry on next cycle", "file", filepath)
+			if err := r.ValkeyClient.AddToDLQ(ctx, dlqKey, instanceID, queueFile, attempts, reason); err != nil {
+				log.Error(err, "Failed to add reclaimed file to DLQ; will retry on next cycle", "file", queueFile)
 				processingErr = err
 			}
 		}

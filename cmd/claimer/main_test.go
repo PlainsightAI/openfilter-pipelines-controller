@@ -185,6 +185,17 @@ func TestWriteSourceURIFile(t *testing.T) {
 			}
 		})
 	}
+
+	// Best-effort contract: a write failure (destination directory does not exist)
+	// must not panic — the media is already on disk, so the claim still succeeds and
+	// the filter falls back to the physical path (PLAT-1498/1499).
+	t.Run("write failure does not panic", func(t *testing.T) {
+		sourcePath := filepath.Join(t.TempDir(), "nonexistent-subdir", "input")
+		writeSourceURIFile(sourcePath, "my-bucket", "nested/original.png")
+		if _, err := os.Stat(sourcePath + sourceURIFileSuffix); !os.IsNotExist(err) {
+			t.Errorf("expected no sidecar file when the destination dir is missing, stat err = %v", err)
+		}
+	})
 }
 
 func TestLoadConfig_ValkeyPassword(t *testing.T) {

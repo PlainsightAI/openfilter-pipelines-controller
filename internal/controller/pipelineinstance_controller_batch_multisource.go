@@ -303,8 +303,8 @@ func (r *PipelineInstanceReconciler) buildDirectClaimerEnv(b ResolvedSourceBindi
 	env := []corev1.EnvVar{
 		{Name: "S3_BUCKET", Value: bucket.Name},
 		{Name: "S3_OBJECT_KEY", Value: bindingObjectKey(b)},
-		{Name: "SOURCE_PATH", Value: destPath},
-		{Name: "VIDEO_INPUT_PATH", Value: destPath}, // deprecated alias of SOURCE_PATH
+		{Name: EnvSourcePath, Value: destPath},
+		{Name: EnvVideoInputPath, Value: destPath}, // deprecated alias of SOURCE_PATH
 		{Name: "S3_ENDPOINT", Value: bucket.Endpoint},
 		{Name: "S3_REGION", Value: bucket.Region},
 		{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", bucket.UsePathStyle)},
@@ -364,11 +364,11 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 		env := make([]corev1.EnvVar, 0, len(configEnv)+3)
 		if path, ok := downloadPath[filter.Name]; ok {
 			env = append(env,
-				corev1.EnvVar{Name: "SOURCE_PATH", Value: path},
-				corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: path}, // deprecated alias of SOURCE_PATH
+				corev1.EnvVar{Name: EnvSourcePath, Value: path},
+				corev1.EnvVar{Name: EnvVideoInputPath, Value: path}, // deprecated alias of SOURCE_PATH
 				// The claimer wrote the object's real source URI to this sidecar; the entry
 				// filter reports it as meta['src'] (PLAT-1498) so per-file identity survives.
-				corev1.EnvVar{Name: "FILTER_OVERRIDE_SOURCE_URI_FILE", Value: path + ".source_uri"},
+				corev1.EnvVar{Name: EnvFilterOverrideSourceURIFile, Value: path + SourceURIFileSuffix},
 			)
 		}
 		env = append(env, configEnv...)

@@ -186,6 +186,7 @@ type PipelineInstanceReconciler struct {
 	GPULibraryPath        string            // Value injected as LD_LIBRARY_PATH for GPU containers; empty string disables injection
 	GPUBinPath            string            // Value injected as OPENFILTER_APPEND_PATH for GPU containers; empty string disables injection
 	GPURuntimeClassName   string            // RuntimeClass name set on pods that require a GPU (e.g. "nvidia"); empty disables
+	GPUSharingStrategy    string            // GKE GPU-sharing strategy ("time-sharing"|"mps") for multi-GPU-container pods on managed clusters; empty = on-prem NVIDIA_VISIBLE_DEVICES env-sharing
 
 	// TelemetryExporterType and TelemetryExporterOTLPEndpoint are injected into
 	// filter containers as TELEMETRY_EXPORTER_TYPE and TELEMETRY_EXPORTER_OTLP_ENDPOINT

@@ -120,6 +120,7 @@ func main() {
 	var gpuLibraryPath string
 	var gpuBinPath string
 	var gpuRuntimeClass string
+	var gpuSharingStrategy string
 	var telemetryExporterType string
 	var telemetryExporterOTLPEndpoint string
 	var otelExporterOTLPEndpoint string
@@ -167,6 +168,16 @@ func main() {
 			"pod fails to schedule with 'RuntimeClass not found'. Only set this where the "+
 			"class is present (k3s creates 'nvidia' automatically). "+
 			"Can also be set via the GPU_RUNTIME_CLASS env var.")
+	flag.StringVar(&gpuSharingStrategy, "gpu-sharing-strategy",
+		getEnvOrDefault("GPU_SHARING_STRATEGY", ""),
+		"GKE GPU-sharing strategy for pods with more than one GPU container "+
+			"('time-sharing' or 'mps'). Set on managed clusters (GKE) whose GPU stack "+
+			"ignores NVIDIA_VISIBLE_DEVICES: each GPU container then requests nvidia.com/gpu "+
+			"directly and the pod carries the cloud.google.com/gke-gpu-sharing-strategy / "+
+			"gke-max-shared-clients-per-gpu nodeSelector so node auto-provisioning packs the "+
+			"stages onto one physical GPU. Empty (default) keeps the on-prem behavior where "+
+			"one lead container holds the limit and the rest share via NVIDIA_VISIBLE_DEVICES=all "+
+			"(requires the nvidia RuntimeClass). Can also be set via the GPU_SHARING_STRATEGY env var.")
 	flag.StringVar(&telemetryExporterType, "telemetry-exporter-type",
 		getEnvOrDefault("TELEMETRY_EXPORTER_TYPE", ""),
 		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp'). "+
@@ -378,6 +389,7 @@ func main() {
 		GPULibraryPath:                gpuLibraryPath,
 		GPUBinPath:                    gpuBinPath,
 		GPURuntimeClassName:           gpuRuntimeClass,
+		GPUSharingStrategy:            gpuSharingStrategy,
 		TelemetryExporterType:         telemetryExporterType,
 		TelemetryExporterOTLPEndpoint: telemetryExporterOTLPEndpoint,
 		ImageVolumesUnsupportedReason: imageVolumesUnsupportedReason,

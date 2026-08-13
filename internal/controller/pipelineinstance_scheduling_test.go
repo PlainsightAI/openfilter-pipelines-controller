@@ -556,7 +556,7 @@ func TestApplyGPUContainerSharing_CountGreaterThanOne(t *testing.T) {
 		},
 	}
 
-	applyGPUContainerSharing(containers, 2)
+	applyGPUContainerSharing(containers, 2, "")
 
 	lead := findContainer(t, containers, "lead-gpu")
 	leadQ, ok := lead.Resources.Limits["nvidia.com/gpu"]
@@ -621,5 +621,100 @@ func TestBatch_GPULimit_SingleContainer(t *testing.T) {
 	}
 	if !hasNvidiaVisibleDevicesAll(follower.Env) {
 		t.Errorf("follower must have %s=all", nvidiaVisibleDevicesEnvName)
+	}
+}
+
+// TestApplyGPUContainerSharing_DevicePlugin verifies the GKE/device-plugin mode:
+// every GPU container keeps its own nvidia.com/gpu request (no lead/strip) so the
+// managed device plugin injects a device into each — the NVIDIA_VISIBLE_DEVICES
+// env trick is not relied on there.
+func TestApplyGPUContainerSharing_DevicePlugin(t *testing.T) {
+	containers := []corev1.Container{
+		{
+			Name: "cpu-only",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m")},
+			},
+		},
+		{
+			Name: "gpu-a",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+			},
+		},
+		{
+			Name: "gpu-b",
+			Resources: corev1.ResourceRequirements{
+				Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")},
+			},
+		},
+	}
+
+	applyGPUContainerSharing(containers, 2, "time-sharing")
+
+	// Both GPU containers must keep a nvidia.com/gpu: 1 limit (nothing stripped).
+	for _, name := range []string{"gpu-a", "gpu-b"} {
+		c := findContainer(t, containers, name)
+		q, ok := c.Resources.Limits["nvidia.com/gpu"]
+		if !ok || q.Value() != 1 {
+			t.Errorf("%s nvidia.com/gpu = %v, ok=%v; want 1, true (device-plugin mode must not strip)", name, q, ok)
+		}
+	}
+	// CPU-only container is untouched.
+	cpu := findContainer(t, containers, "cpu-only")
+	if _, ok := cpu.Resources.Limits["nvidia.com/gpu"]; ok {
+		t.Errorf("cpu-only must not gain a GPU limit: %v", cpu.Resources.Limits)
+	}
+}
+
+// TestGPUSharingNodeSelector_Unit locks the node-selector helper: labels only for
+// device-plugin mode with 2+ GPU containers; nil otherwise.
+func TestGPUSharingNodeSelector_Unit(t *testing.T) {
+	cases := []struct {
+		name     string
+		strategy string
+		count    int
+		want     map[string]string
+	}{
+		{"empty strategy = on-prem env-share", "", 3, nil},
+		{"single GPU container = exclusive", "time-sharing", 1, nil},
+		{"two GPU containers = share", "time-sharing", 2, map[string]string{
+			"cloud.google.com/gke-gpu-sharing-strategy":       "time-sharing",
+			"cloud.google.com/gke-max-shared-clients-per-gpu": "2",
+		}},
+		{"mps three containers", "mps", 3, map[string]string{
+			"cloud.google.com/gke-gpu-sharing-strategy":       "mps",
+			"cloud.google.com/gke-max-shared-clients-per-gpu": "3",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gpuSharingNodeSelector(tc.strategy, tc.count)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Errorf("key %s = %q, want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}
+
+// TestAddGPUSharingNodeSelector_DoesNotOverrideInstance ensures a per-instance
+// nodeSelector value for a sharing key wins over the controller-computed one, and
+// the input map is never mutated.
+func TestAddGPUSharingNodeSelector_DoesNotOverrideInstance(t *testing.T) {
+	in := map[string]string{"cloud.google.com/gke-max-shared-clients-per-gpu": "8"}
+	out := addGPUSharingNodeSelector(in, "time-sharing", 2)
+	if out["cloud.google.com/gke-max-shared-clients-per-gpu"] != "8" {
+		t.Errorf("instance value must win: got %q, want 8", out["cloud.google.com/gke-max-shared-clients-per-gpu"])
+	}
+	if out["cloud.google.com/gke-gpu-sharing-strategy"] != "time-sharing" {
+		t.Errorf("controller strategy should be added: got %q", out["cloud.google.com/gke-gpu-sharing-strategy"])
+	}
+	if len(in) != 1 {
+		t.Errorf("input map must not be mutated: %v", in)
 	}
 }

@@ -140,6 +140,10 @@ spec:
             - name: GPU_RUNTIME_CLASS
               value: {{ .Values.gpuRuntimeClass | quote }}
             {{- end }}
+            {{- if .Values.gpuSharingStrategy }}
+            - name: GPU_SHARING_STRATEGY
+              value: {{ .Values.gpuSharingStrategy | quote }}
+            {{- end }}
             {{- if .Values.telemetry.exporterType }}
             - name: TELEMETRY_EXPORTER_TYPE
               value: {{ .Values.telemetry.exporterType | quote }}

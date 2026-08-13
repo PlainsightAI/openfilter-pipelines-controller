@@ -84,6 +84,24 @@ func validateTelemetryFlags(telemetryType, telemetryEndpoint string) error {
 	return nil
 }
 
+// validateGPUSharingStrategy rejects a GPU sharing strategy that is neither empty
+// (on-prem env-share) nor one of the GKE device-plugin strategies. An invalid
+// value is otherwise propagated verbatim to the pod's
+// cloud.google.com/gke-gpu-sharing-strategy nodeSelector, which never matches a
+// provisionable node — the pod would sit Pending with no clear error.
+func validateGPUSharingStrategy(strategy string) error {
+	switch strategy {
+	case "", "time-sharing", "mps":
+		return nil
+	default:
+		return fmt.Errorf(
+			"--gpu-sharing-strategy=%q is invalid: use \"time-sharing\", \"mps\", or \"\" "+
+				"(empty = on-prem NVIDIA_VISIBLE_DEVICES sharing)",
+			strategy,
+		)
+	}
+}
+
 // parseNodeSelectorLabels parses a comma-separated list of key=value pairs into a map.
 // Returns nil if the input is empty or contains no valid pairs.
 func parseNodeSelectorLabels(s string) map[string]string {
@@ -120,6 +138,7 @@ func main() {
 	var gpuLibraryPath string
 	var gpuBinPath string
 	var gpuRuntimeClass string
+	var gpuSharingStrategy string
 	var telemetryExporterType string
 	var telemetryExporterOTLPEndpoint string
 	var otelExporterOTLPEndpoint string
@@ -167,6 +186,16 @@ func main() {
 			"pod fails to schedule with 'RuntimeClass not found'. Only set this where the "+
 			"class is present (k3s creates 'nvidia' automatically). "+
 			"Can also be set via the GPU_RUNTIME_CLASS env var.")
+	flag.StringVar(&gpuSharingStrategy, "gpu-sharing-strategy",
+		getEnvOrDefault("GPU_SHARING_STRATEGY", ""),
+		"GKE GPU-sharing strategy for pods with more than one GPU container "+
+			"('time-sharing' or 'mps'). Set on managed clusters (GKE) whose GPU stack "+
+			"ignores NVIDIA_VISIBLE_DEVICES: each GPU container then requests nvidia.com/gpu "+
+			"directly and the pod carries the cloud.google.com/gke-gpu-sharing-strategy / "+
+			"gke-max-shared-clients-per-gpu nodeSelector so node auto-provisioning packs the "+
+			"stages onto one physical GPU. Empty (default) keeps the on-prem behavior where "+
+			"one lead container holds the limit and the rest share via NVIDIA_VISIBLE_DEVICES=all "+
+			"(requires the nvidia RuntimeClass). Can also be set via the GPU_SHARING_STRATEGY env var.")
 	flag.StringVar(&telemetryExporterType, "telemetry-exporter-type",
 		getEnvOrDefault("TELEMETRY_EXPORTER_TYPE", ""),
 		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp'). "+
@@ -215,6 +244,14 @@ func main() {
 	// hide the misconfiguration from the operator.
 	if err := validateTelemetryFlags(telemetryExporterType, telemetryExporterOTLPEndpoint); err != nil {
 		setupLog.Error(err, "invalid telemetry exporter configuration")
+		os.Exit(1)
+	}
+
+	// Fail fast on a bad GPU sharing strategy: an invalid value would be stamped
+	// verbatim onto pods as cloud.google.com/gke-gpu-sharing-strategy and leave
+	// them Pending indefinitely (NAP never provisions a matching node).
+	if err := validateGPUSharingStrategy(gpuSharingStrategy); err != nil {
+		setupLog.Error(err, "invalid GPU sharing strategy")
 		os.Exit(1)
 	}
 
@@ -378,6 +415,7 @@ func main() {
 		GPULibraryPath:                gpuLibraryPath,
 		GPUBinPath:                    gpuBinPath,
 		GPURuntimeClassName:           gpuRuntimeClass,
+		GPUSharingStrategy:            gpuSharingStrategy,
 		TelemetryExporterType:         telemetryExporterType,
 		TelemetryExporterOTLPEndpoint: telemetryExporterOTLPEndpoint,
 		ImageVolumesUnsupportedReason: imageVolumesUnsupportedReason,

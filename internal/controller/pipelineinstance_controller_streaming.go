@@ -490,7 +490,7 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 	// containers are left alone. See applyGPUContainerSharing for the rationale.
 	pipelineRequiresGPU := requiresGPU(containers)
 	if pipelineRequiresGPU {
-		applyGPUContainerSharing(containers, instanceGPUCount(pipelineInstance.Spec))
+		applyGPUContainerSharing(containers, instanceGPUCount(pipelineInstance.Spec), r.GPUSharingStrategy)
 	}
 
 	// Build the effective nodeSelector: controller-wide GPU labels (only when
@@ -498,6 +498,11 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 	// with instance values winning on conflict. The returned map is always a
 	// fresh allocation, preserving the previous defensive-copy behavior.
 	nodeSelector := mergeNodeSelector(r.GPUNodeSelectorLabels, pipelineInstance.Spec.NodeSelector, pipelineRequiresGPU)
+	if pipelineRequiresGPU {
+		// device-plugin sharing mode: pack this pod's GPU containers onto one
+		// physical GPU via the GKE GPU-sharing nodeSelector (no-op on-prem).
+		nodeSelector = addGPUSharingNodeSelector(nodeSelector, r.GPUSharingStrategy, gpuContainerCount(containers))
+	}
 
 	// Base labels used for deployment/pod selector (MUST stay stable — selector is immutable)
 	streamSelectorLabels := map[string]string{

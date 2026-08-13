@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"strconv"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
@@ -105,9 +107,49 @@ func applyInstanceScheduling(podSpec *corev1.PodSpec, instanceSpec pipelinesv1al
 // here. The per-instance count is authoritative; per-filter GPU resource
 // declarations beyond the first are treated as redundant signal, not as an
 // additive request.
-func applyGPUContainerSharing(containers []corev1.Container, gpuCount int64) {
+//
+// Sharing strategy:
+//   - runtime-env (sharingStrategy == ""): the on-prem default described above —
+//     one lead holds the limit, the rest share via NVIDIA_VISIBLE_DEVICES=all.
+//     Requires the pod to run under the nvidia container runtime (we set
+//     RuntimeClassName: nvidia there), which processes the env var for EVERY
+//     container. No GPU-node sharing config is needed; the whole pod uses one
+//     allocated device.
+//   - device-plugin (sharingStrategy != ""): for managed clusters (GKE) whose
+//     GPU stack ignores NVIDIA_VISIBLE_DEVICES and only injects the GPU into
+//     containers that request nvidia.com/gpu through the device plugin. Here the
+//     lead/env-share approach starves every stage but one (validated on GKE:
+//     the non-lead container has no nvidia-smi at all). Instead EVERY GPU
+//     container requests nvidia.com/gpu: 1, and the pod's GPU-sharing
+//     nodeSelector (gpuSharingNodeSelector) packs them onto one physical device.
+func applyGPUContainerSharing(containers []corev1.Container, gpuCount int64, sharingStrategy string) {
 	if gpuCount <= 0 {
 		gpuCount = defaultGPUCount
+	}
+	if sharingStrategy != "" {
+		// device-plugin mode (GKE): every GPU container asks the device plugin
+		// for its own (time-shared) device. One per container — the per-instance
+		// count is not multiplied across containers; sharing onto a single
+		// physical GPU is arranged by the node selector, not the resource count.
+		// Set BOTH limits and requests to 1: nvidia.com/gpu is an extended
+		// resource, so the API server requires request == limit — leaving a
+		// filter's pre-existing GPU request untouched (or unset) risks a
+		// request!=limit rejection.
+		one := *resource.NewQuantity(1, resource.DecimalSI)
+		for i := range containers {
+			if !containerResourcesRequireGPU(containers[i].Resources) {
+				continue
+			}
+			if containers[i].Resources.Limits == nil {
+				containers[i].Resources.Limits = corev1.ResourceList{}
+			}
+			if containers[i].Resources.Requests == nil {
+				containers[i].Resources.Requests = corev1.ResourceList{}
+			}
+			containers[i].Resources.Limits["nvidia.com/gpu"] = one
+			containers[i].Resources.Requests["nvidia.com/gpu"] = one
+		}
+		return
 	}
 	seenLead := false
 	for i := range containers {
@@ -179,4 +221,58 @@ func gpuRuntimeClassName(name string, pipelineRequiresGPU bool) *string {
 	}
 	rc := name
 	return &rc
+}
+
+// gpuContainerCount returns how many containers request a positive nvidia.com/gpu.
+func gpuContainerCount(containers []corev1.Container) int {
+	n := 0
+	for i := range containers {
+		if containerResourcesRequireGPU(containers[i].Resources) {
+			n++
+		}
+	}
+	return n
+}
+
+// gpuSharingNodeSelector returns the GKE GPU-sharing node-selector labels that let
+// a pod pack multiple GPU containers onto ONE physical device via the device
+// plugin (the device-plugin sharing mode). Returns nil for the on-prem env-share
+// mode (empty strategy) or a single GPU container (exclusive — no sharing needed).
+// max-shared-clients-per-gpu is the GPU-container count so node auto-provisioning
+// creates exactly enough time-share/MPS slots on one card for this pod's stages.
+//
+// A single-GPU-container pod gets no sharing labels and stays exclusive: with node
+// auto-provisioning it lands on a dedicated GPU node, and it still schedules onto
+// an existing shared node (the sharing label is not required, only advertised). On
+// a cluster that ONLY has statically shared GPU pools and needs the label matched,
+// set it explicitly via PipelineInstance.Spec.NodeSelector (it wins on merge).
+func gpuSharingNodeSelector(sharingStrategy string, gpuContainers int) map[string]string {
+	if sharingStrategy == "" || gpuContainers < 2 {
+		return nil
+	}
+	return map[string]string{
+		"cloud.google.com/gke-gpu-sharing-strategy":       sharingStrategy,
+		"cloud.google.com/gke-max-shared-clients-per-gpu": strconv.Itoa(gpuContainers),
+	}
+}
+
+// addGPUSharingNodeSelector returns a fresh nodeSelector with the GPU-sharing
+// labels merged in (never mutates the input). Existing keys win, so a per-instance
+// NodeSelector that explicitly set the sharing strategy/clients is not overridden.
+// Returns the input unchanged when no sharing labels apply.
+func addGPUSharingNodeSelector(nodeSelector map[string]string, sharingStrategy string, gpuContainers int) map[string]string {
+	labels := gpuSharingNodeSelector(sharingStrategy, gpuContainers)
+	if labels == nil {
+		return nodeSelector
+	}
+	out := make(map[string]string, len(nodeSelector)+len(labels))
+	for k, v := range nodeSelector {
+		out[k] = v
+	}
+	for k, v := range labels {
+		if _, exists := out[k]; !exists {
+			out[k] = v
+		}
+	}
+	return out
 }

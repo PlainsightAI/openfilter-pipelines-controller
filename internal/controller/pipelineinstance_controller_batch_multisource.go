@@ -240,12 +240,17 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 	filterContainers := r.buildBatchFilterContainersForMultiSource(pipeline, pipelineInstance, downloadPath)
 
 	// GPU sharing reuse (same shape as single-source batch).
-	if requiresGPU(filterContainers) {
-		applyGPUContainerSharing(filterContainers, instanceGPUCount(pipelineInstance.Spec))
+	pipelineRequiresGPU := requiresGPU(filterContainers)
+	if pipelineRequiresGPU {
+		applyGPUContainerSharing(filterContainers, instanceGPUCount(pipelineInstance.Spec), r.GPUSharingStrategy)
 	}
 
-	pipelineRequiresGPU := requiresGPU(filterContainers)
 	nodeSelector := mergeNodeSelector(r.GPUNodeSelectorLabels, pipelineInstance.Spec.NodeSelector, pipelineRequiresGPU)
+	if pipelineRequiresGPU {
+		// device-plugin sharing mode: pack this pod's GPU containers onto one
+		// physical GPU via the GKE GPU-sharing nodeSelector (no-op on-prem).
+		nodeSelector = addGPUSharingNodeSelector(nodeSelector, r.GPUSharingStrategy, gpuContainerCount(filterContainers))
+	}
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

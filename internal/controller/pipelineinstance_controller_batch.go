@@ -639,7 +639,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	// containers are left alone. See applyGPUContainerSharing for the rationale.
 	pipelineRequiresGPU := requiresGPU(filterContainers)
 	if pipelineRequiresGPU {
-		applyGPUContainerSharing(filterContainers, instanceGPUCount(pipelineInstance.Spec))
+		applyGPUContainerSharing(filterContainers, instanceGPUCount(pipelineInstance.Spec), r.GPUSharingStrategy)
 	}
 
 	// Build the effective nodeSelector: controller-wide GPU labels (only when
@@ -647,6 +647,11 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	// with instance values winning on conflict. The returned map is always a
 	// fresh allocation, preserving the previous defensive-copy behavior.
 	nodeSelector := mergeNodeSelector(r.GPUNodeSelectorLabels, pipelineInstance.Spec.NodeSelector, pipelineRequiresGPU)
+	if pipelineRequiresGPU {
+		// device-plugin sharing mode: pack this pod's GPU containers onto one
+		// physical GPU via the GKE GPU-sharing nodeSelector (no-op on-prem).
+		nodeSelector = addGPUSharingNodeSelector(nodeSelector, r.GPUSharingStrategy, gpuContainerCount(filterContainers))
+	}
 	if pipelineRequiresGPU && len(r.GPUNodeSelectorLabels) > 0 {
 		log.V(1).Info("GPU resources detected, applying GPU node selector", "pipelineInstance", pipelineInstance.Name, "nodeSelector", nodeSelector)
 	}

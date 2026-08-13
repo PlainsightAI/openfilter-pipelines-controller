@@ -163,6 +163,20 @@ gpuBinPath: "/usr/local/nvidia/bin"
 # on managed platforms where the driver is injected under the default runtime.
 gpuRuntimeClass: ""
 
+# GPU sharing strategy for pods with more than one GPU container ("time-sharing"
+# or "mps"). Set on MANAGED clusters (GKE) whose GPU stack ignores
+# NVIDIA_VISIBLE_DEVICES: each GPU container then requests nvidia.com/gpu directly
+# and the pod carries the cloud.google.com/gke-gpu-sharing-strategy /
+# gke-max-shared-clients-per-gpu nodeSelector so node auto-provisioning packs the
+# stages onto ONE physical GPU (no static node pool). Empty (default) keeps the
+# on-prem behavior: one lead container holds the limit and the rest share via
+# NVIDIA_VISIBLE_DEVICES=all (which requires gpuRuntimeClass). Set per env in the
+# gitops repo — "time-sharing" on GKE (prod/staging/dev), empty on-prem (lab/cpd).
+# Allowed values: "time-sharing", "mps", or "" (disables sharing / uses the
+# on-prem RuntimeClass + NVIDIA_VISIBLE_DEVICES path). Any other value fails the
+# controller fast at startup.
+gpuSharingStrategy: ""
+
 # Telemetry exporter values injected into every filter container the controller
 # spawns. When non-empty, the controller appends TELEMETRY_EXPORTER_TYPE and
 # TELEMETRY_EXPORTER_OTLP_ENDPOINT to the filter container env so openfilter's

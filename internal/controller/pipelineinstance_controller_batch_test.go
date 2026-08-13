@@ -1247,3 +1247,38 @@ func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
 	}
 	t.Error("expected STREAM env var in claimer, not found")
 }
+
+// TestSanitizeInputPath covers the user-controlled videoInputPath resolution: the empty
+// default, valid in-workspace paths, and the traversal/outside-workspace/boundary cases that
+// must fall back to DefaultInputPath (PLAT-1499). path.Clean keeps this OS-independent.
+func TestSanitizeInputPath(t *testing.T) {
+	cases := []struct {
+		name        string
+		raw         string
+		wantPath    string
+		wantInvalid bool
+	}{
+		{"empty falls back to default", "", DefaultInputPath, false},
+		{"valid default path", "/ws/input", "/ws/input", false},
+		{"valid custom file", "/ws/custom-input.mp4", "/ws/custom-input.mp4", false},
+		{"valid nested, cleaned", "/ws/./sub/../input", "/ws/input", false},
+		{"traversal escapes workspace", "/ws/../etc/passwd", DefaultInputPath, true},
+		{"deep traversal escapes workspace", "/ws/../../etc/passwd", DefaultInputPath, true},
+		{"absolute path outside workspace", "/etc/passwd", DefaultInputPath, true},
+		{"workspace root without trailing slash", "/ws", DefaultInputPath, true},
+		{"workspace root with trailing slash", "/ws/", DefaultInputPath, true},
+		{"sibling prefix is not inside workspace", "/wsX/input", DefaultInputPath, true},
+		{"relative path is not inside workspace", "input", DefaultInputPath, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, invalid := sanitizeInputPath(tc.raw)
+			if got != tc.wantPath {
+				t.Errorf("path: want %q, got %q", tc.wantPath, got)
+			}
+			if invalid != tc.wantInvalid {
+				t.Errorf("invalid: want %v, got %v", tc.wantInvalid, invalid)
+			}
+		})
+	}
+}

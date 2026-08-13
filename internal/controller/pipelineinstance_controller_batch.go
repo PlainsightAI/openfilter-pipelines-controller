@@ -19,7 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -439,6 +439,23 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 	return nil
 }
 
+// sanitizeInputPath resolves the user-controlled Pipeline.Spec.VideoInputPath to a path the
+// claimer may safely write into. It returns DefaultInputPath when raw is empty (the normal
+// case) or when raw escapes the container workspace — a traversal ("/ws/../etc/passwd") or an
+// absolute path outside /ws/ — with invalid=true in the escape case so the caller can log it.
+// path.Clean (not filepath.Clean) is used deliberately: these are always slash-separated
+// container paths, so cleaning must be OS-independent (filepath.Clean would rewrite them with
+// backslashes on a Windows host and break the boundary check).
+func sanitizeInputPath(raw string) (resolved string, invalid bool) {
+	if raw == "" {
+		return DefaultInputPath, false
+	}
+	if cleaned := path.Clean(raw); strings.HasPrefix(cleaned, workspaceDir) {
+		return cleaned, false
+	}
+	return DefaultInputPath, true
+}
+
 // buildJob constructs the Job specification for the PipelineInstance
 func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, pipelineSource *pipelinesv1alpha1.PipelineSource, jobName string) *batchv1.Job {
 	log := logf.FromContext(ctx)
@@ -540,18 +557,10 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	// Provide source path to claimer for storing downloaded files. SOURCE_PATH is the
 	// new name; VIDEO_INPUT_PATH is kept as a deprecated alias so in-flight pipeline
 	// specs referencing $(VIDEO_INPUT_PATH) keep resolving during rollout.
-	inputPath := pipeline.Spec.VideoInputPath
-	if inputPath == "" {
-		inputPath = DefaultInputPath
-	} else if cleaned := filepath.Clean(inputPath); !strings.HasPrefix(cleaned, workspaceDir) {
-		// inputPath is user-controlled; reject a traversal / outside-workspace path
-		// (e.g. "../../etc/passwd" or "/etc/passwd") and fall back to the safe default so
-		// the claimer can't download/write the .source_uri sidecar outside /ws.
-		log.Info("invalid inputPath (must be under /ws/); falling back to default",
-			"inputPath", inputPath, "default", DefaultInputPath)
-		inputPath = DefaultInputPath
-	} else {
-		inputPath = cleaned
+	inputPath, invalidInputPath := sanitizeInputPath(pipeline.Spec.VideoInputPath)
+	if invalidInputPath {
+		log.Info("invalid videoInputPath (must be under /ws/); falling back to default",
+			"videoInputPath", pipeline.Spec.VideoInputPath, "default", DefaultInputPath)
 	}
 	claimerEnv = append(claimerEnv,
 		corev1.EnvVar{Name: EnvSourcePath, Value: inputPath},

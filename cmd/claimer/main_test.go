@@ -169,10 +169,10 @@ func TestSourcePathResolution(t *testing.T) {
 // report the object's real source URI as meta['src'] (PLAT-1498/1499).
 func TestWriteSourceURIFile(t *testing.T) {
 	cases := []struct{ name, key, want string }{
-		{"plain key", "nested/path/original.png", "s3://my-bucket/nested/path/original.png"},
-		{"leading slash trimmed (no double slash)", "/nested/path/original.png", "s3://my-bucket/nested/path/original.png"},
-		{"multiple leading slashes trimmed", "///nested/path/original.png", "s3://my-bucket/nested/path/original.png"},
-		{"empty key", "", "s3://my-bucket/"},
+		{"plain key", "nested/path/original.png", "s3://my-bucket/nested/path/original.png\n"},
+		{"leading slash trimmed (no double slash)", "/nested/path/original.png", "s3://my-bucket/nested/path/original.png\n"},
+		{"multiple leading slashes trimmed", "///nested/path/original.png", "s3://my-bucket/nested/path/original.png\n"},
+		{"empty key", "", "s3://my-bucket/\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

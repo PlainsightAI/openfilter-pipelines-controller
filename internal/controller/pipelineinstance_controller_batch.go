@@ -464,10 +464,11 @@ func sanitizeInputPath(raw string) (resolved string, invalid bool) {
 // expansion only resolves $(VAR) references to variables defined earlier), so callers append the
 // result before the config vars.
 func buildSourceEnvVars(basePath string, includeSidecar bool) []corev1.EnvVar {
-	vars := []corev1.EnvVar{
-		{Name: EnvSourcePath, Value: basePath},
-		{Name: EnvVideoInputPath, Value: basePath},
-	}
+	vars := make([]corev1.EnvVar, 0, 3) // 2 base vars + at most the sidecar; avoids a realloc
+	vars = append(vars,
+		corev1.EnvVar{Name: EnvSourcePath, Value: basePath},
+		corev1.EnvVar{Name: EnvVideoInputPath, Value: basePath},
+	)
 	if includeSidecar {
 		vars = append(vars, corev1.EnvVar{
 			Name:  EnvFilterOverrideSourceURIFile,

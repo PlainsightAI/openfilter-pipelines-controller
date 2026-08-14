@@ -4,7 +4,7 @@ metadata:
   name: pipeline-batch
 spec:
   mode: batch
-  videoInputPath: /ws/input
+  sourcePath: /ws/input
 
   filters:
     - name: video-in

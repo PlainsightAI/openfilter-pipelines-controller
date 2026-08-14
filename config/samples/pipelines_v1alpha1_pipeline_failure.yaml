@@ -7,7 +7,7 @@ metadata:
   name: pipeline-failure-sample
   namespace: default
 spec:
-  videoInputPath: /ws/input
+  sourcePath: /ws/input
 
   filters:
     - name: intentional-failure

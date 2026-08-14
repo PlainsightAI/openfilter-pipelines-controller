@@ -123,7 +123,7 @@ func TestLoadConfig_DirectMode(t *testing.T) {
 }
 
 // TestSourcePathResolution covers the SOURCE_PATH / VIDEO_INPUT_PATH (deprecated
-// alias) precedence and the extension-less default introduced with PLAT-1499.
+// alias) precedence and the extension-less default.
 func TestSourcePathResolution(t *testing.T) {
 	t.Setenv("S3_BUCKET", "test-bucket")
 	t.Setenv("S3_OBJECT_KEY", "media/front.mp4") // direct mode so validation passes
@@ -166,7 +166,7 @@ func TestSourcePathResolution(t *testing.T) {
 }
 
 // TestWriteSourceURIFile checks the sidecar the claimer writes so an entry filter can
-// report the object's real source URI as meta['src'] (PLAT-1498/1499).
+// report the object's real source URI as meta['src'].
 func TestWriteSourceURIFile(t *testing.T) {
 	cases := []struct{ name, key, want string }{
 		{"plain key", "nested/path/original.png", "s3://my-bucket/nested/path/original.png\n"},
@@ -190,7 +190,7 @@ func TestWriteSourceURIFile(t *testing.T) {
 
 	// Best-effort contract: a write failure (destination directory does not exist)
 	// must not panic — the media is already on disk, so the claim still succeeds and
-	// the filter falls back to the physical path (PLAT-1498/1499).
+	// the filter falls back to the physical path.
 	t.Run("write failure does not panic", func(t *testing.T) {
 		sourcePath := filepath.Join(t.TempDir(), "nonexistent-subdir", "input")
 		writeSourceURIFile(sourcePath, "my-bucket", "nested/original.png")

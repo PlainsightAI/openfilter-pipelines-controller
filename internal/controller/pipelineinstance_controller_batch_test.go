@@ -1248,9 +1248,9 @@ func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
 	t.Error("expected STREAM env var in claimer, not found")
 }
 
-// TestSanitizeInputPath covers the user-controlled videoInputPath resolution: the empty
+// TestSanitizeInputPath covers the user-controlled source path resolution: the empty
 // default, valid in-workspace paths, and the traversal/outside-workspace/boundary cases that
-// must fall back to DefaultInputPath (PLAT-1499). path.Clean keeps this OS-independent.
+// must fall back to DefaultInputPath. path.Clean keeps this OS-independent.
 func TestSanitizeInputPath(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -1283,18 +1283,18 @@ func TestSanitizeInputPath(t *testing.T) {
 	}
 }
 
-// TestBuildJob_InvalidVideoInputPath_FallsBackToDefault is the end-to-end complement to
+// TestBuildJob_InvalidSourcePath_FallsBackToDefault is the end-to-end complement to
 // TestSanitizeInputPath: it asserts buildJob actually wires the fallback into the filter
 // container env when the CRD carries a traversal/outside-workspace path, so a malicious spec
-// never lands SOURCE_PATH pointing outside /ws (PLAT-1499).
-func TestBuildJob_InvalidVideoInputPath_FallsBackToDefault(t *testing.T) {
+// never lands SOURCE_PATH pointing outside /ws.
+func TestBuildJob_InvalidSourcePath_FallsBackToDefault(t *testing.T) {
 	r := makeMinimalReconciler()
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
 	pipeline := &pipelinesv1alpha1.Pipeline{
 		Spec: pipelinesv1alpha1.PipelineSpec{
-			VideoInputPath: "/ws/../etc/passwd", // escapes the workspace → must fall back
+			SourcePath: "/ws/../etc/passwd", // escapes the workspace → must fall back
 			Filters: []pipelinesv1alpha1.Filter{
 				{Name: "entry-filter", Image: "entry-filter:latest"},
 			},
@@ -1329,4 +1329,35 @@ func TestBuildJob_InvalidVideoInputPath_FallsBackToDefault(t *testing.T) {
 			t.Errorf("env %s leaked the rejected path: %q", e.Name, e.Value)
 		}
 	}
+}
+
+// TestBuildJob_SourcePathAliasPrecedence covers the sourcePath / videoInputPath (deprecated
+// alias) resolution: sourcePath wins when both are set, and videoInputPath is honored when
+// sourcePath is empty.
+func TestBuildJob_SourcePathAliasPrecedence(t *testing.T) {
+	filterEnvSourcePath := func(t *testing.T, spec pipelinesv1alpha1.PipelineSpec) string {
+		t.Helper()
+		spec.Filters = []pipelinesv1alpha1.Filter{{Name: "entry-filter", Image: "entry-filter:latest"}}
+		r := makeMinimalReconciler()
+		job := r.buildJob(context.Background(), makeMinimalPipelineInstance(), &pipelinesv1alpha1.Pipeline{Spec: spec}, makeMinimalPipelineSource(), "test-job")
+		src, ok := findEnvVar(job.Spec.Template.Spec.Containers[0].Env, EnvSourcePath)
+		if !ok {
+			t.Fatal("expected SOURCE_PATH on the filter container")
+		}
+		return src.Value
+	}
+
+	t.Run("sourcePath wins over videoInputPath", func(t *testing.T) {
+		got := filterEnvSourcePath(t, pipelinesv1alpha1.PipelineSpec{SourcePath: "/ws/new", VideoInputPath: "/ws/legacy"})
+		if got != "/ws/new" {
+			t.Errorf("SOURCE_PATH = %q, want /ws/new (sourcePath wins)", got)
+		}
+	})
+
+	t.Run("deprecated videoInputPath used when sourcePath empty", func(t *testing.T) {
+		got := filterEnvSourcePath(t, pipelinesv1alpha1.PipelineSpec{VideoInputPath: "/ws/legacy"})
+		if got != "/ws/legacy" {
+			t.Errorf("SOURCE_PATH = %q, want /ws/legacy (deprecated alias)", got)
+		}
+	})
 }

@@ -23,7 +23,7 @@ const frontCredSecretName = "front-rtsp-creds"
 
 // Per-binding download destinations in the multi-source batch tests (extracted to
 // constants to satisfy goconst now that SOURCE_PATH / FILTER_OVERRIDE_SOURCE_URI_FILE
-// assertions repeat them; PLAT-1499).
+// assertions repeat them).
 const (
 	frontCamInputPath = "/ws/front-cam.mp4"
 	backCamInputPath  = "/ws/back-cam.mp4"
@@ -249,7 +249,7 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 	for _, c := range initContainers {
 		objKey := envValue(c.Env, "S3_OBJECT_KEY")
 		dest := envValue(c.Env, "VIDEO_INPUT_PATH")
-		// SOURCE_PATH is the new name for the same value (PLAT-1499); VIDEO_INPUT_PATH
+		// SOURCE_PATH is the new name for the same value; VIDEO_INPUT_PATH
 		// is kept as a deprecated alias, so both must carry the download destination.
 		if sp := envValue(c.Env, "SOURCE_PATH"); sp != dest {
 			t.Errorf("claimer %q SOURCE_PATH = %q, want %q (alias of VIDEO_INPUT_PATH)", c.Name, sp, dest)
@@ -290,7 +290,7 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 	if got := envValue(back.Env, "VIDEO_INPUT_PATH"); got != backCamInputPath {
 		t.Errorf("back-cam VIDEO_INPUT_PATH = %q, want %q", got, backCamInputPath)
 	}
-	// SOURCE_PATH (new name, same value) + the per-filter source-URI sidecar env (PLAT-1499).
+	// SOURCE_PATH (new name, same value) + the per-filter source-URI sidecar env.
 	if got := envValue(front.Env, "SOURCE_PATH"); got != frontCamInputPath {
 		t.Errorf("front-cam SOURCE_PATH = %q, want %q", got, frontCamInputPath)
 	}

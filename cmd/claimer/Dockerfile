@@ -13,11 +13,11 @@ COPY go.sum go.sum
 # Cache dependencies
 RUN go mod download
 
-# Copy source code. internal/envkeys is the dependency-free leaf package the claimer shares
-# with the controller for the SOURCE_PATH/sidecar env contract (PLAT-1499); it pulls in no
-# k8s/CRD types, so the claimer build stays minimal.
+# Copy source code. internal/sourcepath is the dependency-free leaf package the claimer shares
+# with the controller for the SOURCE_PATH/sidecar env contract; it pulls in no k8s/CRD types, so
+# the claimer build stays minimal.
 COPY cmd/claimer/ cmd/claimer/
-COPY internal/envkeys/ internal/envkeys/
+COPY internal/sourcepath/ internal/sourcepath/
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o claimer cmd/claimer/main.go

@@ -60,7 +60,7 @@ These fields come from the CRD types in `api/v1alpha1/` and the controller code 
 - Work queue: Valkey Streams (required).
 - Required Pipeline inputs:
   - `spec.filters[]`: ordered container steps. Each filter supports `image`, optional `command`, `args`, `env`, `resources`, and `config` (becomes `FILTER_<NAME>=<value>` envs).
-  - Optional: `spec.videoInputPath` (default `/ws/input`), path where the init "claimer" stages the file. It is exposed to filter containers as `SOURCE_PATH` (and the deprecated alias `VIDEO_INPUT_PATH`); author entry-filter sources as `file://$(SOURCE_PATH)`. The path is extension-less on purpose — entry filters are extension-agnostic and the object's real source URI is delivered via a `<SOURCE_PATH>.source_uri` sidecar (`FILTER_OVERRIDE_SOURCE_URI_FILE`), reported as `meta['src']`.
+  - Optional: `spec.sourcePath` (default `/ws/input`), path where the init "claimer" stages the file. It is exposed to filter containers as `SOURCE_PATH` (and the deprecated alias `VIDEO_INPUT_PATH`); author entry-filter sources as `file://$(SOURCE_PATH)`. The path is extension-less on purpose — entry filters are extension-agnostic and the object's real source URI is delivered via a `<SOURCE_PATH>.source_uri` sidecar (`FILTER_OVERRIDE_SOURCE_URI_FILE`), reported as `meta['src']`.
 - Required PipelineSource inputs:
   - `spec.bucket`:
     - `name` (string): bucket/container name.

@@ -299,7 +299,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					Namespace: namespace,
 				},
 				Spec: pipelinesv1alpha1.PipelineSpec{
-					VideoInputPath: "/ws/custom-input.mp4",
+					SourcePath: "/ws/custom-input.mp4",
 					Filters: []pipelinesv1alpha1.Filter{
 						{
 							Name:  "test-filter",
@@ -515,19 +515,19 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "SOURCE_PATH", Value: "/ws/custom-input.mp4"}))
 			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: "/ws/custom-input.mp4"}))
 			// Entry filters read the object's real source URI from this sidecar and report
-			// it as meta['src'] (PLAT-1498); the claimer writes it next to the download.
+			// it as meta['src']; the claimer writes it next to the download.
 			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "FILTER_OVERRIDE_SOURCE_URI_FILE", Value: "/ws/custom-input.mp4.source_uri"}))
 			Expect(filterEnv[0].Name).To(Equal("SOURCE_PATH"))
 		})
 
-		It("should fall back to the default input path when videoInputPath is unset", func() {
-			// Clear the spec's videoInputPath so the builder must apply DefaultInputPath.
+		It("should fall back to the default input path when sourcePath is unset", func() {
+			// Clear the spec so the builder must apply DefaultInputPath.
 			Eventually(func() error {
 				fresh := &pipelinesv1alpha1.Pipeline{}
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineName, Namespace: namespace}, fresh); err != nil {
 					return err
 				}
-				fresh.Spec.VideoInputPath = ""
+				fresh.Spec.SourcePath = ""
 				return k8sClient.Update(ctx, fresh)
 			}, timeout, interval).Should(Succeed())
 

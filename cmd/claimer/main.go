@@ -37,7 +37,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/valkey-io/valkey-go"
 
-	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/envkeys"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/sourcepath"
 )
 
 const (
@@ -62,9 +62,9 @@ const (
 	// media, not just video. The default is deliberately extension-less (/ws/input):
 	// entry filters are extension-agnostic, and the object's real source URI travels via
 	// the sidecar file below rather than being encoded in the filename. Names come from the
-	// shared internal/envkeys leaf package so they can't drift from the controller's copies.
-	EnvSourcePath = envkeys.SourcePath
-	EnvVideoInput = envkeys.VideoInputPath // deprecated alias of SOURCE_PATH
+	// shared internal/sourcepath leaf package so they can't drift from the controller's copies.
+	EnvSourcePath = sourcepath.EnvVar
+	EnvVideoInput = sourcepath.DeprecatedEnvVar // deprecated alias of SOURCE_PATH
 	// EnvS3ObjectKey selects "direct download" mode for the multi-source
 	// batch path (PLAT-1071). When set, the claimer skips Valkey and
 	// downloads exactly this S3 object key to SOURCE_PATH, then
@@ -73,14 +73,14 @@ const (
 	EnvS3ObjectKey = "S3_OBJECT_KEY"
 
 	// Volume mount paths
-	defaultInputPath = envkeys.DefaultInputPath
+	defaultInputPath = sourcepath.Default
 
 	// sourceURIFileSuffix is appended to the download path to form the sidecar file the
 	// claimer writes with the object's logical source URI (s3://bucket/key). Entry filters
-	// read it via FILTER_OVERRIDE_SOURCE_URI_FILE and report it as meta['src'] (PLAT-1498),
-	// so per-file identity survives even though the media is downloaded to a fixed generic
-	// path. The controller must set FILTER_OVERRIDE_SOURCE_URI_FILE to <SOURCE_PATH> + this.
-	sourceURIFileSuffix = envkeys.SourceURIFileSuffix
+	// read it via FILTER_OVERRIDE_SOURCE_URI_FILE and report it as meta['src'], so per-file
+	// identity survives even though the media is downloaded to a fixed generic path. The
+	// controller must set FILTER_OVERRIDE_SOURCE_URI_FILE to <SOURCE_PATH> + this.
+	sourceURIFileSuffix = sourcepath.SidecarSuffix
 
 	// Pod annotations are no longer used; controller derives queue state directly
 )
@@ -419,7 +419,7 @@ func createMinIOClient(cfg *Config) (*minio.Client, error) {
 
 // writeSourceURIFile records the object's logical source URI (s3://bucket/key) in a
 // sidecar file next to the downloaded media, so extension-agnostic entry filters can
-// report it as meta['src'] via FILTER_OVERRIDE_SOURCE_URI_FILE (PLAT-1498). Best-effort:
+// report it as meta['src'] via FILTER_OVERRIDE_SOURCE_URI_FILE. Best-effort:
 // the media is already on disk, so a write failure must not fail the claim — the filter
 // simply falls back to the physical path (losing per-file attribution) but still runs.
 func writeSourceURIFile(sourcePath, bucket, key string) {

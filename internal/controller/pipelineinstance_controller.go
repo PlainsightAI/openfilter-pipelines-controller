@@ -45,8 +45,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
-	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/envkeys"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/queue"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/sourcepath"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
@@ -123,23 +123,23 @@ const (
 	pipelineRefMissingRequeueAfter = 1 * time.Second
 
 	// DefaultInputPath is where the claimer stores downloaded artifacts when not overridden.
-	// Aliased from internal/envkeys (shared with the claimer) so the two binaries can't diverge.
+	// Aliased from internal/sourcepath (shared with the claimer) so the two binaries can't diverge.
 	// Extension-less on purpose: entry filters are extension-agnostic and the real source URI
-	// travels via the .source_uri sidecar, not the filename (PLAT-1498/1499).
-	DefaultInputPath = envkeys.DefaultInputPath
+	// travels via the .source_uri sidecar, not the filename.
+	DefaultInputPath = sourcepath.Default
 
-	// Batch source-path env-var contract (PLAT-1499). These are controller-package aliases of
-	// the single source of truth in internal/envkeys — a dependency-free leaf package the claimer
+	// Batch source-path env-var contract. These are controller-package aliases of the single
+	// source of truth in internal/sourcepath — a dependency-free leaf package the claimer
 	// (cmd/claimer) also imports, so the shared values can't drift between the two binaries while
 	// the claimer still avoids pulling in the CRD/k8s types. SOURCE_PATH is the current name;
 	// VIDEO_INPUT_PATH is a deprecated alias kept so in-flight specs referencing
-	// $(VIDEO_INPUT_PATH) keep resolving.
-	EnvSourcePath                  = envkeys.SourcePath
-	EnvVideoInputPath              = envkeys.VideoInputPath
-	EnvFilterOverrideSourceURIFile = envkeys.FilterOverrideSourceURIFile
-	SourceURIFileSuffix            = envkeys.SourceURIFileSuffix
+	// $(VIDEO_INPUT_PATH) keep resolving (removed at 1.0).
+	EnvSourcePath                  = sourcepath.EnvVar
+	EnvVideoInputPath              = sourcepath.DeprecatedEnvVar
+	EnvFilterOverrideSourceURIFile = sourcepath.OverrideFileEnvVar
+	SourceURIFileSuffix            = sourcepath.SidecarSuffix
 
-	// workspaceDir is the container workspace the claimer writes into; videoInputPath must
+	// workspaceDir is the container workspace the claimer writes into; sourcePath must
 	// stay inside it (see validation in buildJob) so a user-controlled spec can't traverse out.
 	workspaceDir = "/ws/"
 

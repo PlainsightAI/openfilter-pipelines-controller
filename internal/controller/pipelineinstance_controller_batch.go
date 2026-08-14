@@ -439,8 +439,8 @@ func (r *PipelineInstanceReconciler) ensureJob(ctx context.Context, pipelineInst
 	return nil
 }
 
-// sanitizeInputPath resolves the user-controlled Pipeline.Spec.VideoInputPath to a path the
-// claimer may safely write into. It returns DefaultInputPath when raw is empty (the normal
+// sanitizeInputPath resolves the user-controlled Pipeline source path to a path the claimer may
+// safely write into. It returns DefaultInputPath when raw is empty (the normal
 // case) or when raw escapes the container workspace — a traversal ("/ws/../etc/passwd") or an
 // absolute path outside /ws/ — with invalid=true in the escape case so the caller can log it.
 // path.Clean (not filepath.Clean) is used deliberately: these are always slash-separated
@@ -576,13 +576,17 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		},
 	)
 
-	// Provide source path to claimer for storing downloaded files. SOURCE_PATH is the
-	// new name; VIDEO_INPUT_PATH is kept as a deprecated alias so in-flight pipeline
-	// specs referencing $(VIDEO_INPUT_PATH) keep resolving during rollout.
-	inputPath, invalidInputPath := sanitizeInputPath(pipeline.Spec.VideoInputPath)
+	// Provide source path to claimer for storing downloaded files. sourcePath is the canonical
+	// field; videoInputPath is the deprecated alias (removed at 1.0) — sourcePath wins when both
+	// are set, and the alias is used only when sourcePath is empty.
+	rawSourcePath := pipeline.Spec.SourcePath
+	if rawSourcePath == "" {
+		rawSourcePath = pipeline.Spec.VideoInputPath
+	}
+	inputPath, invalidInputPath := sanitizeInputPath(rawSourcePath)
 	if invalidInputPath {
-		log.Info("invalid videoInputPath (must be under /ws/); falling back to default",
-			"videoInputPath", pipeline.Spec.VideoInputPath, "default", DefaultInputPath)
+		log.Info("invalid sourcePath (must be under /ws/); falling back to default",
+			"sourcePath", rawSourcePath, "default", DefaultInputPath)
 	}
 	claimerEnv = append(claimerEnv, buildSourceEnvVars(inputPath, false)...)
 
@@ -616,8 +620,8 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 		// entries reference it. Same contract the multi-source path
 		// provides per-binding (see buildBatchFilterContainersForMultiSource).
 		// buildSourceEnvVars includes the FILTER_OVERRIDE_SOURCE_URI_FILE sidecar var: entry
-		// filters read the object's real source URI from it and report it as meta['src']
-		// (PLAT-1498), so per-file identity survives the fixed generic download path.
+		// filters read the object's real source URI from it and report it as meta['src'], so
+		// per-file identity survives the fixed generic download path.
 		containerEnv := make([]corev1.EnvVar, 0, len(configEnvVars)+len(filter.Env)+3)
 		containerEnv = append(containerEnv, buildSourceEnvVars(inputPath, true)...)
 		containerEnv = append(containerEnv, configEnvVars...)

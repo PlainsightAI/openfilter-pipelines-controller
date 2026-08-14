@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-sample
 spec:
-  videoInputPath: /ws/input
+  sourcePath: /ws/input
 
   filters:
     - name: video-in

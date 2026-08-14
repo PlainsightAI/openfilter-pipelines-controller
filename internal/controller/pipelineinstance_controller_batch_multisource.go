@@ -366,7 +366,7 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 		if path, ok := downloadPath[filter.Name]; ok {
 			// buildSourceEnvVars includes the FILTER_OVERRIDE_SOURCE_URI_FILE sidecar var: the
 			// claimer wrote the object's real source URI there, and the entry filter reports it
-			// as meta['src'] (PLAT-1498) so per-file identity survives.
+			// as meta['src'] so per-file identity survives.
 			env = append(env, buildSourceEnvVars(path, true)...)
 		}
 		env = append(env, configEnv...)

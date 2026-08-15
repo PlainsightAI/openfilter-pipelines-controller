@@ -230,6 +230,7 @@ func loadConfig() (*Config, error) {
 				return value
 			}
 			if value := os.Getenv(EnvVideoInput); value != "" { // deprecated alias
+				log.Printf("warning: %s is deprecated and will be removed in 1.0; set %s instead", EnvVideoInput, EnvSourcePath)
 				return value
 			}
 			return defaultInputPath

@@ -587,6 +587,10 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 	if invalidInputPath {
 		log.Info("invalid sourcePath (must be under /ws/); falling back to default",
 			"sourcePath", rawSourcePath, "default", DefaultInputPath)
+		if r.Recorder != nil {
+			r.Recorder.Event(pipelineInstance, corev1.EventTypeWarning, ReasonInvalidSourcePath,
+				fmt.Sprintf("sourcePath %q escapes the workspace; falling back to default %q", rawSourcePath, DefaultInputPath))
+		}
 	}
 	claimerEnv = append(claimerEnv, buildSourceEnvVars(inputPath, false)...)
 

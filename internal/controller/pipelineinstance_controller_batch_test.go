@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
@@ -1289,6 +1290,8 @@ func TestSanitizeInputPath(t *testing.T) {
 // never lands SOURCE_PATH pointing outside /ws.
 func TestBuildJob_InvalidSourcePath_FallsBackToDefault(t *testing.T) {
 	r := makeMinimalReconciler()
+	rec := record.NewFakeRecorder(10)
+	r.Recorder = rec
 	pi := makeMinimalPipelineInstance()
 	ps := makeMinimalPipelineSource()
 
@@ -1328,6 +1331,16 @@ func TestBuildJob_InvalidSourcePath_FallsBackToDefault(t *testing.T) {
 		if strings.Contains(e.Value, "etc/passwd") {
 			t.Errorf("env %s leaked the rejected path: %q", e.Name, e.Value)
 		}
+	}
+
+	// The invalid-path fallback must be operator-visible as a Warning Event, not only a log line.
+	select {
+	case ev := <-rec.Events:
+		if !strings.Contains(ev, "Warning") || !strings.Contains(ev, ReasonInvalidSourcePath) {
+			t.Errorf("recorded event = %q, want a Warning %s event", ev, ReasonInvalidSourcePath)
+		}
+	default:
+		t.Errorf("expected a Warning %s event on the PipelineInstance, got none", ReasonInvalidSourcePath)
 	}
 }
 

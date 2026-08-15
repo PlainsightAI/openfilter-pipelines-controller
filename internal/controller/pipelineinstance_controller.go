@@ -101,6 +101,12 @@ const (
 	// once the pods are healthy again.
 	ReasonPipelinePodFailed = "PipelinePodFailed"
 
+	// ReasonInvalidSourcePath marks a Warning event emitted when a Pipeline's sourcePath
+	// (or the deprecated videoInputPath alias) escapes the claimer workspace and is rejected
+	// in favour of the default input path. Surfaced as a Kubernetes Event so an operator sees
+	// the fallback via `kubectl describe` / `kubectl get events`, not only the controller log.
+	ReasonInvalidSourcePath = "InvalidSourcePath"
+
 	// Reconciliation intervals
 	StatusUpdateInterval = 30 * time.Second
 

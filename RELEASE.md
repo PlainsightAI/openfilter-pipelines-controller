@@ -1,10 +1,12 @@
 # Release notes
 
-## [Unreleased]
+## v0.8.0
 
 ### Added
 
 - **Batch runs preserve per-source-file identity**: the claimer writes each downloaded object's real source URI (`s3://bucket/key`) to a `<SOURCE_PATH>.source_uri` sidecar, and the controller wires `FILTER_OVERRIDE_SOURCE_URI_FILE` into every entry filter, so the pipeline reports the true source file as `meta['src']` even though the media is downloaded to a fixed generic path. This lets downstream event data be attributed per source file for multi-file folder batches.
+- **GKE device-plugin GPU sharing for multi-model pipelines (PLAT-1496 — #111)**: on managed clusters (GKE) whose GPU stack ignores `NVIDIA_VISIBLE_DEVICES`, a multi-model pipeline pod now gets CUDA on *every* model stage instead of only the lead. A new `GPU_SHARING_STRATEGY` flag / env (`time-sharing` | `mps`; empty keeps the on-prem `NVIDIA_VISIBLE_DEVICES=all` + RuntimeClass default) switches the reconciler into a device-plugin mode where each GPU container requests `nvidia.com/gpu` (limit == request, extended-resource compliant) and the pod carries `cloud.google.com/gke-gpu-sharing-strategy` + `gke-max-shared-clients-per-gpu` (= the pod's GPU-container count), so GKE node auto-provisioning packs the stages onto one physical GPU with no static node pool. Wired into all three pod builders (streaming, batch, multi-source batch); single-GPU-container pods stay exclusive, and the on-prem env-share path is unchanged.
+- **Startup validation of `GPU_SHARING_STRATEGY`**: any value other than `""` / `time-sharing` / `mps` fails the controller fast at boot, instead of being stamped onto the pod nodeSelector and leaving pods permanently `Pending` on GKE.
 
 ### Changed
 

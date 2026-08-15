@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: pipeline-sample
 spec:
-  videoInputPath: /ws/input.mp4
+  sourcePath: /ws/input
 
   filters:
     - name: video-in
@@ -18,7 +18,7 @@ spec:
           cpu: "1"
       config:
         - name: sources
-          value: file:///ws/input.mp4
+          value: file:///ws/input
         - name: outputs
           value: tcp://*:5550
       env:

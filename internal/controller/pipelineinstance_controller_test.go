@@ -299,7 +299,7 @@ var _ = Describe("PipelineInstance Controller", func() {
 					Namespace: namespace,
 				},
 				Spec: pipelinesv1alpha1.PipelineSpec{
-					VideoInputPath: "/ws/custom-input.mp4",
+					SourcePath: "/ws/custom-input.mp4",
 					Filters: []pipelinesv1alpha1.Filter{
 						{
 							Name:  "test-filter",
@@ -500,19 +500,86 @@ var _ = Describe("PipelineInstance Controller", func() {
 			Expect(job.Spec.Template.Spec.InitContainers).To(HaveLen(1))
 			Expect(job.Spec.Template.Spec.InitContainers[0].Name).To(Equal("claimer"))
 			claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+			Expect(claimerEnv).To(ContainElement(corev1.EnvVar{Name: "SOURCE_PATH", Value: "/ws/custom-input.mp4"}))
 			Expect(claimerEnv).To(ContainElement(corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: "/ws/custom-input.mp4"}))
 			// Only user-defined filters should be present.
 			Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1))
 			Expect(job.Spec.Template.Spec.Containers[0].Name).To(Equal("test-filter"))
 			// Filter containers receive the claimer's download destination so
-			// VideoIn sources can be authored as `file://$(VIDEO_INPUT_PATH)`
-			// — the same contract the multi-source path provides per-binding.
-			// It must be the FIRST entry, before any FILTER_* config env:
-			// Kubernetes dependent-env expansion only resolves $(VAR)
-			// references to variables defined earlier in the list.
+			// VideoIn sources can be authored as `file://$(SOURCE_PATH)` (or the
+			// deprecated `$(VIDEO_INPUT_PATH)`) — the same contract the multi-source
+			// path provides per-binding. SOURCE_PATH must be the FIRST entry, before
+			// any FILTER_* config env: Kubernetes dependent-env expansion only resolves
+			// $(VAR) references to variables defined earlier in the list.
 			filterEnv := job.Spec.Template.Spec.Containers[0].Env
+			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "SOURCE_PATH", Value: "/ws/custom-input.mp4"}))
 			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: "/ws/custom-input.mp4"}))
-			Expect(filterEnv[0].Name).To(Equal("VIDEO_INPUT_PATH"))
+			// Entry filters read the object's real source URI from this sidecar and report
+			// it as meta['src']; the claimer writes it next to the download.
+			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "FILTER_OVERRIDE_SOURCE_URI_FILE", Value: "/ws/custom-input.mp4.source_uri"}))
+			Expect(filterEnv[0].Name).To(Equal("SOURCE_PATH"))
+		})
+
+		It("should fall back to the default input path when sourcePath is unset", func() {
+			// Clear the spec so the builder must apply DefaultInputPath.
+			Eventually(func() error {
+				fresh := &pipelinesv1alpha1.Pipeline{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineName, Namespace: namespace}, fresh); err != nil {
+					return err
+				}
+				fresh.Spec.SourcePath = ""
+				return k8sClient.Update(ctx, fresh)
+			}, timeout, interval).Should(Succeed())
+
+			pipelineInstance = &pipelinesv1alpha1.PipelineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      pipelineInstanceName,
+					Namespace: namespace,
+				},
+				Spec: pipelinesv1alpha1.PipelineInstanceSpec{
+					PipelineRef: pipelinesv1alpha1.PipelineReference{
+						Name: pipelineName,
+					},
+					SourceRef: &pipelinesv1alpha1.SourceReference{
+						Name: pipelineSourceName,
+					},
+					Execution: &pipelinesv1alpha1.ExecutionConfig{
+						Parallelism: ptr.To(int32(5)),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pipelineInstance)).To(Succeed())
+
+			// Reconcile twice: once to set TotalFiles, once to create Job.
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: pipelineInstanceName, Namespace: namespace}, pipelineInstance); err != nil {
+					return false
+				}
+				return pipelineInstance.Status.JobName != ""
+			}, timeout, interval).Should(BeTrue())
+
+			job := &batchv1.Job{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      pipelineInstance.Status.JobName,
+				Namespace: namespace,
+			}, job)).To(Succeed())
+
+			claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+			Expect(claimerEnv).To(ContainElement(corev1.EnvVar{Name: "SOURCE_PATH", Value: DefaultInputPath}))
+			Expect(claimerEnv).To(ContainElement(corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: DefaultInputPath}))
+
+			filterEnv := job.Spec.Template.Spec.Containers[0].Env
+			Expect(filterEnv[0]).To(Equal(corev1.EnvVar{Name: "SOURCE_PATH", Value: DefaultInputPath}))
+			Expect(filterEnv).To(ContainElement(corev1.EnvVar{Name: "FILTER_OVERRIDE_SOURCE_URI_FILE", Value: DefaultInputPath + ".source_uri"}))
 		})
 
 		It("should inject per-namespace Valkey credentials from namespace secret in claimer", func() {

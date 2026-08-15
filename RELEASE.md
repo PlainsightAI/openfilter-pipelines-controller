@@ -1,5 +1,15 @@
 # Release notes
 
+## [Unreleased]
+
+### Added
+
+- **Batch runs preserve per-source-file identity**: the claimer writes each downloaded object's real source URI (`s3://bucket/key`) to a `<SOURCE_PATH>.source_uri` sidecar, and the controller wires `FILTER_OVERRIDE_SOURCE_URI_FILE` into every entry filter, so the pipeline reports the true source file as `meta['src']` even though the media is downloaded to a fixed generic path. This lets downstream event data be attributed per source file for multi-file folder batches.
+
+### Changed
+
+- **New `sourcePath` field (default `/ws/input`, extension-less), exposed to filters as `SOURCE_PATH`; `videoInputPath` is now a deprecated alias** kept for backward compatibility and removed at 1.0. The old `/ws/input.mp4` default forced a `.mp4` extension onto every downloaded object, which silently broke the extension-sensitive `image-in` filter in the batch queue path (images written to `input.mp4` were skipped). Entry filters are now extension-agnostic, so a generic name is correct; authors can reference `file://$(SOURCE_PATH)` or the legacy `file://$(VIDEO_INPUT_PATH)`. Pipelines that set `sourcePath` (or the deprecated `videoInputPath`) explicitly are unaffected.
+
 ## v0.7.1
 
 ### Changed

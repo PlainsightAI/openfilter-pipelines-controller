@@ -303,12 +303,14 @@ func (r *PipelineInstanceReconciler) buildDirectClaimerEnv(b ResolvedSourceBindi
 	env := []corev1.EnvVar{
 		{Name: "S3_BUCKET", Value: bucket.Name},
 		{Name: "S3_OBJECT_KEY", Value: bindingObjectKey(b)},
-		{Name: "VIDEO_INPUT_PATH", Value: destPath},
 		{Name: "S3_ENDPOINT", Value: bucket.Endpoint},
 		{Name: "S3_REGION", Value: bucket.Region},
 		{Name: "S3_USE_PATH_STYLE", Value: fmt.Sprintf("%t", bucket.UsePathStyle)},
 		{Name: "S3_INSECURE_SKIP_TLS_VERIFY", Value: fmt.Sprintf("%t", bucket.InsecureSkipTLSVerify)},
 	}
+	// The claimer reads these by name (no $(VAR) expansion order dependency), so they can
+	// follow the S3 vars. No sidecar var here — that's a filter-container concern.
+	env = append(env, buildSourceEnvVars(destPath, false)...)
 	if bucket.CredentialsSecret != nil {
 		env = append(env,
 			corev1.EnvVar{
@@ -360,11 +362,12 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 		// references to variables defined EARLIER — a forward reference
 		// stays a literal string and the VideoIn fails to open its input.
 		// (Mirrors the streaming builder's RTSP-env-first ordering.)
-		env := make([]corev1.EnvVar, 0, len(configEnv)+1)
+		env := make([]corev1.EnvVar, 0, len(configEnv)+3)
 		if path, ok := downloadPath[filter.Name]; ok {
-			env = append(env,
-				corev1.EnvVar{Name: "VIDEO_INPUT_PATH", Value: path},
-			)
+			// buildSourceEnvVars includes the FILTER_OVERRIDE_SOURCE_URI_FILE sidecar var: the
+			// claimer wrote the object's real source URI there, and the entry filter reports it
+			// as meta['src'] so per-file identity survives.
+			env = append(env, buildSourceEnvVars(path, true)...)
 		}
 		env = append(env, configEnv...)
 

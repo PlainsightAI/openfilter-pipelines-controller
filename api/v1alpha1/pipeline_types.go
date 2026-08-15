@@ -291,13 +291,23 @@ type PipelineSpec struct {
 	// +optional
 	Services []ServicePort `json:"services,omitempty"`
 
-	// videoInputPath defines where the controller stores downloaded source files.
-	// Downstream filters can reference this path to read the input artifact.
-	// Defaults to /ws/input.mp4.
+	// sourcePath defines where the controller stores downloaded source files.
+	// Downstream filters can reference this path to read the input artifact. It is
+	// exposed to filters as both SOURCE_PATH and (deprecated) VIDEO_INPUT_PATH.
+	// Defaults to /ws/input when unset — extension-less on purpose: entry filters are
+	// extension-agnostic and the real source URI is delivered via a sidecar file
+	// (FILTER_OVERRIDE_SOURCE_URI_FILE) rather than the filename.
 	// Only applies to Batch mode.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:default=/ws/input.mp4
+	SourcePath string `json:"sourcePath,omitempty"`
+
+	// videoInputPath is a deprecated alias of sourcePath, kept for backward compatibility and
+	// removed at 1.0. Set sourcePath instead; when sourcePath is empty this value is used, and
+	// when both are set sourcePath wins.
+	// Only applies to Batch mode.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinLength=1
 	VideoInputPath string `json:"videoInputPath,omitempty"`
 
 	// imagePullSecrets is a list of references to secrets for pulling container images

@@ -21,6 +21,14 @@ import (
 // credentials-injection test below. Constant to satisfy goconst.
 const frontCredSecretName = "front-rtsp-creds"
 
+// Per-binding download destinations in the multi-source batch tests (extracted to
+// constants to satisfy goconst now that SOURCE_PATH / FILTER_OVERRIDE_SOURCE_URI_FILE
+// assertions repeat them).
+const (
+	frontCamInputPath = "/ws/front-cam.mp4"
+	backCamInputPath  = "/ws/back-cam.mp4"
+)
+
 // findContainerByName is a local helper used by the multi-source tests to
 // look up a container by name. The pre-existing `findContainer` in
 // pipelineinstance_scheduling_test.go has a different signature, so we
@@ -241,20 +249,25 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 	for _, c := range initContainers {
 		objKey := envValue(c.Env, "S3_OBJECT_KEY")
 		dest := envValue(c.Env, "VIDEO_INPUT_PATH")
+		// SOURCE_PATH is the new name for the same value; VIDEO_INPUT_PATH
+		// is kept as a deprecated alias, so both must carry the download destination.
+		if sp := envValue(c.Env, "SOURCE_PATH"); sp != dest {
+			t.Errorf("claimer %q SOURCE_PATH = %q, want %q (alias of VIDEO_INPUT_PATH)", c.Name, sp, dest)
+		}
 		switch c.Name {
 		case "claimer-front-cam":
 			if objKey != "front.mp4" {
 				t.Errorf("claimer-front-cam S3_OBJECT_KEY = %q, want %q", objKey, "front.mp4")
 			}
-			if dest != "/ws/front-cam.mp4" {
-				t.Errorf("claimer-front-cam VIDEO_INPUT_PATH = %q, want %q", dest, "/ws/front-cam.mp4")
+			if dest != frontCamInputPath {
+				t.Errorf("claimer-front-cam VIDEO_INPUT_PATH = %q, want %q", dest, frontCamInputPath)
 			}
 		case "claimer-back-cam":
 			if objKey != "back.mp4" {
 				t.Errorf("claimer-back-cam S3_OBJECT_KEY = %q, want %q", objKey, "back.mp4")
 			}
-			if dest != "/ws/back-cam.mp4" {
-				t.Errorf("claimer-back-cam VIDEO_INPUT_PATH = %q, want %q", dest, "/ws/back-cam.mp4")
+			if dest != backCamInputPath {
+				t.Errorf("claimer-back-cam VIDEO_INPUT_PATH = %q, want %q", dest, backCamInputPath)
 			}
 		default:
 			t.Errorf("unexpected init container %q", c.Name)
@@ -271,11 +284,28 @@ func TestBuildMultiSourceBatchJob_PerBindingInitClaimersAndEnv(t *testing.T) {
 	front := findContainerByName(t, containers, "front-cam")
 	back := findContainerByName(t, containers, "back-cam")
 	imageOut := findContainerByName(t, containers, "image-out")
-	if got := envValue(front.Env, "VIDEO_INPUT_PATH"); got != "/ws/front-cam.mp4" {
-		t.Errorf("front-cam VIDEO_INPUT_PATH = %q, want %q", got, "/ws/front-cam.mp4")
+	if got := envValue(front.Env, "VIDEO_INPUT_PATH"); got != frontCamInputPath {
+		t.Errorf("front-cam VIDEO_INPUT_PATH = %q, want %q", got, frontCamInputPath)
 	}
-	if got := envValue(back.Env, "VIDEO_INPUT_PATH"); got != "/ws/back-cam.mp4" {
-		t.Errorf("back-cam VIDEO_INPUT_PATH = %q, want %q", got, "/ws/back-cam.mp4")
+	if got := envValue(back.Env, "VIDEO_INPUT_PATH"); got != backCamInputPath {
+		t.Errorf("back-cam VIDEO_INPUT_PATH = %q, want %q", got, backCamInputPath)
+	}
+	// SOURCE_PATH (new name, same value) + the per-filter source-URI sidecar env.
+	if got := envValue(front.Env, "SOURCE_PATH"); got != frontCamInputPath {
+		t.Errorf("front-cam SOURCE_PATH = %q, want %q", got, frontCamInputPath)
+	}
+	if got := envValue(front.Env, "FILTER_OVERRIDE_SOURCE_URI_FILE"); got != frontCamInputPath+".source_uri" {
+		t.Errorf("front-cam FILTER_OVERRIDE_SOURCE_URI_FILE = %q, want %q", got, frontCamInputPath+".source_uri")
+	}
+	if got := envValue(back.Env, "SOURCE_PATH"); got != backCamInputPath {
+		t.Errorf("back-cam SOURCE_PATH = %q, want %q", got, backCamInputPath)
+	}
+	if got := envValue(back.Env, "FILTER_OVERRIDE_SOURCE_URI_FILE"); got != backCamInputPath+".source_uri" {
+		t.Errorf("back-cam FILTER_OVERRIDE_SOURCE_URI_FILE = %q, want %q", got, backCamInputPath+".source_uri")
+	}
+	// image-out (downstream consumer) must NOT get the source-URI sidecar env.
+	if got := envValue(imageOut.Env, "FILTER_OVERRIDE_SOURCE_URI_FILE"); got != "" {
+		t.Errorf("image-out must not receive FILTER_OVERRIDE_SOURCE_URI_FILE, got %q", got)
 	}
 	// ORDERING contract: VIDEO_INPUT_PATH must precede every FILTER_* env
 	// entry. Kubernetes dependent-env expansion only resolves $(VAR)

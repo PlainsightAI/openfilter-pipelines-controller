@@ -46,6 +46,7 @@ import (
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/queue"
+	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/sourcepath"
 	"github.com/PlainsightAI/openfilter-pipelines-controller/internal/tracing"
 )
 
@@ -100,6 +101,12 @@ const (
 	// once the pods are healthy again.
 	ReasonPipelinePodFailed = "PipelinePodFailed"
 
+	// ReasonInvalidSourcePath marks a Warning event emitted when a Pipeline's sourcePath
+	// (or the deprecated videoInputPath alias) escapes the claimer workspace and is rejected
+	// in favour of the default input path. Surfaced as a Kubernetes Event so an operator sees
+	// the fallback via `kubectl describe` / `kubectl get events`, not only the controller log.
+	ReasonInvalidSourcePath = "InvalidSourcePath"
+
 	// Reconciliation intervals
 	StatusUpdateInterval = 30 * time.Second
 
@@ -121,8 +128,26 @@ const (
 	// usually wins anyway.
 	pipelineRefMissingRequeueAfter = 1 * time.Second
 
-	// DefaultVideoInputPath is where the claimer stores downloaded artifacts when not overridden.
-	DefaultVideoInputPath = "/ws/input.mp4"
+	// DefaultInputPath is where the claimer stores downloaded artifacts when not overridden.
+	// Aliased from internal/sourcepath (shared with the claimer) so the two binaries can't diverge.
+	// Extension-less on purpose: entry filters are extension-agnostic and the real source URI
+	// travels via the .source_uri sidecar, not the filename.
+	DefaultInputPath = sourcepath.Default
+
+	// Batch source-path env-var contract. These are controller-package aliases of the single
+	// source of truth in internal/sourcepath — a dependency-free leaf package the claimer
+	// (cmd/claimer) also imports, so the shared values can't drift between the two binaries while
+	// the claimer still avoids pulling in the CRD/k8s types. SOURCE_PATH is the current name;
+	// VIDEO_INPUT_PATH is a deprecated alias kept so in-flight specs referencing
+	// $(VIDEO_INPUT_PATH) keep resolving (removed at 1.0).
+	EnvSourcePath                  = sourcepath.EnvVar
+	EnvVideoInputPath              = sourcepath.DeprecatedEnvVar
+	EnvFilterOverrideSourceURIFile = sourcepath.OverrideFileEnvVar
+	SourceURIFileSuffix            = sourcepath.SidecarSuffix
+
+	// workspaceDir is the container workspace the claimer writes into; sourcePath must
+	// stay inside it (see validation in buildJob) so a user-controlled spec can't traverse out.
+	workspaceDir = "/ws/"
 
 	// DefaultValkeyNSSecretName is the default name for per-namespace Valkey credentials secrets.
 	DefaultValkeyNSSecretName = "valkey-ns-credentials"

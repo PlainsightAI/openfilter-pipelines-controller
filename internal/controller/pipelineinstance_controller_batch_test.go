@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
@@ -1246,4 +1247,130 @@ func TestBuildJob_StreamKeyUsesNamespacePrefix(t *testing.T) {
 		}
 	}
 	t.Error("expected STREAM env var in claimer, not found")
+}
+
+// TestSanitizeInputPath covers the user-controlled source path resolution: the empty
+// default, valid in-workspace paths, and the traversal/outside-workspace/boundary cases that
+// must fall back to DefaultInputPath. path.Clean keeps this OS-independent.
+func TestSanitizeInputPath(t *testing.T) {
+	cases := []struct {
+		name        string
+		raw         string
+		wantPath    string
+		wantInvalid bool
+	}{
+		{"empty falls back to default", "", DefaultInputPath, false},
+		{"valid default path", "/ws/input", "/ws/input", false},
+		{"valid custom file", "/ws/custom-input.mp4", "/ws/custom-input.mp4", false},
+		{"valid nested, cleaned", "/ws/./sub/../input", "/ws/input", false},
+		{"traversal escapes workspace", "/ws/../etc/passwd", DefaultInputPath, true},
+		{"deep traversal escapes workspace", "/ws/../../etc/passwd", DefaultInputPath, true},
+		{"absolute path outside workspace", "/etc/passwd", DefaultInputPath, true},
+		{"workspace root without trailing slash", "/ws", DefaultInputPath, true},
+		{"workspace root with trailing slash", "/ws/", DefaultInputPath, true},
+		{"sibling prefix is not inside workspace", "/wsX/input", DefaultInputPath, true},
+		{"relative path is not inside workspace", "input", DefaultInputPath, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, invalid := sanitizeInputPath(tc.raw)
+			if got != tc.wantPath {
+				t.Errorf("path: want %q, got %q", tc.wantPath, got)
+			}
+			if invalid != tc.wantInvalid {
+				t.Errorf("invalid: want %v, got %v", tc.wantInvalid, invalid)
+			}
+		})
+	}
+}
+
+// TestBuildJob_InvalidSourcePath_FallsBackToDefault is the end-to-end complement to
+// TestSanitizeInputPath: it asserts buildJob actually wires the fallback into the filter
+// container env when the CRD carries a traversal/outside-workspace path, so a malicious spec
+// never lands SOURCE_PATH pointing outside /ws.
+func TestBuildJob_InvalidSourcePath_FallsBackToDefault(t *testing.T) {
+	r := makeMinimalReconciler()
+	rec := record.NewFakeRecorder(10)
+	r.Recorder = rec
+	pi := makeMinimalPipelineInstance()
+	ps := makeMinimalPipelineSource()
+
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			SourcePath: "/ws/../etc/passwd", // escapes the workspace → must fall back
+			Filters: []pipelinesv1alpha1.Filter{
+				{Name: "entry-filter", Image: "entry-filter:latest"},
+			},
+		},
+	}
+
+	job := r.buildJob(context.Background(), pi, pipeline, ps, "test-job")
+
+	// The claimer (init container) is the security-sensitive entry point that performs the
+	// download/write, so assert its SOURCE_PATH also falls back to the default.
+	if len(job.Spec.Template.Spec.InitContainers) == 0 {
+		t.Fatal("expected the claimer init container")
+	}
+	claimerEnv := job.Spec.Template.Spec.InitContainers[0].Env
+	if claimerSrc, ok := findEnvVar(claimerEnv, EnvSourcePath); !ok || claimerSrc.Value != DefaultInputPath {
+		t.Errorf("claimer SOURCE_PATH = %q (ok=%v), want fallback %q", claimerSrc.Value, ok, DefaultInputPath)
+	}
+
+	env := job.Spec.Template.Spec.Containers[0].Env
+	src, ok := findEnvVar(env, EnvSourcePath)
+	if !ok {
+		t.Fatal("expected SOURCE_PATH on the filter container")
+	}
+	if src.Value != DefaultInputPath {
+		t.Errorf("SOURCE_PATH = %q, want fallback %q", src.Value, DefaultInputPath)
+	}
+	if sidecar, ok := findEnvVar(env, EnvFilterOverrideSourceURIFile); !ok || sidecar.Value != DefaultInputPath+SourceURIFileSuffix {
+		t.Errorf("FILTER_OVERRIDE_SOURCE_URI_FILE = %q (ok=%v), want %q", sidecar.Value, ok, DefaultInputPath+SourceURIFileSuffix)
+	}
+	for _, e := range env {
+		if strings.Contains(e.Value, "etc/passwd") {
+			t.Errorf("env %s leaked the rejected path: %q", e.Name, e.Value)
+		}
+	}
+
+	// The invalid-path fallback must be operator-visible as a Warning Event, not only a log line.
+	select {
+	case ev := <-rec.Events:
+		if !strings.Contains(ev, "Warning") || !strings.Contains(ev, ReasonInvalidSourcePath) {
+			t.Errorf("recorded event = %q, want a Warning %s event", ev, ReasonInvalidSourcePath)
+		}
+	default:
+		t.Errorf("expected a Warning %s event on the PipelineInstance, got none", ReasonInvalidSourcePath)
+	}
+}
+
+// TestBuildJob_SourcePathAliasPrecedence covers the sourcePath / videoInputPath (deprecated
+// alias) resolution: sourcePath wins when both are set, and videoInputPath is honored when
+// sourcePath is empty.
+func TestBuildJob_SourcePathAliasPrecedence(t *testing.T) {
+	filterEnvSourcePath := func(t *testing.T, spec pipelinesv1alpha1.PipelineSpec) string {
+		t.Helper()
+		spec.Filters = []pipelinesv1alpha1.Filter{{Name: "entry-filter", Image: "entry-filter:latest"}}
+		r := makeMinimalReconciler()
+		job := r.buildJob(context.Background(), makeMinimalPipelineInstance(), &pipelinesv1alpha1.Pipeline{Spec: spec}, makeMinimalPipelineSource(), "test-job")
+		src, ok := findEnvVar(job.Spec.Template.Spec.Containers[0].Env, EnvSourcePath)
+		if !ok {
+			t.Fatal("expected SOURCE_PATH on the filter container")
+		}
+		return src.Value
+	}
+
+	t.Run("sourcePath wins over videoInputPath", func(t *testing.T) {
+		got := filterEnvSourcePath(t, pipelinesv1alpha1.PipelineSpec{SourcePath: "/ws/new", VideoInputPath: "/ws/legacy"})
+		if got != "/ws/new" {
+			t.Errorf("SOURCE_PATH = %q, want /ws/new (sourcePath wins)", got)
+		}
+	})
+
+	t.Run("deprecated videoInputPath used when sourcePath empty", func(t *testing.T) {
+		got := filterEnvSourcePath(t, pipelinesv1alpha1.PipelineSpec{VideoInputPath: "/ws/legacy"})
+		if got != "/ws/legacy" {
+			t.Errorf("SOURCE_PATH = %q, want /ws/legacy (deprecated alias)", got)
+		}
+	})
 }

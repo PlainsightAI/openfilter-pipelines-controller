@@ -204,6 +204,15 @@ type PipelineInstanceStatus struct {
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 
+	// executionStartTime is stamped once, at the first reconcile pass that durably persists the
+	// observation that batch execution began (Progressing=True/Reason=Processing). It is never
+	// reset, including across controller restarts. Under status-write retry, the persisted
+	// timestamp may reflect the retry time rather than the exact original observation, bounded by
+	// normal reconcile-retry backoff; this mirrors the existing startTime field's behavior.
+	// Streaming pipelines do not set this field.
+	// +optional
+	ExecutionStartTime *metav1.Time `json:"executionStartTime,omitempty"`
+
 	// conditions represent the current state of the PipelineInstance resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//

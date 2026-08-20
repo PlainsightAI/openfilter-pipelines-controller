@@ -1227,6 +1227,16 @@ spec:
                     format: int64
                     type: integer
                 type: object
+              executionStartTime:
+                description: |-
+                  executionStartTime is stamped once, at the first reconcile pass that durably persists the
+                  observation that batch execution began (Progressing=True/Reason=Processing). It is never
+                  reset, including across controller restarts. Under status-write retry, the persisted
+                  timestamp may reflect the retry time rather than the exact original observation, bounded by
+                  normal reconcile-retry backoff; this mirrors the existing startTime field's behavior.
+                  Streaming pipelines do not set this field.
+                format: date-time
+                type: string
               jobName:
                 description: jobName is the name of the Kubernetes Job created for
                   this instance (Batch mode only)

@@ -343,6 +343,10 @@ func (in *PipelineInstanceStatus) DeepCopyInto(out *PipelineInstanceStatus) {
 		in, out := &in.CompletionTime, &out.CompletionTime
 		*out = (*in).DeepCopy()
 	}
+	if in.ExecutionStartTime != nil {
+		in, out := &in.ExecutionStartTime, &out.ExecutionStartTime
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

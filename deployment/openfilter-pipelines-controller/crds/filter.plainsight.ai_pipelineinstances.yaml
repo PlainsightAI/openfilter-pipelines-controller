@@ -1230,10 +1230,20 @@ spec:
               executionStartTime:
                 description: |-
                   executionStartTime is stamped once, at the first reconcile pass that durably persists the
-                  observation that batch execution began (Progressing=True/Reason=Processing). It is never
-                  reset, including across controller restarts. Under status-write retry, the persisted
-                  timestamp may reflect the retry time rather than the exact original observation, bounded by
-                  normal reconcile-retry backoff; this mirrors the existing startTime field's behavior.
+                  observation that batch execution began (Progressing=True/Reason=Processing). Under
+                  status-write retry, the persisted timestamp may reflect the retry time rather than the
+                  exact original observation, bounded by normal reconcile-retry backoff; this mirrors the
+                  existing startTime field's behavior.
+
+                  Durability contract: the value is stable across ordinary reconciles and controller
+                  restarts of a controller version that knows this field. It is NOT unconditionally
+                  permanent: every status write in this controller is a full-object Update, not a Patch, so
+                  a rollback to a controller binary built before this field existed would silently wipe it
+                  on that binary's next status write (no error). A subsequent reconcile by a version-aware
+                  controller re-stamps it as a fresh backfill, per the migration/backfill semantics below,
+                  not a restoration of the original value. A future consumer should treat this field as
+                  monotonic-within-a-controller-version, not as never-regressing across arbitrary
+                  downgrade/re-upgrade cycles.
 
                   Migration/backfill case: for an instance that was already Progressing=True/Processing
                   before this field existed (e.g. a controller upgrade landing mid-execution), the first

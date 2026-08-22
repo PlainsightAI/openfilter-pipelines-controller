@@ -13,6 +13,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: PlainsightAI/gh-actions-public/.github/workflows/security-scan.yaml@main
+    uses: PlainsightAI/gh-actions-public/.github/workflows/security-scan.yaml@feature/derived-scan-matrix
     with:
       language: go

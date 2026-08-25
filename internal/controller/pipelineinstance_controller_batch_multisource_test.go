@@ -112,6 +112,8 @@ func newMSReconciler(t *testing.T, objects ...interface{}) *PipelineInstanceReco
 			builder = builder.WithObjects(obj)
 		case *batchv1.Job:
 			builder = builder.WithObjects(obj)
+		case *corev1.Pod:
+			builder = builder.WithObjects(obj)
 		default:
 			t.Fatalf("unsupported seed object type %T", obj)
 		}
@@ -501,12 +503,25 @@ func newMSReconcilerWithFailingJobCreate(t *testing.T, pi *pipelinesv1alpha1.Pip
 // "still progressing" branch in the same call) stamps a non-nil value,
 // verified via a fresh re-Get so the assertion proves Status().Update
 // actually persisted the field.
+//
+// PLAT-1597: the Job-create pass alone is no longer sufficient evidence — a
+// Running pod for the instance must also be seeded, otherwise this pass
+// would (correctly) resolve to Reason="Starting" with ExecutionStartTime
+// left nil.
 func TestReconcileBatchMultiSource_FirstProcessingPassStampsExecutionStartTime(t *testing.T) {
 	pi, pipeline, bindings := makeMultiSourcePI(t)
 	if pi.Status.ExecutionStartTime != nil {
 		t.Fatalf("expected ExecutionStartTime nil before first reconcile")
 	}
-	r := newMSReconciler(t, pi)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ms-batch-pi-pod",
+			Namespace: pi.Namespace,
+			Labels:    map[string]string{"filter.plainsight.ai/instance": string(pi.UID)},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	r := newMSReconciler(t, pi, pod)
 
 	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
@@ -518,6 +533,9 @@ func TestReconcileBatchMultiSource_FirstProcessingPassStampsExecutionStartTime(t
 	}
 	if updated.Status.ExecutionStartTime == nil {
 		t.Fatalf("expected ExecutionStartTime to be stamped on first reconcile pass that reaches Processing")
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != "Processing" {
+		t.Errorf("expected Progressing/Processing, got %+v", cond)
 	}
 }
 
@@ -554,7 +572,19 @@ func TestReconcileBatchMultiSource_RegressionStampsExecutionStartTimeWhenProcess
 		ObjectMeta: metav1.ObjectMeta{Name: pi.Name + "-job", Namespace: pi.Namespace},
 		Status:     batchv1.JobStatus{Active: 1},
 	}
-	r := newMSReconciler(t, pi, job)
+	// PLAT-1597: the Progressing/Processing condition already being recorded
+	// is not itself evidence a pod started — seed a live Running pod so this
+	// test still isolates the `changed=false` stamp-decoupling invariant it
+	// exists to pin, rather than tripping the new Starting/Processing gate.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ms-batch-pi-pod",
+			Namespace: pi.Namespace,
+			Labels:    map[string]string{"filter.plainsight.ai/instance": string(pi.UID)},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	r := newMSReconciler(t, pi, job, pod)
 
 	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
@@ -598,6 +628,96 @@ func TestReconcileBatchMultiSource_ExecutionStartTimeUnchangedOnSecondPass(t *te
 	}
 	if !updated.Status.ExecutionStartTime.Time.Equal(fixed.Time) {
 		t.Errorf("expected ExecutionStartTime unchanged, got %v want %v", updated.Status.ExecutionStartTime.Time, fixed.Time)
+	}
+}
+
+// TestReconcileBatchMultiSource_PendingPodReasonStarting is the PLAT-1597
+// regression test for the multi-source/direct-mode batch path: a freshly
+// created Job whose single pod is stuck Pending (no NodeName, no
+// ContainerStatuses) must NOT be reported as Processing, and must NOT have
+// ExecutionStartTime stamped. This path is a real, separate production
+// workload class (image-in / single-file media direct mode), not an edge
+// case, so it gets the identical coverage reconcileBatch has.
+func TestReconcileBatchMultiSource_PendingPodReasonStarting(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: pi.Name + "-job", Namespace: pi.Namespace},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ms-batch-pi-pod",
+			Namespace: pi.Namespace,
+			Labels:    map[string]string{"filter.plainsight.ai/instance": string(pi.UID)},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	r := newMSReconciler(t, pi, job, pod)
+
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != "Starting" {
+		t.Errorf("expected Progressing/Starting for a Pending pod, got %+v", cond)
+	}
+	if updated.Status.ExecutionStartTime != nil {
+		t.Errorf("expected ExecutionStartTime to stay nil while no pod has started, got %v", updated.Status.ExecutionStartTime)
+	}
+}
+
+// TestReconcileBatchMultiSource_CrashRetryDoesNotRegressReasonToStarting is
+// the sticky/monotonicity regression test on the multi-source path: once
+// ExecutionStartTime has been stamped by a prior pass, a later pass where
+// the pod has crashed and is mid-replacement (Failed + a fresh Pending
+// retry, per the Job's BackoffLimit — no currently-live Running/Succeeded
+// pod) must NOT regress Reason back to "Starting". Multi-source runs
+// exactly one pod (parallelism=1, completions=1) and has no pod-deletion
+// logic of its own, so the crashed pod object persists as Phase=Failed
+// alongside the replacement — a real, non-instantaneous window, not a race.
+func TestReconcileBatchMultiSource_CrashRetryDoesNotRegressReasonToStarting(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	fixed := metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	pi.Status.ExecutionStartTime = &fixed
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: pi.Name + "-job", Namespace: pi.Namespace},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+	failedPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ms-batch-pi-pod-1",
+			Namespace: pi.Namespace,
+			Labels:    map[string]string{"filter.plainsight.ai/instance": string(pi.UID)},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed},
+	}
+	retryPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ms-batch-pi-pod-2",
+			Namespace: pi.Namespace,
+			Labels:    map[string]string{"filter.plainsight.ai/instance": string(pi.UID)},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	r := newMSReconciler(t, pi, job, failedPod, retryPod)
+
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != "Processing" {
+		t.Errorf("expected Progressing/Processing to stay sticky during crash-retry (no live Running/Succeeded pod), got %+v", cond)
+	}
+	if updated.Status.ExecutionStartTime == nil || !updated.Status.ExecutionStartTime.Time.Equal(fixed.Time) {
+		t.Errorf("expected ExecutionStartTime unchanged during crash-retry, got %v want %v", updated.Status.ExecutionStartTime, fixed.Time)
 	}
 }
 

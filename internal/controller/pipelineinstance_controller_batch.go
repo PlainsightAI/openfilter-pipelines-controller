@@ -209,13 +209,44 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 		return ctrl.Result{}, nil
 	}
 
-	// Set Progressing condition
-	stampExecStart := pipelineInstance.Status.ExecutionStartTime == nil
+	// Set Progressing condition. A Job existing is not evidence that a pod
+	// has actually started (PLAT-1597) — a pod can sit Pending/Unschedulable
+	// indefinitely. Distinguish that from genuine processing via Reason,
+	// without changing Progressing's Status (still True either way, so no
+	// consumer that only checks Status==True sees any change).
+	podStartedLive, podErr := r.anyPodStarted(ctx, pipelineInstance)
+	failOpen := false
+	if podErr != nil {
+		log.Error(podErr, "Failed to determine pod-started state; defaulting condition to Processing")
+		if r.Recorder != nil {
+			r.Recorder.Eventf(pipelineInstance, corev1.EventTypeWarning, "PodStatusListDegraded",
+				"Could not list pods to confirm processing state: %v", podErr)
+		}
+		failOpen = true
+	}
+
+	// alreadyStarted makes the Reason sticky: once a pod has ever been
+	// confirmed running, a later crash-and-retry (BackoffLimit) can leave
+	// every currently-live pod Pending/Failed for a real, observable window
+	// (not just an instantaneous race) without regressing Reason back to
+	// "Starting" under a status that already has ExecutionStartTime set.
+	alreadyStarted := pipelineInstance.Status.ExecutionStartTime != nil
+	podStarted := podStartedLive || alreadyStarted
+
+	// ExecutionStartTime only ever stamps on confirmed live evidence, never
+	// on the fail-open path — otherwise a single transient pod-list error
+	// while ExecutionStartTime is still nil would permanently latch
+	// podStarted=true (via alreadyStarted) on zero evidence.
+	stampExecStart := podStartedLive && !alreadyStarted
 	if stampExecStart {
 		now := metav1.Now()
 		pipelineInstance.Status.ExecutionStartTime = &now
 	}
-	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Processing", "Pipeline is processing files")
+	if podStarted || failOpen {
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Processing", "Pipeline is processing files")
+	} else {
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Starting", "Waiting for pipeline pod to start")
+	}
 
 	if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to update status")
@@ -885,6 +916,36 @@ func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context
 		result = fmt.Sprintf("%s; (+%d more)", result, dropped)
 	}
 	return result
+}
+
+// anyPodStarted reports whether at least one pod belonging to this batch
+// PipelineInstance has actually started a container (PodRunning) or already
+// finished doing so (PodSucceeded). A Job existing is not evidence of this:
+// a Job can sit with zero pods, or with only Pending/Unschedulable pods,
+// indefinitely (PLAT-1597). PodSucceeded counts as "started" — a pod that
+// already finished processing a file unambiguously ran a container, and
+// once true for an instance this stays true forever since completed pods
+// are never deleted for successful runs (only crashed/start-failed ones
+// are, in handleFailedPodMessage).
+//
+// Callers must treat a non-nil error as "unknown, not false": see the
+// call sites in reconcileBatch / reconcileBatchMultiSource for how the
+// ambiguity is resolved (fail open on the condition Reason, but never
+// stamp ExecutionStartTime on unconfirmed evidence).
+func (r *PipelineInstanceReconciler) anyPodStarted(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (bool, error) {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
+		"filter.plainsight.ai/instance": pipelineInstance.GetInstanceID(),
+	}); err != nil {
+		return false, fmt.Errorf("failed to list pods: %w", err)
+	}
+	for i := range podList.Items {
+		phase := podList.Items[i].Status.Phase
+		if phase == corev1.PodRunning || phase == corev1.PodSucceeded {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // handleCompletedPods processes pods that have completed (succeeded or failed)

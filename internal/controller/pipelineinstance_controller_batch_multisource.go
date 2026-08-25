@@ -191,18 +191,41 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 	// Processing has already been recorded, changed is false forever for
 	// this instance, so the stamp is decoupled into its own condition
 	// (stampExecStart) that also forces the Status().Update below.
-	stampExecStart := pipelineInstance.Status.ExecutionStartTime == nil
+	//
+	// A Job existing is not evidence that its (single) pod has actually
+	// started (PLAT-1597) — it can sit Pending/Unschedulable indefinitely.
+	// Distinguish via Reason the same way reconcileBatch does; see
+	// anyPodStarted's doc comment (pipelineinstance_controller_batch.go)
+	// for the sticky/fail-open rationale, which applies identically here.
+	podStartedLive, podErr := r.anyPodStarted(ctx, pipelineInstance)
+	failOpen := false
+	if podErr != nil {
+		log.Error(podErr, "Failed to determine pod-started state; defaulting condition to Processing")
+		if r.Recorder != nil {
+			r.Recorder.Eventf(pipelineInstance, corev1.EventTypeWarning, "PodStatusListDegraded",
+				"Could not list pods to confirm processing state: %v", podErr)
+		}
+		failOpen = true
+	}
+	alreadyStarted := pipelineInstance.Status.ExecutionStartTime != nil
+	podStarted := podStartedLive || alreadyStarted
+
+	stampExecStart := podStartedLive && !alreadyStarted
 	if stampExecStart {
 		now := metav1.Now()
 		pipelineInstance.Status.ExecutionStartTime = &now
+	}
+	reason, message := "Processing", "Multi-source batch Job is running"
+	if !podStarted && !failOpen {
+		reason, message = "Starting", "Waiting for pipeline pod to start"
 	}
 	changed := meta.SetStatusCondition(&pipelineInstance.Status.Conditions, metav1.Condition{
 		Type:               ConditionTypeProgressing,
 		Status:             metav1.ConditionTrue,
 		ObservedGeneration: pipelineInstance.Generation,
 		LastTransitionTime: metav1.Now(),
-		Reason:             "Processing",
-		Message:            "Multi-source batch Job is running",
+		Reason:             reason,
+		Message:            message,
 	})
 	if changed || stampExecStart {
 		if err := r.Status().Update(ctx, pipelineInstance); err != nil {

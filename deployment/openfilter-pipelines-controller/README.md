@@ -164,6 +164,29 @@ helm upgrade openfilter-pipelines-controller deployment/openfilter-pipelines-con
   --set controller.metrics.enabled=false
 ```
 
+### CRD upgrades on bare Helm installs
+
+Helm's `crds/` directory (`deployment/openfilter-pipelines-controller/crds/`) is only
+applied on the initial `helm install`; `helm upgrade` never updates existing CRDs, even
+when the chart's `crds/*.yaml` files changed in the new release. This is standard Helm
+behavior, not a bug in this chart.
+
+If you manage this chart with **bare Helm** (no ArgoCD or similar GitOps CRD sync), you
+must manually re-apply the CRDs whenever a release changes them, before or alongside the
+`helm upgrade`:
+
+```bash
+kubectl apply -f deployment/openfilter-pipelines-controller/crds/
+```
+
+Skipping this step after a release that changes `crds/*.yaml` means the controller can
+run against a stale CRD schema, silently dropping any new fields (e.g. new `status`
+subresource fields) the API server does not yet know about.
+
+**ArgoCD-managed environments (dev/staging/production in this fleet) are not affected:**
+ArgoCD reconciles CRDs on every sync through its own CRD sync path, independent of Helm's
+install-only behavior.
+
 ## Uninstalling
 
 ```bash

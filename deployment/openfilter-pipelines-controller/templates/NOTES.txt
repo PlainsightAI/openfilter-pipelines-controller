@@ -45,6 +45,11 @@ Custom Resources:
   - pipelinesources.filter.plainsight.ai
   - pipelineinstances.filter.plainsight.ai
 
+  NOTE: Helm does not upgrade CRDs on `helm upgrade`. If a future release
+  changes the CRDs and you are not managing this chart with ArgoCD, manually
+  re-apply them: kubectl apply -f deployment/openfilter-pipelines-controller/crds/
+  See the README's "CRD upgrades on bare Helm installs" section for details.
+
   Create a sample Pipeline:
   $ kubectl apply -f - <<EOF
   apiVersion: filter.plainsight.ai/v1alpha1

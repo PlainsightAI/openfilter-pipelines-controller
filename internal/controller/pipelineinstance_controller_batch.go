@@ -210,11 +210,19 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 	}
 
 	// Set Progressing condition
+	stampExecStart := pipelineInstance.Status.ExecutionStartTime == nil
+	if stampExecStart {
+		now := metav1.Now()
+		pipelineInstance.Status.ExecutionStartTime = &now
+	}
 	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Processing", "Pipeline is processing files")
 
 	if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to update status")
 		return ctrl.Result{}, err
+	}
+	if stampExecStart {
+		log.Info("PipelineInstance execution started", "executionStartTime", pipelineInstance.Status.ExecutionStartTime)
 	}
 
 	// Requeue for periodic status updates

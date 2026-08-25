@@ -204,6 +204,40 @@ type PipelineInstanceStatus struct {
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 
+	// executionStartTime is stamped once, at the first reconcile pass that durably persists the
+	// observation that batch execution began (Progressing=True/Reason=Processing). Under
+	// status-write retry, the persisted timestamp may reflect the retry time rather than the
+	// exact original observation, bounded by normal reconcile-retry backoff; this mirrors the
+	// existing startTime field's behavior.
+	//
+	// Durability contract: the value is stable across ordinary reconciles and controller
+	// restarts of a controller version that knows this field. It is NOT unconditionally
+	// permanent: every status write in this controller is a full-object Update, not a Patch, so
+	// a rollback to a controller binary built before this field existed would silently wipe it
+	// on that binary's next status write (no error). A subsequent reconcile by a version-aware
+	// controller re-stamps it as a fresh backfill, per the migration/backfill semantics below,
+	// not a restoration of the original value. A future consumer should treat this field as
+	// monotonic-within-a-controller-version, not as never-regressing across arbitrary
+	// downgrade/re-upgrade cycles.
+	//
+	// Migration/backfill case: for an instance that was already Progressing=True/Processing
+	// before this field existed (e.g. a controller upgrade landing mid-execution), the first
+	// reconcile pass under the new controller stamps the current time, not the true original
+	// transition time. Unlike the retry case above, this gap is NOT bounded by reconcile-retry
+	// backoff and can be arbitrarily large, up to however long the instance had already been
+	// executing. It is a one-time backfill, not a recurring drift: once stamped, the value is
+	// stable for that instance's remaining lifetime. The direction is an over-grant (a consumer
+	// computing a deadline from this value grants more time than the policy intends for that one
+	// migrated instance), the opposite of the under-grant risk that ruled out anchoring this
+	// field on startTime or the Job's own status.startTime instead. A migrated instance may also
+	// show executionStartTime landing very close to completionTime despite a long true execution,
+	// since a Job-completion event triggers the next reconcile within seconds of the backfill
+	// stamp.
+	//
+	// Streaming pipelines do not set this field.
+	// +optional
+	ExecutionStartTime *metav1.Time `json:"executionStartTime,omitempty"`
+
 	// conditions represent the current state of the PipelineInstance resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//

@@ -12,14 +12,18 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
@@ -458,6 +462,171 @@ func TestReconcileBatchMultiSource_JobProgressingStaysProgressing(t *testing.T) 
 	}
 	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeSucceeded); cond.Status == metav1.ConditionTrue {
 		t.Errorf("Succeeded must not be True while Job is still active, got %+v", cond)
+	}
+}
+
+// newMSReconcilerWithFailingJobCreate wires a reconciler like newMSReconciler,
+// but intercepts Create calls for batchv1.Job objects and fails them,
+// simulating the JobCreationFailed branch (kube-apiserver rejects the Job,
+// e.g. admission webhook or quota) so tests can drive the "PipelineInstance
+// never reaches Processing" path deterministically.
+func newMSReconcilerWithFailingJobCreate(t *testing.T, pi *pipelinesv1alpha1.PipelineInstance) *PipelineInstanceReconciler {
+	t.Helper()
+	sch := reconcileSpanScheme(t)
+	base := fake.NewClientBuilder().
+		WithScheme(sch).
+		WithStatusSubresource(&pipelinesv1alpha1.PipelineInstance{}).
+		WithObjects(pi).
+		Build()
+	wrapped := interceptor.NewClient(base, interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*batchv1.Job); ok {
+				return fmt.Errorf("simulated job create failure")
+			}
+			return c.Create(ctx, obj, opts...)
+		},
+	})
+	return &PipelineInstanceReconciler{
+		Client:       wrapped,
+		Scheme:       sch,
+		ClaimerImage: "claimer:test",
+	}
+}
+
+// TestReconcileBatchMultiSource_FirstProcessingPassStampsExecutionStartTime
+// pins the happy path for the ExecutionStartTime anchor (PLAT-1570):
+// ExecutionStartTime is nil before the first reconcile, and the first pass
+// that reaches Processing (here, the Job-create pass itself, since a freshly
+// created Job has no Status.Conditions yet and so falls through to the
+// "still progressing" branch in the same call) stamps a non-nil value,
+// verified via a fresh re-Get so the assertion proves Status().Update
+// actually persisted the field.
+func TestReconcileBatchMultiSource_FirstProcessingPassStampsExecutionStartTime(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	if pi.Status.ExecutionStartTime != nil {
+		t.Fatalf("expected ExecutionStartTime nil before first reconcile")
+	}
+	r := newMSReconciler(t, pi)
+
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if updated.Status.ExecutionStartTime == nil {
+		t.Fatalf("expected ExecutionStartTime to be stamped on first reconcile pass that reaches Processing")
+	}
+}
+
+// TestReconcileBatchMultiSource_RegressionStampsExecutionStartTimeWhenProcessingAlreadyRecorded
+// is the critical regression test for the bug this PR fixes: once
+// Progressing/Processing has already been recorded with the exact
+// Status/Reason/Message/ObservedGeneration the reconciler itself would
+// produce, meta.SetStatusCondition's `changed` return is false forever for
+// this instance. Before the fix, ExecutionStartTime rode solely on that
+// `changed` gate and so would never be persisted for an instance that
+// reaches this code already past its first Processing transition (e.g. any
+// instance already mid-execution when this feature ships). The fix decouples
+// the stamp into its own `stampExecStart` condition that also forces the
+// Status().Update. Without that fix, this test fails (verified via mutation
+// testing — see the task report).
+func TestReconcileBatchMultiSource_RegressionStampsExecutionStartTimeWhenProcessingAlreadyRecorded(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	now := metav1.Now()
+	pi.Status.StartTime = &now
+	// Pre-seed Progressing already at Status=True/Reason=Processing with the
+	// exact Message/ObservedGeneration the reconciler itself would produce,
+	// so meta.SetStatusCondition genuinely reports changed=false.
+	pi.Status.Conditions = []metav1.Condition{
+		{
+			Type:               ConditionTypeProgressing,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: pi.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "Processing",
+			Message:            "Multi-source batch Job is running",
+		},
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: pi.Name + "-job", Namespace: pi.Namespace},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+	r := newMSReconciler(t, pi, job)
+
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if updated.Status.ExecutionStartTime == nil {
+		t.Fatalf("expected ExecutionStartTime to be stamped even though Progressing/Processing was already recorded (changed=false)")
+	}
+}
+
+// TestReconcileBatchMultiSource_ExecutionStartTimeUnchangedOnSecondPass pins
+// the stamp-once invariant: a second reconcile pass with the Job still
+// running leaves a pre-seeded ExecutionStartTime byte-identical, not just
+// non-nil.
+func TestReconcileBatchMultiSource_ExecutionStartTimeUnchangedOnSecondPass(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	now := metav1.Now()
+	pi.Status.StartTime = &now
+	fixed := metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	pi.Status.ExecutionStartTime = &fixed
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: pi.Name + "-job", Namespace: pi.Namespace},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+	r := newMSReconciler(t, pi, job)
+
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if updated.Status.ExecutionStartTime == nil {
+		t.Fatalf("expected ExecutionStartTime to remain set")
+	}
+	if !updated.Status.ExecutionStartTime.Time.Equal(fixed.Time) {
+		t.Errorf("expected ExecutionStartTime unchanged, got %v want %v", updated.Status.ExecutionStartTime.Time, fixed.Time)
+	}
+}
+
+// TestReconcileBatchMultiSource_JobCreationFailedLeavesExecutionStartTimeNil
+// pins the intentional non-stamp case: when Job creation fails, StartTime
+// still gets set (batch-phase anchor, unrelated to execution) but the
+// reconcile returns before ever reaching the Processing branch, so
+// ExecutionStartTime must stay nil — a run that never started executing
+// shouldn't get an execution-start timestamp.
+func TestReconcileBatchMultiSource_JobCreationFailedLeavesExecutionStartTimeNil(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	r := newMSReconcilerWithFailingJobCreate(t, pi)
+
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err == nil {
+		t.Fatalf("expected error from simulated Job create failure")
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if updated.Status.StartTime == nil {
+		t.Errorf("expected StartTime to still be stamped even though Job creation failed")
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeDegraded); cond.Reason != "JobCreationFailed" {
+		t.Errorf("expected Degraded/JobCreationFailed, got %+v", cond)
+	}
+	if updated.Status.ExecutionStartTime != nil {
+		t.Errorf("expected ExecutionStartTime to stay nil when reconcile never reaches Processing, got %v", updated.Status.ExecutionStartTime)
 	}
 }
 

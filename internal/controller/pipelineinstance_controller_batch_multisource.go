@@ -186,6 +186,16 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 	// skip the status write when the condition is already in this exact
 	// state (meta.SetStatusCondition reports whether anything changed), so
 	// the steady-state loop doesn't issue a no-op API write every 30s.
+	//
+	// ExecutionStartTime must NOT ride solely on that `changed` gate: once
+	// Processing has already been recorded, changed is false forever for
+	// this instance, so the stamp is decoupled into its own condition
+	// (stampExecStart) that also forces the Status().Update below.
+	stampExecStart := pipelineInstance.Status.ExecutionStartTime == nil
+	if stampExecStart {
+		now := metav1.Now()
+		pipelineInstance.Status.ExecutionStartTime = &now
+	}
 	changed := meta.SetStatusCondition(&pipelineInstance.Status.Conditions, metav1.Condition{
 		Type:               ConditionTypeProgressing,
 		Status:             metav1.ConditionTrue,
@@ -194,10 +204,13 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 		Reason:             "Processing",
 		Message:            "Multi-source batch Job is running",
 	})
-	if changed {
+	if changed || stampExecStart {
 		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 			log.Error(err, "Failed to update status")
 			return ctrl.Result{}, err
+		}
+		if stampExecStart {
+			log.Info("PipelineInstance execution started", "executionStartTime", pipelineInstance.Status.ExecutionStartTime)
 		}
 	}
 	return ctrl.Result{RequeueAfter: StatusUpdateInterval}, nil

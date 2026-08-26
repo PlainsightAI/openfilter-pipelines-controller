@@ -90,9 +90,10 @@ The chart no longer installs any per-workload ServiceAccounts for pipeline execu
 | `crds.keep` | Keep CRDs on chart uninstall | `true` |
 
 **Currently informational, not wired up:** no template in this chart reads
-`.Values.crds`. Helm always applies `crds/` on `helm install` and never deletes CRDs on
-`helm uninstall`, regardless of these values. See "CRD upgrades on bare Helm installs"
-below for the related `helm upgrade` behavior.
+`.Values.crds`. Helm always applies `crds/` on `helm install` (unless `--skip-crds` is
+passed, which skips CRD application entirely) and never deletes CRDs on `helm
+uninstall`, regardless of these values. See "CRD upgrades on bare Helm installs" below
+for the related `helm upgrade` behavior.
 
 ### Controller Settings
 

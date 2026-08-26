@@ -49,7 +49,7 @@ Custom Resources:
   changes the CRDs and you are not managing this chart with ArgoCD, manually
   re-apply them:
   $ helm show crds oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
-      --version <version> | kubectl apply -f -
+      --version {{ .Chart.Version }} | kubectl apply -f -
   See the README's "CRD upgrades on bare Helm installs" section for details.
 
   Create a sample Pipeline:

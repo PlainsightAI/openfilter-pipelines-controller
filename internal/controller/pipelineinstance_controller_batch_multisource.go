@@ -266,9 +266,13 @@ func (r *PipelineInstanceReconciler) updateMultiSourceBatchProgressingCondition(
 		now := metav1.Now()
 		pipelineInstance.Status.ExecutionStartTime = &now
 	}
-	reason, message := ReasonProcessing, "Multi-source batch Job is running"
-	if !podStarted && !failOpen {
-		reason, message = ReasonStarting, "Waiting for pipeline pod to start"
+	// Predicate written in the affirmative (podStarted || failOpen) to match
+	// updateBatchProgressingCondition's form (pipelineinstance_controller_batch.go)
+	// — same logic as the De Morgan-equivalent !podStarted && !failOpen, kept in
+	// one form across both paths so they're easy to compare.
+	reason, message := ReasonStarting, "Waiting for pipeline pod to start"
+	if podStarted || failOpen {
+		reason, message = ReasonProcessing, "Multi-source batch Job is running"
 	}
 	changed := meta.SetStatusCondition(&pipelineInstance.Status.Conditions, metav1.Condition{
 		Type:               ConditionTypeProgressing,

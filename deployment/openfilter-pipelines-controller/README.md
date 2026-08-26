@@ -89,6 +89,11 @@ The chart no longer installs any per-workload ServiceAccounts for pipeline execu
 | `crds.install` | Install CRDs with the chart | `true` |
 | `crds.keep` | Keep CRDs on chart uninstall | `true` |
 
+**Currently informational, not wired up:** no template in this chart reads
+`.Values.crds`. Helm always applies `crds/` on `helm install` and never deletes CRDs on
+`helm uninstall`, regardless of these values. See "CRD upgrades on bare Helm installs"
+below for the related `helm upgrade` behavior.
+
 ### Controller Settings
 
 | Parameter | Description | Default |
@@ -176,6 +181,11 @@ must manually re-apply the CRDs whenever a release changes them, before or along
 `helm upgrade`:
 
 ```bash
+# Installed from GHCR / a packaged chart:
+helm show crds oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
+  --version <version> | kubectl apply -f -
+
+# Installed from a local copy of this repository:
 kubectl apply -f deployment/openfilter-pipelines-controller/crds/
 ```
 
@@ -183,9 +193,10 @@ Skipping this step after a release that changes `crds/*.yaml` means the controll
 run against a stale CRD schema, silently dropping any new fields (e.g. new `status`
 subresource fields) the API server does not yet know about.
 
-**ArgoCD-managed environments (dev/staging/production in this fleet) are not affected:**
-ArgoCD reconciles CRDs on every sync through its own CRD sync path, independent of Helm's
-install-only behavior.
+**ArgoCD-managed installs are not affected:** ArgoCD renders the chart with `helm
+template`, which includes `crds/` in its output, and applies those manifests on every
+sync, so CRD changes are picked up automatically, unless the Application sets
+`helm.skipCrds: true`.
 
 ## Uninstalling
 

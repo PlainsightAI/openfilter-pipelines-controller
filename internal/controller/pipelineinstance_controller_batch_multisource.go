@@ -68,15 +68,8 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 	log := logf.FromContext(ctx)
 
 	// Validate every binding has the shape multi-source batch needs.
-	for _, b := range sourceBindings {
-		if b.Source == nil || b.Source.Spec.Bucket == nil {
-			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource to be a Bucket source (filter %q is not)", b.FilterName)
-			return r.degradeBatchValidation(ctx, pipelineInstance, ReasonMultiSourceBatchInvalidSource, msg)
-		}
-		if bindingObjectKey(b) == "" {
-			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource Bucket.Prefix to name a full object key; %q has an empty prefix", b.FilterName)
-			return r.degradeBatchValidation(ctx, pipelineInstance, ReasonMultiSourceBatchMissingObject, msg)
-		}
+	if result, err, handled := r.validateMultiSourceBatchBindings(ctx, pipelineInstance, sourceBindings); handled {
+		return result, err
 	}
 
 	// Validation passed — clear any stale Degraded condition a previous
@@ -107,24 +100,8 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 	// Idempotent Job ensure: if the Job already exists we just observe
 	// its status; if not, build and create.
 	job := &batchv1.Job{}
-	getErr := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: pipelineInstance.Namespace}, job)
-	switch {
-	case apierrors.IsNotFound(getErr):
-		desired := r.buildMultiSourceBatchJob(ctx, pipelineInstance, pipeline, sourceBindings, jobName)
-		if err := controllerutil.SetControllerReference(pipelineInstance, desired, r.Scheme); err != nil {
-			return ctrl.Result{}, fmt.Errorf("set owner ref on job: %w", err)
-		}
-		if err := r.Create(ctx, desired); err != nil {
-			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "JobCreationFailed", err.Error())
-			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
-				log.Error(statusErr, "Failed to update status after job create failure")
-			}
-			return ctrl.Result{}, fmt.Errorf("create job: %w", err)
-		}
-		pipelineInstance.Status.JobName = jobName
-		log.Info("Created multi-source batch Job", "job", jobName, "bindings", len(sourceBindings))
-	case getErr != nil:
-		return ctrl.Result{}, fmt.Errorf("get job: %w", getErr)
+	if handled, err := r.ensureMultiSourceBatchJob(ctx, pipelineInstance, pipeline, sourceBindings, jobName, job); handled {
+		return ctrl.Result{}, err
 	}
 
 	// Observe Job status. We translate the Job's terminal state into
@@ -133,6 +110,76 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 	if pipelineInstance.Status.JobName == "" {
 		pipelineInstance.Status.JobName = jobName
 	}
+	if handled, err := r.checkMultiSourceBatchJobTerminal(ctx, pipelineInstance, job); handled {
+		return ctrl.Result{}, err
+	}
+
+	// Still progressing. See updateMultiSourceBatchProgressingCondition for the
+	// skip-the-no-op-write and ExecutionStartTime-stamping rationale.
+	return r.updateMultiSourceBatchProgressingCondition(ctx, pipelineInstance)
+}
+
+// validateMultiSourceBatchBindings checks that every binding has the shape multi-source
+// batch requires: a Bucket-backed PipelineSource whose Bucket.Prefix names a full object
+// key. On the first invalid binding it degrades the instance with an operator-actionable
+// message and reports handled=true, meaning the caller must return the accompanying
+// (result, err) immediately without further processing this reconcile pass.
+func (r *PipelineInstanceReconciler) validateMultiSourceBatchBindings(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, sourceBindings []ResolvedSourceBinding) (ctrl.Result, error, bool) {
+	for _, b := range sourceBindings {
+		if b.Source == nil || b.Source.Spec.Bucket == nil {
+			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource to be a Bucket source (filter %q is not)", b.FilterName)
+			result, err := r.degradeBatchValidation(ctx, pipelineInstance, ReasonMultiSourceBatchInvalidSource, msg)
+			return result, err, true
+		}
+		if bindingObjectKey(b) == "" {
+			msg := fmt.Sprintf("multi-source batch requires every binding's PipelineSource Bucket.Prefix to name a full object key; %q has an empty prefix", b.FilterName)
+			result, err := r.degradeBatchValidation(ctx, pipelineInstance, ReasonMultiSourceBatchMissingObject, msg)
+			return result, err, true
+		}
+	}
+	return ctrl.Result{}, nil, false
+}
+
+// ensureMultiSourceBatchJob idempotently ensures the multi-source batch Job exists: if it
+// already exists, job is populated with its current state for the caller to observe; if
+// not, it is built from the current bindings and created. job must be a non-nil, freshly
+// allocated *batchv1.Job — it is populated in place by the Get call. handled=true means the
+// caller must return immediately with ctrl.Result{} and the accompanying error.
+func (r *PipelineInstanceReconciler) ensureMultiSourceBatchJob(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, pipeline *pipelinesv1alpha1.Pipeline, sourceBindings []ResolvedSourceBinding, jobName string, job *batchv1.Job) (handled bool, err error) {
+	log := logf.FromContext(ctx)
+
+	getErr := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: pipelineInstance.Namespace}, job)
+	switch {
+	case apierrors.IsNotFound(getErr):
+		desired := r.buildMultiSourceBatchJob(ctx, pipelineInstance, pipeline, sourceBindings, jobName)
+		if err := controllerutil.SetControllerReference(pipelineInstance, desired, r.Scheme); err != nil {
+			return true, fmt.Errorf("set owner ref on job: %w", err)
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, "JobCreationFailed", err.Error())
+			if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
+				log.Error(statusErr, "Failed to update status after job create failure")
+			}
+			return true, fmt.Errorf("create job: %w", err)
+		}
+		pipelineInstance.Status.JobName = jobName
+		log.Info("Created multi-source batch Job", "job", jobName, "bindings", len(sourceBindings))
+	case getErr != nil:
+		return true, fmt.Errorf("get job: %w", getErr)
+	}
+	return false, nil
+}
+
+// checkMultiSourceBatchJobTerminal inspects the Job's status conditions for a terminal
+// outcome (JobComplete/JobSuccessCriteriaMet or JobFailed/JobFailureTarget) and, if found,
+// sets the corresponding Succeeded/Degraded conditions (enriching a failure message with the
+// claimer/filter's real error when available, PLAT-1353), stamps CompletionTime, and persists
+// status. handled=true means the caller must return immediately with ctrl.Result{} and the
+// accompanying error; handled=false means the Job is still running and the caller should
+// fall through to the Progressing-condition update.
+func (r *PipelineInstanceReconciler) checkMultiSourceBatchJobTerminal(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, job *batchv1.Job) (handled bool, err error) {
+	log := logf.FromContext(ctx)
+
 	for _, c := range job.Status.Conditions {
 		if c.Status != corev1.ConditionTrue {
 			continue
@@ -147,9 +194,9 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 			}
 			if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to update status after Job success")
-				return ctrl.Result{}, err
+				return true, err
 			}
-			return ctrl.Result{}, nil
+			return true, nil
 		case batchv1.JobFailed, batchv1.JobFailureTarget:
 			reason := c.Reason
 			if reason == "" {
@@ -176,27 +223,31 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 			}
 			if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 				log.Error(err, "Failed to update status after Job failure")
-				return ctrl.Result{}, err
+				return true, err
 			}
-			return ctrl.Result{}, nil
+			return true, nil
 		}
 	}
+	return false, nil
+}
 
-	// Still progressing. This branch re-runs every StatusUpdateInterval —
-	// skip the status write when the condition is already in this exact
-	// state (meta.SetStatusCondition reports whether anything changed), so
-	// the steady-state loop doesn't issue a no-op API write every 30s.
-	//
-	// ExecutionStartTime must NOT ride solely on that `changed` gate: once
-	// Processing has already been recorded, changed is false forever for
-	// this instance, so the stamp is decoupled into its own condition
-	// (stampExecStart) that also forces the Status().Update below.
-	//
-	// A Job existing is not evidence that its (single) pod has actually
-	// started (PLAT-1597) — it can sit Pending/Unschedulable indefinitely.
-	// Distinguish via Reason the same way reconcileBatch does; see
-	// anyPodStarted's doc comment (pipelineinstance_controller_batch.go)
-	// for the sticky/fail-open rationale, which applies identically here.
+// updateMultiSourceBatchProgressingCondition re-runs every StatusUpdateInterval while the
+// Job is still running. It skips the status write when the condition is already in this
+// exact state (meta.SetStatusCondition reports whether anything changed), so the
+// steady-state loop doesn't issue a no-op API write every 30s.
+//
+// ExecutionStartTime must NOT ride solely on that `changed` gate: once Processing has
+// already been recorded, changed is false forever for this instance, so the stamp is
+// decoupled into its own condition (stampExecStart) that also forces the Status().Update
+// below.
+//
+// A Job existing is not evidence that its (single) pod has actually started (PLAT-1597) —
+// it can sit Pending/Unschedulable indefinitely. Distinguish via Reason the same way
+// reconcileBatch does; see anyPodStarted's doc comment (pipelineinstance_controller_batch.go)
+// for the sticky/fail-open rationale, which applies identically here.
+func (r *PipelineInstanceReconciler) updateMultiSourceBatchProgressingCondition(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
 	podStartedLive, podErr := r.anyPodStarted(ctx, pipelineInstance)
 	failOpen := false
 	if podErr != nil {
@@ -215,9 +266,9 @@ func (r *PipelineInstanceReconciler) reconcileBatchMultiSource(ctx context.Conte
 		now := metav1.Now()
 		pipelineInstance.Status.ExecutionStartTime = &now
 	}
-	reason, message := "Processing", "Multi-source batch Job is running"
+	reason, message := ReasonProcessing, "Multi-source batch Job is running"
 	if !podStarted && !failOpen {
-		reason, message = "Starting", "Waiting for pipeline pod to start"
+		reason, message = ReasonStarting, "Waiting for pipeline pod to start"
 	}
 	changed := meta.SetStatusCondition(&pipelineInstance.Status.Conditions, metav1.Condition{
 		Type:               ConditionTypeProgressing,

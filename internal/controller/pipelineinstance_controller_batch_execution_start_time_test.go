@@ -185,7 +185,7 @@ func TestReconcileBatch_FirstProcessingPassStampsExecutionStartTime(t *testing.T
 	if updated.Status.ExecutionStartTime == nil {
 		t.Fatalf("expected ExecutionStartTime to be stamped on first reconcile pass that reaches Processing")
 	}
-	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != "Processing" {
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != ReasonProcessing {
 		t.Errorf("expected Progressing/Processing, got %+v", cond)
 	}
 }
@@ -270,7 +270,7 @@ func TestReconcileBatch_PendingPodReasonStarting(t *testing.T) {
 	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
 		t.Fatalf("re-fetch PI: %v", err)
 	}
-	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != "Starting" {
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != ReasonStarting {
 		t.Errorf("expected Progressing/Starting for a Pending pod, got %+v", cond)
 	}
 	if updated.Status.ExecutionStartTime != nil {
@@ -293,7 +293,7 @@ func TestReconcileBatch_NoPodsYetReasonStarting(t *testing.T) {
 	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
 		t.Fatalf("re-fetch PI: %v", err)
 	}
-	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != "Starting" {
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != ReasonStarting {
 		t.Errorf("expected Progressing/Starting with zero pods, got %+v", cond)
 	}
 	if updated.Status.ExecutionStartTime != nil {
@@ -338,7 +338,7 @@ func TestReconcileBatch_CrashRetryDoesNotRegressReasonToStarting(t *testing.T) {
 	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
 		t.Fatalf("re-fetch PI: %v", err)
 	}
-	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != "Processing" {
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != ReasonProcessing {
 		t.Errorf("expected Progressing/Processing to stay sticky during crash-retry (no live Running/Succeeded pod), got %+v", cond)
 	}
 	if updated.Status.ExecutionStartTime == nil || !updated.Status.ExecutionStartTime.Time.Equal(fixed.Time) {

@@ -107,6 +107,18 @@ const (
 	// the fallback via `kubectl describe` / `kubectl get events`, not only the controller log.
 	ReasonInvalidSourcePath = "InvalidSourcePath"
 
+	// Progressing condition reasons (PLAT-1597). Shared across the batch,
+	// multi-source batch, and streaming reconcile paths so the Reason a
+	// pipeline reports while making progress can't drift between them.
+	//
+	// ReasonProcessing marks a Progressing condition once at least one pod has
+	// actually started a container (or a transient pod-list error is being
+	// failed open). ReasonStarting marks a Progressing condition while a Job/Pod
+	// exists but no pod has confirmed started yet — a Job existing is not
+	// evidence a pod has scheduled; it can sit Pending/Unschedulable indefinitely.
+	ReasonProcessing = "Processing"
+	ReasonStarting   = "Starting"
+
 	// Reconciliation intervals
 	StatusUpdateInterval = 30 * time.Second
 

@@ -196,7 +196,7 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Running", "Stream is processing")
 			// Note: We don't set Available=True for streaming runs as they run indefinitely
 		} else {
-			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Starting", "Waiting for stream to become ready")
+			r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, ReasonStarting, "Waiting for stream to become ready")
 		}
 	}
 

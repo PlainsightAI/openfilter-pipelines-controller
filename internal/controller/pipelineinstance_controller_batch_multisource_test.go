@@ -21,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -495,6 +496,90 @@ func newMSReconcilerWithFailingJobCreate(t *testing.T, pi *pipelinesv1alpha1.Pip
 	}
 }
 
+// newMSReconcilerWithFailingPodList wires a reconciler like newMSReconciler,
+// except every List against *corev1.PodList is intercepted to return a
+// simulated error — the only way to exercise anyPodStarted's fail-open path
+// against the fake client. A record.FakeRecorder is attached so the
+// accompanying PodStatusListDegraded warning event can be asserted too:
+// neither this helper nor newBatchReconciler otherwise sets Recorder, so the
+// `r.Recorder != nil` guard is only ever exercised on its nil side.
+func newMSReconcilerWithFailingPodList(t *testing.T, objects ...interface{}) (*PipelineInstanceReconciler, *record.FakeRecorder) {
+	t.Helper()
+	sch := reconcileSpanScheme(t)
+
+	builder := fake.NewClientBuilder().
+		WithScheme(sch).
+		WithStatusSubresource(&pipelinesv1alpha1.PipelineInstance{})
+	for _, o := range objects {
+		switch obj := o.(type) {
+		case *pipelinesv1alpha1.PipelineInstance:
+			builder = builder.WithObjects(obj)
+		case *pipelinesv1alpha1.Pipeline:
+			builder = builder.WithObjects(obj)
+		case *batchv1.Job:
+			builder = builder.WithObjects(obj)
+		case *corev1.Pod:
+			builder = builder.WithObjects(obj)
+		default:
+			t.Fatalf("unsupported seed object type %T", obj)
+		}
+	}
+	wrapped := interceptor.NewClient(builder.Build(), interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*corev1.PodList); ok {
+				return fmt.Errorf("simulated pod list failure")
+			}
+			return c.List(ctx, list, opts...)
+		},
+	})
+	recorder := record.NewFakeRecorder(10)
+	return &PipelineInstanceReconciler{
+		Client:       wrapped,
+		Scheme:       sch,
+		ClaimerImage: "claimer:test",
+		Recorder:     recorder,
+	}, recorder
+}
+
+// TestReconcileBatchMultiSource_PodListErrorFailsOpenToProcessing covers the
+// fail-open branch flagged in review as untested: when anyPodStarted's pod
+// List call itself errors, reconcileBatchMultiSource must not treat that as
+// "not started" — it fails open to Reason=Processing (never Starting) while
+// still withholding ExecutionStartTime, and emits a PodStatusListDegraded
+// warning Event so the ambiguity is operator-visible.
+func TestReconcileBatchMultiSource_PodListErrorFailsOpenToProcessing(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: pi.Name + "-job", Namespace: pi.Namespace},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+	r, recorder := newMSReconcilerWithFailingPodList(t, pi, job)
+
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("expected nil error (fail-open, not fail-closed), got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != ReasonProcessing {
+		t.Errorf("expected Progressing/Processing (fail-open) when the pod list errors, got %+v", cond)
+	}
+	if updated.Status.ExecutionStartTime != nil {
+		t.Errorf("expected ExecutionStartTime to stay nil on the fail-open path (no confirmed live evidence), got %v", updated.Status.ExecutionStartTime)
+	}
+
+	select {
+	case event := <-recorder.Events:
+		if !strings.Contains(event, "PodStatusListDegraded") {
+			t.Errorf("expected a PodStatusListDegraded event, got %q", event)
+		}
+	default:
+		t.Errorf("expected a PodStatusListDegraded event to be recorded, got none")
+	}
+}
+
 // TestReconcileBatchMultiSource_FirstProcessingPassStampsExecutionStartTime
 // pins the happy path for the ExecutionStartTime anchor (PLAT-1570):
 // ExecutionStartTime is nil before the first reconcile, and the first pass
@@ -667,6 +752,52 @@ func TestReconcileBatchMultiSource_PendingPodReasonStarting(t *testing.T) {
 	}
 	if updated.Status.ExecutionStartTime != nil {
 		t.Errorf("expected ExecutionStartTime to stay nil while no pod has started, got %v", updated.Status.ExecutionStartTime)
+	}
+}
+
+// TestReconcileBatchMultiSource_InitContainerRunningReasonProcessing is the
+// regression test for the init-container gap flagged in review: multi-source
+// direct mode runs one claimer init container per binding, sequentially,
+// each downloading a full media object — Kubernetes keeps the pod's overall
+// Phase at Pending for that entire window. A running init container is doing
+// real work and must not be reported as Starting.
+func TestReconcileBatchMultiSource_InitContainerRunningReasonProcessing(t *testing.T) {
+	pi, pipeline, bindings := makeMultiSourcePI(t)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: pi.Name + "-job", Namespace: pi.Namespace},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ms-batch-pi-pod",
+			Namespace: pi.Namespace,
+			Labels:    map[string]string{"filter.plainsight.ai/instance": string(pi.UID)},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			InitContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:  "claimer-0",
+					State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+				},
+			},
+		},
+	}
+	r := newMSReconciler(t, pi, job, pod)
+
+	if _, err := r.reconcileBatchMultiSource(context.Background(), pi, pipeline, bindings); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	updated := &pipelinesv1alpha1.PipelineInstance{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: pi.Name, Namespace: pi.Namespace}, updated); err != nil {
+		t.Fatalf("re-fetch PI: %v", err)
+	}
+	if cond := findCondition(t, updated.Status.Conditions, ConditionTypeProgressing); cond.Reason != ReasonProcessing {
+		t.Errorf("expected Progressing/Processing for a Pending pod with a running init container, got %+v", cond)
+	}
+	if updated.Status.ExecutionStartTime == nil {
+		t.Errorf("expected ExecutionStartTime to be stamped once a claimer init container is running")
 	}
 }
 

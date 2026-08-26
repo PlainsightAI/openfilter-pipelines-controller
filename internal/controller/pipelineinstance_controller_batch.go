@@ -943,10 +943,22 @@ func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context
 }
 
 // anyPodStarted reports whether at least one pod belonging to this batch
-// PipelineInstance has actually started a container (PodRunning) or already
-// finished doing so (PodSucceeded). A Job existing is not evidence of this:
-// a Job can sit with zero pods, or with only Pending/Unschedulable pods,
-// indefinitely (PLAT-1597). PodSucceeded counts as "started" — a pod that
+// PipelineInstance has actually started doing work: a container is running
+// (PodRunning), already finished (PodSucceeded), or — the case this must not
+// miss — an init container is running or has terminated while the pod's
+// overall Phase is still Pending. Kubernetes keeps Status.Phase == PodPending
+// for the entire time init containers run, and both batch paths put the
+// claimer there (single-source: pipelineinstance_controller_batch.go
+// buildJob; multi-source: pipelineinstance_controller_batch_multisource.go
+// buildMultiSourceBatchJob), so a pod actively downloading a multi-GB media
+// object reports Pending for as long as that download takes. Treating that
+// as "not started" would misclassify a healthy, actively-progressing run as
+// Starting and expose it to the agent's provisioning timeout even though
+// real work is happening. A Job existing is still not evidence of this on
+// its own: a Job can sit with zero pods, or with only Pending/Unschedulable
+// pods whose init containers have never run either, indefinitely (PLAT-1597)
+// — that target case stays excluded since it has no init container in
+// Running or Terminated state. PodSucceeded counts as "started" — a pod that
 // already finished processing a file unambiguously ran a container, and
 // once true for an instance this stays true forever since completed pods
 // are never deleted for successful runs (only crashed/start-failed ones
@@ -964,9 +976,14 @@ func (r *PipelineInstanceReconciler) anyPodStarted(ctx context.Context, pipeline
 		return false, fmt.Errorf("failed to list pods: %w", err)
 	}
 	for i := range podList.Items {
-		phase := podList.Items[i].Status.Phase
-		if phase == corev1.PodRunning || phase == corev1.PodSucceeded {
+		p := &podList.Items[i]
+		if p.Status.Phase == corev1.PodRunning || p.Status.Phase == corev1.PodSucceeded {
 			return true, nil
+		}
+		for _, cs := range p.Status.InitContainerStatuses {
+			if cs.State.Running != nil || cs.State.Terminated != nil {
+				return true, nil
+			}
 		}
 	}
 	return false, nil

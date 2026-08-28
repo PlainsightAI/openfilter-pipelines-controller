@@ -40,10 +40,17 @@ Valkey (Redis alternative) has been installed:
 {{- end }}
 
 Custom Resources:
-  The following CRDs have been installed:
+  The following CRDs are used by this chart:
   - pipelines.filter.plainsight.ai
   - pipelinesources.filter.plainsight.ai
   - pipelineinstances.filter.plainsight.ai
+
+  NOTE: Helm does not upgrade CRDs on `helm upgrade`. If a future release
+  changes the CRDs and you are not managing this chart with ArgoCD, manually
+  re-apply them:
+  $ helm show crds oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
+      --version {{ .Chart.Version }} | kubectl apply -f -
+  See the README's "CRD upgrades on bare Helm installs" section for details.
 
   Create a sample Pipeline:
   $ kubectl apply -f - <<EOF

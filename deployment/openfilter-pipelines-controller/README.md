@@ -89,6 +89,12 @@ The chart no longer installs any per-workload ServiceAccounts for pipeline execu
 | `crds.install` | Install CRDs with the chart | `true` |
 | `crds.keep` | Keep CRDs on chart uninstall | `true` |
 
+**Currently informational, not wired up:** no template in this chart reads
+`.Values.crds`. Helm always applies `crds/` on `helm install` (unless `--skip-crds` is
+passed, which skips CRD application entirely) and never deletes CRDs on `helm
+uninstall`, regardless of these values. See "CRD upgrades on bare Helm installs" below
+for the related `helm upgrade` behavior.
+
 ### Controller Settings
 
 | Parameter | Description | Default |
@@ -163,6 +169,35 @@ helm upgrade openfilter-pipelines-controller deployment/openfilter-pipelines-con
 helm upgrade openfilter-pipelines-controller deployment/openfilter-pipelines-controller \
   --set controller.metrics.enabled=false
 ```
+
+### CRD upgrades on bare Helm installs
+
+Helm's `crds/` directory (`deployment/openfilter-pipelines-controller/crds/`) is only
+applied on the initial `helm install`; `helm upgrade` never updates existing CRDs, even
+when the chart's `crds/*.yaml` files changed in the new release. This is standard Helm
+behavior, not a bug in this chart.
+
+If you manage this chart with **bare Helm** (no ArgoCD or similar GitOps CRD sync), you
+must manually re-apply the CRDs whenever a release changes them, before or alongside the
+`helm upgrade`:
+
+```bash
+# Installed from GHCR / a packaged chart:
+helm show crds oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
+  --version <version> | kubectl apply -f -
+
+# Installed from a local copy of this repository:
+kubectl apply -f deployment/openfilter-pipelines-controller/crds/
+```
+
+Skipping this step after a release that changes `crds/*.yaml` means the controller can
+run against a stale CRD schema, silently dropping any new fields (e.g. new `status`
+subresource fields) the API server does not yet know about.
+
+**ArgoCD-managed installs are not affected:** ArgoCD renders the chart with `helm
+template`, which includes `crds/` in its output, and applies those manifests on every
+sync, so CRD changes are picked up automatically, unless the Application sets
+`helm.skipCrds: true`.
 
 ## Uninstalling
 

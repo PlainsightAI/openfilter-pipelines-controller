@@ -1,5 +1,37 @@
 # Release notes
 
+## v0.9.0
+
+### Upgrade action required for bare-Helm installs
+
+**This release changes the `pipelineinstances` CRD** (`status.executionStartTime`, added by #117). Helm installs
+a chart's CRDs once on first install and does not update them on `helm upgrade` — the same caveat this release adds
+to the chart's `NOTES.txt` and README (PLAT-1572 — #119). ArgoCD-managed installs pick this CRD change up
+automatically as part of their normal sync. Bare-Helm installs must re-apply the CRDs manually after upgrading, or
+the new field is silently pruned by the API server and the restart-safe execution-timeout enforcement below will not
+work:
+
+```bash
+helm show crds oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \
+  --version 0.9.0 | kubectl apply -f -
+```
+
+### Fixed
+
+- **Batch Pending/Unschedulable status reporting (PLAT-1597 — #120)**: batch `PipelineInstance`s no longer become `Progressing`/`Processing` merely because a Job exists. They remain `Starting` until a pod, init container, or equivalent confirmed execution evidence has actually started, unless the pod list can't be read, in which case the controller fails open to `Processing`. Running or completed init containers count as execution evidence, and `ExecutionStartTime` is not stamped on the pod-list fail-open path.
+
+### Added
+
+- **Durable batch execution-start anchor (PLAT-1570 — #117)**: `PipelineInstance.status.executionStartTime` records the first confirmed execution transition, providing the durable controller-side anchor needed for restart-safe `ExecutionTimeoutSeconds` enforcement by the deployment agent. This is the CRD change called out above.
+
+### Changed
+
+- Update the bundled OpenFilter builtin image pins (video-in, image-out, webvis) to `1.3.0` (#114, #115, #116).
+
+### Operations / Documentation
+
+- **Bare Helm CRD upgrade guidance (PLAT-1572 — #119)**: documents that Helm does not automatically upgrade CRDs and provides the OCI-compatible manual CRD apply procedure for non-ArgoCD installs.
+
 ## v0.8.0
 
 ### Added

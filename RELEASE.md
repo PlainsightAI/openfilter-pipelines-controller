@@ -1,5 +1,23 @@
 # Release notes
 
+## v0.8.1
+
+### Fixed
+
+- **Batch Pending/Unschedulable status reporting (PLAT-1597 — #120)**: batch `PipelineInstance`s no longer become `Progressing`/`Processing` merely because a Job exists. They remain `Starting` until a pod, init container, or equivalent confirmed execution evidence has actually started. Running or completed init containers count as execution evidence, and `ExecutionStartTime` is not stamped on the pod-list fail-open path.
+
+### Added
+
+- **Durable batch execution-start anchor (PLAT-1570 — #117)**: `PipelineInstance.status.executionStartTime` records the first confirmed execution transition, providing the durable controller-side anchor needed for restart-safe `ExecutionTimeoutSeconds` enforcement by the deployment agent.
+
+### Changed
+
+- Update the bundled OpenFilter builtin image pins (video-in, image-out, webvis) to `1.3.0` (#114, #115, #116).
+
+### Operations / Documentation
+
+- **Bare Helm CRD upgrade guidance (PLAT-1572 — #119)**: documents that Helm does not automatically upgrade CRDs and provides the OCI-compatible manual CRD apply procedure for non-ArgoCD installs.
+
 ## v0.8.0
 
 ### Added

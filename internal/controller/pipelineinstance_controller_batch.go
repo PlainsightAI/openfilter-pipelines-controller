@@ -145,44 +145,8 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 	if failedCond, err := r.checkFailure(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to check job failure state")
 	} else if failedCond != nil {
-		failureReason := failedCond.Reason
-		if failureReason == "" {
-			failureReason = "JobFailed"
-		}
-
-		failureMessage := failedCond.Message
-		if failureMessage == "" {
-			failureMessage = fmt.Sprintf("Job %s failed", pipelineInstance.Status.JobName)
-		} else {
-			failureMessage = fmt.Sprintf("Job %s failed: %s", pipelineInstance.Status.JobName, failureMessage)
-		}
-		// Enrich with the claimer/filter's real error so the Degraded status is
-		// diagnosable, not just "backoff limit" (PLAT-1353).
-		if detail := r.failedContainerMessages(ctx, pipelineInstance); detail != "" {
-			failureMessage = fmt.Sprintf("%s [%s]", failureMessage, detail)
-		}
-		// Bound the whole composed message (prefix + detail) under the CRD cap.
-		failureMessage = boundConditionMessage(failureMessage)
-
-		r.flushOutstandingWork(ctx, pipelineInstance, failureReason, failureMessage)
-
-		log.Info("PipelineInstance marked as Degraded due to job failure", "job", pipelineInstance.Status.JobName, "reason", failureReason)
-		r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, failureReason, failureMessage)
-		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, failureReason, failureMessage)
-		r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionFalse, failureReason, failureMessage)
-
-		if pipelineInstance.Status.CompletionTime == nil {
-			now := metav1.Now()
-			pipelineInstance.Status.CompletionTime = &now
-		}
-
-		if err := r.Status().Update(ctx, pipelineInstance); err != nil {
-			log.Error(err, "Failed to update status after marking run degraded")
-			return ctrl.Result{}, err
-		}
-
-		// No further processing is required once the run has failed
-		return ctrl.Result{}, nil
+		// No further processing is required once the run has failed.
+		return r.handleBatchJobFailure(ctx, pipelineInstance, failedCond)
 	}
 
 	// Step 5: Check for completion
@@ -209,13 +173,104 @@ func (r *PipelineInstanceReconciler) reconcileBatch(ctx context.Context, pipelin
 		return ctrl.Result{}, nil
 	}
 
-	// Set Progressing condition
-	stampExecStart := pipelineInstance.Status.ExecutionStartTime == nil
+	// Set Progressing condition. A Job existing is not evidence that a pod
+	// has actually started (PLAT-1597) — a pod can sit Pending/Unschedulable
+	// indefinitely. Distinguish that from genuine processing via Reason,
+	// without changing Progressing's Status (still True either way, so no
+	// consumer that only checks Status==True sees any change).
+	return r.updateBatchProgressingCondition(ctx, pipelineInstance)
+}
+
+// handleBatchJobFailure marks a single-source batch PipelineInstance Degraded after
+// checkFailure has detected a failed Job condition. It composes an operator-actionable
+// failure message (enriched with the real claimer/filter error when available, PLAT-1353),
+// flushes outstanding queued work, sets the terminal conditions, stamps CompletionTime, and
+// persists status. The caller returns its result directly: no further processing is required
+// once the run has failed.
+func (r *PipelineInstanceReconciler) handleBatchJobFailure(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance, failedCond *batchv1.JobCondition) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	failureReason := failedCond.Reason
+	if failureReason == "" {
+		failureReason = "JobFailed"
+	}
+
+	failureMessage := failedCond.Message
+	if failureMessage == "" {
+		failureMessage = fmt.Sprintf("Job %s failed", pipelineInstance.Status.JobName)
+	} else {
+		failureMessage = fmt.Sprintf("Job %s failed: %s", pipelineInstance.Status.JobName, failureMessage)
+	}
+	// Enrich with the claimer/filter's real error so the Degraded status is
+	// diagnosable, not just "backoff limit" (PLAT-1353).
+	if detail := r.failedContainerMessages(ctx, pipelineInstance); detail != "" {
+		failureMessage = fmt.Sprintf("%s [%s]", failureMessage, detail)
+	}
+	// Bound the whole composed message (prefix + detail) under the CRD cap.
+	failureMessage = boundConditionMessage(failureMessage)
+
+	r.flushOutstandingWork(ctx, pipelineInstance, failureReason, failureMessage)
+
+	log.Info("PipelineInstance marked as Degraded due to job failure", "job", pipelineInstance.Status.JobName, "reason", failureReason)
+	r.setCondition(pipelineInstance, ConditionTypeDegraded, metav1.ConditionTrue, failureReason, failureMessage)
+	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, failureReason, failureMessage)
+	r.setCondition(pipelineInstance, ConditionTypeSucceeded, metav1.ConditionFalse, failureReason, failureMessage)
+
+	if pipelineInstance.Status.CompletionTime == nil {
+		now := metav1.Now()
+		pipelineInstance.Status.CompletionTime = &now
+	}
+
+	if err := r.Status().Update(ctx, pipelineInstance); err != nil {
+		log.Error(err, "Failed to update status after marking run degraded")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// updateBatchProgressingCondition determines whether at least one pod belonging to this
+// single-source batch PipelineInstance has actually started (PLAT-1597), sets the
+// Progressing condition's Reason accordingly (ReasonProcessing vs ReasonStarting — see
+// anyPodStarted's doc comment for the sticky/fail-open rationale), stamps
+// ExecutionStartTime on first confirmed live evidence, and persists status. Always
+// requeues for the next periodic status update.
+func (r *PipelineInstanceReconciler) updateBatchProgressingCondition(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	podStartedLive, podErr := r.anyPodStarted(ctx, pipelineInstance)
+	failOpen := false
+	if podErr != nil {
+		log.Error(podErr, "Failed to determine pod-started state; defaulting condition to Processing")
+		if r.Recorder != nil {
+			r.Recorder.Eventf(pipelineInstance, corev1.EventTypeWarning, "PodStatusListDegraded",
+				"Could not list pods to confirm processing state: %v", podErr)
+		}
+		failOpen = true
+	}
+
+	// alreadyStarted makes the Reason sticky: once a pod has ever been
+	// confirmed running, a later crash-and-retry (BackoffLimit) can leave
+	// every currently-live pod Pending/Failed for a real, observable window
+	// (not just an instantaneous race) without regressing Reason back to
+	// "Starting" under a status that already has ExecutionStartTime set.
+	alreadyStarted := pipelineInstance.Status.ExecutionStartTime != nil
+	podStarted := podStartedLive || alreadyStarted
+
+	// ExecutionStartTime only ever stamps on confirmed live evidence, never
+	// on the fail-open path — otherwise a single transient pod-list error
+	// while ExecutionStartTime is still nil would permanently latch
+	// podStarted=true (via alreadyStarted) on zero evidence.
+	stampExecStart := podStartedLive && !alreadyStarted
 	if stampExecStart {
 		now := metav1.Now()
 		pipelineInstance.Status.ExecutionStartTime = &now
 	}
-	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, "Processing", "Pipeline is processing files")
+	if podStarted || failOpen {
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, ReasonProcessing, "Pipeline is processing files")
+	} else {
+		r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionTrue, ReasonStarting, "Waiting for pipeline pod to start")
+	}
 
 	if err := r.Status().Update(ctx, pipelineInstance); err != nil {
 		log.Error(err, "Failed to update status")
@@ -885,6 +940,53 @@ func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context
 		result = fmt.Sprintf("%s; (+%d more)", result, dropped)
 	}
 	return result
+}
+
+// anyPodStarted reports whether at least one pod belonging to this batch
+// PipelineInstance has actually started doing work: a container is running
+// (PodRunning), already finished (PodSucceeded), or — the case this must not
+// miss — an init container is running or has terminated while the pod's
+// overall Phase is still Pending. Kubernetes keeps Status.Phase == PodPending
+// for the entire time init containers run, and both batch paths put the
+// claimer there (single-source: pipelineinstance_controller_batch.go
+// buildJob; multi-source: pipelineinstance_controller_batch_multisource.go
+// buildMultiSourceBatchJob), so a pod actively downloading a multi-GB media
+// object reports Pending for as long as that download takes. Treating that
+// as "not started" would misclassify a healthy, actively-progressing run as
+// Starting and expose it to the agent's provisioning timeout even though
+// real work is happening. A Job existing is still not evidence of this on
+// its own: a Job can sit with zero pods, or with only Pending/Unschedulable
+// pods whose init containers have never run either, indefinitely (PLAT-1597)
+// — that target case stays excluded since it has no init container in
+// Running or Terminated state. PodSucceeded counts as "started" — a pod that
+// already finished processing a file unambiguously ran a container, and
+// once true for an instance this stays true forever since completed pods
+// are never deleted for successful runs (only crashed/start-failed ones
+// are, in handleFailedPodMessage).
+//
+// Callers must treat a non-nil error as "unknown, not false": see the
+// call sites in reconcileBatch / reconcileBatchMultiSource for how the
+// ambiguity is resolved (fail open on the condition Reason, but never
+// stamp ExecutionStartTime on unconfirmed evidence).
+func (r *PipelineInstanceReconciler) anyPodStarted(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (bool, error) {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
+		"filter.plainsight.ai/instance": pipelineInstance.GetInstanceID(),
+	}); err != nil {
+		return false, fmt.Errorf("failed to list pods: %w", err)
+	}
+	for i := range podList.Items {
+		p := &podList.Items[i]
+		if p.Status.Phase == corev1.PodRunning || p.Status.Phase == corev1.PodSucceeded {
+			return true, nil
+		}
+		for _, cs := range p.Status.InitContainerStatuses {
+			if cs.State.Running != nil || cs.State.Terminated != nil {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // handleCompletedPods processes pods that have completed (succeeded or failed)

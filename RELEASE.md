@@ -5,10 +5,11 @@
 ### Upgrade action required for bare-Helm installs
 
 **This release changes the `pipelineinstances` CRD** (`status.executionStartTime`, added by #117). Helm installs
-a chart's CRDs once on first install and never updates them on `helm upgrade` — see the caveat documented in
-v0.8.0's `NOTES.txt` (PLAT-1572 — #119). ArgoCD-managed installs pick this CRD change up automatically as part of
-their normal sync. Bare-Helm installs must re-apply the CRDs manually after upgrading, or the new field is silently
-pruned by the API server and the restart-safe execution-timeout enforcement below will not work:
+a chart's CRDs once on first install and does not update them on `helm upgrade` — the same caveat this release adds
+to the chart's `NOTES.txt` and README (PLAT-1572 — #119). ArgoCD-managed installs pick this CRD change up
+automatically as part of their normal sync. Bare-Helm installs must re-apply the CRDs manually after upgrading, or
+the new field is silently pruned by the API server and the restart-safe execution-timeout enforcement below will not
+work:
 
 ```bash
 helm show crds oci://ghcr.io/plainsightai/charts/openfilter-pipelines-controller \

@@ -177,6 +177,16 @@ gpuRuntimeClass: ""
 # controller fast at startup.
 gpuSharingStrategy: ""
 
+# Inject DO_NOT_TRACK=1 into every filter container the controller spawns, which
+# disables the usage analytics openfilter's runtime reports to Scarf once per
+# filter start. Left false here so an OSS install keeps openfilter's own opt-out
+# default. Set it to true per env in the gitops repo for clusters that run inside
+# a network we do not own (managed on-prem and customer clusters), where that
+# destination is usually not on the firewall allowlist and the blocked attempt
+# both shows up in their egress logs and costs the SDK's 3s timeout per filter
+# start.
+disableUsageAnalytics: false
+
 # Telemetry exporter values injected into every filter container the controller
 # spawns. When non-empty, the controller appends TELEMETRY_EXPORTER_TYPE and
 # TELEMETRY_EXPORTER_OTLP_ENDPOINT to the filter container env so openfilter's

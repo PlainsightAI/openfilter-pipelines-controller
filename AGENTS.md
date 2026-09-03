@@ -243,6 +243,28 @@ The controller supports injecting NodeSelector labels into pods that request `nv
 
 When `gpuNodeSelector` is set in `values.yaml`, the Helm chart injects it as the `GPU_NODE_SELECTOR` env var into the controller Deployment. An empty value disables the feature entirely (no NodeSelector is applied to any pod).
 
+## Usage Analytics Opt-Out (`DO_NOT_TRACK`)
+
+openfilter's runtime POSTs a usage event to Scarf (`python.openfilter.io`) from `Filter.__init__`, so it fires once per filter container start regardless of what the filter does. That is openfilter's own opt-out default and is left alone on OSS installs; the controller can turn it off for clusters running inside a network the operator does not own, where the destination is usually absent from the firewall allowlist and the blocked attempt costs the SDK's 3s timeout per filter start.
+
+**How it works:**
+
+- `DisableUsageAnalytics` on `PipelineInstanceReconciler` gates a single `DO_NOT_TRACK=1` env var.
+- It is appended in `tracingEnvVars` (`pipelineinstance_controller.go`) — **not** in each pod builder. That function is already called by all three (`buildJob`, `buildStreamingDeployment`, `buildMultiSourceBatchJob`), so there is one place to keep correct instead of three; a per-builder implementation is exactly how the multi-source path would end up silently uncovered.
+- Default is `false`, so nothing is injected unless an operator opts in. The SDK checks `DO_NOT_TRACK` before opening the connection, so this prevents the request rather than discarding the response.
+
+**Configuration:**
+
+| Method | Value |
+|--------|-------|
+| CLI flag | `--disable-usage-analytics` |
+| Env var | `DISABLE_USAGE_ANALYTICS` |
+| Helm value | `disableUsageAnalytics` (bool, default `false`) |
+
+An unparseable env value falls back to the default instead of failing the process — these arrive from Helm values, where a typo should not take the controller down.
+
+Note this covers only pipelines the controller spawns. Pipelines run directly through docker-compose need `DO_NOT_TRACK` set in the compose file itself.
+
 ## Filter Image Volumes Feature
 
 Filters can mount OCI images as read-only volumes via the Kubernetes `image` volume source (requires K8s 1.35+; the ImageVolume feature gate is off by default through 1.34). Declared per filter as `spec.filters[].imageVolumes[]` on the Pipeline CRD (`FilterImageVolume`: required `name`/`image`/`mountPath`, optional `pullPolicy`/`subPath`/`pullSecret`).

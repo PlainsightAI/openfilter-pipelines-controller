@@ -1,10 +1,14 @@
 # Release notes
 
-## [Unreleased]
+## v0.10.0
 
 ### Added
 
 - **`disableUsageAnalytics` — opt out of openfilter's Scarf usage analytics per cluster**: openfilter's runtime POSTs a usage event to `python.openfilter.io` from `Filter.__init__`, so it fires once per filter container start regardless of what the filter does. A new `--disable-usage-analytics` flag / `DISABLE_USAGE_ANALYTICS` env / `disableUsageAnalytics` Helm value makes the controller inject `DO_NOT_TRACK=1` into every filter container it spawns. It defaults to **false**, so an OSS install keeps openfilter's own opt-out default untouched; operators set it to true for clusters running inside a network they do not own (managed on-prem and customer clusters), where that destination is usually not on the firewall allowlist, the blocked attempt shows up in the customer's egress logs, and a silently dropped connection costs the SDK's 3s timeout on every filter start. Injected from `tracingEnvVars`, which all three pod builders (streaming, batch, multi-source batch) already call, so no path can be missed.
+
+### Changed
+
+- Bump `google.golang.org/grpc` from 1.82.1 to 1.83.1 (#122).
 
 ## v0.9.0
 

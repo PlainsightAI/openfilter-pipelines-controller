@@ -2,8 +2,8 @@ apiVersion: v2
 name: openfilter-pipelines-controller
 description: A Kubernetes operator for managing Pipeline custom resources
 type: application
-version: 0.9.0
-appVersion: "0.9.0"
+version: 0.10.0
+appVersion: "0.10.0"
 home: https://github.com/PlainsightAI/openfilter-pipelines-controller
 sources:
   - https://github.com/PlainsightAI/openfilter-pipelines-controller

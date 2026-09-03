@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,6 +66,22 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// getEnvBoolOrDefault returns the boolean value of an environment variable or a
+// default value. An unparseable value falls back to the default rather than
+// failing the process: these env vars come from Helm values, and a typo there
+// should not take the controller down.
+func getEnvBoolOrDefault(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
 }
 
 // validateTelemetryFlags ensures the telemetry exporter flags are either both
@@ -141,6 +158,7 @@ func main() {
 	var gpuSharingStrategy string
 	var telemetryExporterType string
 	var telemetryExporterOTLPEndpoint string
+	var disableUsageAnalytics bool
 	var otelExporterOTLPEndpoint string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -196,6 +214,14 @@ func main() {
 			"stages onto one physical GPU. Empty (default) keeps the on-prem behavior where "+
 			"one lead container holds the limit and the rest share via NVIDIA_VISIBLE_DEVICES=all "+
 			"(requires the nvidia RuntimeClass). Can also be set via the GPU_SHARING_STRATEGY env var.")
+	flag.BoolVar(&disableUsageAnalytics, "disable-usage-analytics",
+		getEnvBoolOrDefault("DISABLE_USAGE_ANALYTICS", false),
+		"Inject DO_NOT_TRACK=1 into filter containers, disabling the usage analytics "+
+			"openfilter reports to Scarf once per filter start. Defaults to false so an "+
+			"OSS cluster keeps openfilter's own opt-out default. Set to true when running "+
+			"pipelines on a network you do not own (managed on-prem / customer clusters), "+
+			"where the destination is usually not on the firewall allowlist. "+
+			"Can also be set via the DISABLE_USAGE_ANALYTICS env var.")
 	flag.StringVar(&telemetryExporterType, "telemetry-exporter-type",
 		getEnvOrDefault("TELEMETRY_EXPORTER_TYPE", ""),
 		"Value injected as TELEMETRY_EXPORTER_TYPE into filter containers (e.g. 'otlp'). "+
@@ -418,6 +444,7 @@ func main() {
 		GPUSharingStrategy:            gpuSharingStrategy,
 		TelemetryExporterType:         telemetryExporterType,
 		TelemetryExporterOTLPEndpoint: telemetryExporterOTLPEndpoint,
+		DisableUsageAnalytics:         disableUsageAnalytics,
 		ImageVolumesUnsupportedReason: imageVolumesUnsupportedReason,
 		Recorder:                      mgr.GetEventRecorderFor("pipelineinstance-controller"),
 	}).SetupWithManager(mgr); err != nil {

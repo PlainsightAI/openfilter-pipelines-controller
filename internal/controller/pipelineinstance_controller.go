@@ -232,6 +232,13 @@ type PipelineInstanceReconciler struct {
 	TelemetryExporterType         string
 	TelemetryExporterOTLPEndpoint string
 
+	// DisableUsageAnalytics injects DO_NOT_TRACK=1 into filter containers, which
+	// turns off the usage analytics openfilter's runtime reports to Scarf on every
+	// Filter init. It defaults to false so an OSS cluster keeps openfilter's own
+	// opt-out default; operators who run pipelines on someone else's network
+	// (Plainsight-managed on-prem and customer clusters) set it to true.
+	DisableUsageAnalytics bool
+
 	// PipelineRefGracePeriod overrides DefaultPipelineRefGracePeriod. Zero means
 	// "use the default". Set to a small non-zero value (e.g. 1*time.Nanosecond)
 	// in tests that need to assert the post-grace Degraded path without waiting
@@ -1034,6 +1041,24 @@ func (r *PipelineInstanceReconciler) tracingEnvVars(pipelineInstance *pipelinesv
 		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_ENABLED", Value: "true"})
 		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_TYPE", Value: r.TelemetryExporterType})
 		envVars = append(envVars, corev1.EnvVar{Name: "TELEMETRY_EXPORTER_OTLP_ENDPOINT", Value: r.TelemetryExporterOTLPEndpoint})
+	}
+
+	// DO_NOT_TRACK is not tracing config, but it rides here because this is the
+	// one env builder all three pod builders (streaming, batch, multi-source
+	// batch) already call — a separate function would be three more call sites
+	// to keep in sync, and one of them silently missing it is exactly the
+	// failure this flag exists to prevent.
+	//
+	// openfilter's runtime POSTs a usage event to Scarf from Filter.__init__, so
+	// it fires once per filter container start regardless of what the filter
+	// does. That is a reasonable opt-out default for someone who installed
+	// openfilter themselves; it is not reasonable on a cluster we operate inside
+	// a customer's network, where the destination is typically not on their
+	// firewall allowlist and the attempt shows up in their egress logs. The SDK
+	// checks DO_NOT_TRACK before opening the connection, so setting it prevents
+	// the request rather than just discarding the response.
+	if r.DisableUsageAnalytics {
+		envVars = append(envVars, corev1.EnvVar{Name: "DO_NOT_TRACK", Value: "1"})
 	}
 
 	return envVars

@@ -144,6 +144,10 @@ spec:
             - name: GPU_SHARING_STRATEGY
               value: {{ .Values.gpuSharingStrategy | quote }}
             {{- end }}
+            {{- if .Values.disableUsageAnalytics }}
+            - name: DISABLE_USAGE_ANALYTICS
+              value: {{ .Values.disableUsageAnalytics | quote }}
+            {{- end }}
             {{- if .Values.telemetry.exporterType }}
             - name: TELEMETRY_EXPORTER_TYPE
               value: {{ .Values.telemetry.exporterType | quote }}

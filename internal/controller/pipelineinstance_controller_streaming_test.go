@@ -8,6 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	pipelinesv1alpha1 "github.com/PlainsightAI/openfilter-pipelines-controller/api/v1alpha1"
 )
@@ -921,5 +923,388 @@ func TestBuildRTSPURLWithCredentials(t *testing.T) {
 				t.Errorf("buildRTSPURLWithCredentials() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+// Test helper to create a reconciler with a fake k8s client
+func makeReconcilerWithFakeClient() (*PipelineInstanceReconciler, error) {
+	// Add the api scheme to the fake client
+	if err := pipelinesv1alpha1.AddToScheme(scheme.Scheme); err != nil {
+		return nil, err
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme.Scheme).
+		Build()
+
+	return &PipelineInstanceReconciler{
+		Client: fakeClient,
+		Scheme: scheme.Scheme,
+	}, nil
+
+}
+
+// TestEnsureFilterServices_TypeUnset verifies that Service type defaults to ClusterIP when unset
+// This is a regression guard for the default behavior
+func TestEnsureFilterServices_TypeUnset(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pipeline",
+			Namespace: "default",
+		},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name: "filter1",
+					Port: 8080,
+					// Type is not set - should default to ClusterIP
+				},
+			},
+		},
+	}
+
+	// Create the PipelineInstance so it can be used as controller reference
+	if err := r.Create(ctx, pi); err != nil {
+		t.Fatalf("failed to create PipelineInstance: %v", err)
+	}
+
+	// Call ensureFilterServices
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices() failed: %v", err)
+	}
+
+	// Verify the Service was created with ClusterIP type
+	service := &corev1.Service{}
+	serviceKey := types.NamespacedName{Name: "stream-instance-filter1-0", Namespace: "default"}
+	if err := r.Get(ctx, serviceKey, service); err != nil {
+		t.Fatalf("failed to get created Service: %v", err)
+	}
+
+	if service.Spec.Type != corev1.ServiceTypeClusterIP {
+		t.Errorf("expected Service type ClusterIP (default), got %v", service.Spec.Type)
+	}
+}
+
+// TestEnsureFilterServices_TypeClusterIPExplicit verifies that Service type is ClusterIP when explicitly set
+func TestEnsureFilterServices_TypeClusterIPExplicit(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+
+	pi := makeMinimalStreamingPipelineInstance()
+	clusterIPType := corev1.ServiceTypeClusterIP
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pipeline",
+			Namespace: "default",
+		},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name: "filter1",
+					Port: 8080,
+					Type: clusterIPType,
+				},
+			},
+		},
+	}
+
+	// Create the PipelineInstance so it can be used as controller reference
+	if err := r.Create(ctx, pi); err != nil {
+		t.Fatalf("failed to create PipelineInstance: %v", err)
+	}
+
+	// Call ensureFilterServices
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices() failed: %v", err)
+	}
+
+	// Verify the Service was created with ClusterIP type
+	service := &corev1.Service{}
+	serviceKey := types.NamespacedName{Name: "stream-instance-filter1-0", Namespace: "default"}
+	if err := r.Get(ctx, serviceKey, service); err != nil {
+		t.Fatalf("failed to get created Service: %v", err)
+	}
+
+	if service.Spec.Type != corev1.ServiceTypeClusterIP {
+		t.Errorf("expected Service type ClusterIP, got %v", service.Spec.Type)
+	}
+}
+
+// TestEnsureFilterServices_TypeLoadBalancer verifies that Service type is LoadBalancer when explicitly set
+func TestEnsureFilterServices_TypeLoadBalancer(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+
+	pi := makeMinimalStreamingPipelineInstance()
+	loadBalancerType := corev1.ServiceTypeLoadBalancer
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pipeline",
+			Namespace: "default",
+		},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name: "filter1",
+					Port: 8080,
+					Type: loadBalancerType,
+				},
+			},
+		},
+	}
+
+	// Create the PipelineInstance so it can be used as controller reference
+	if err := r.Create(ctx, pi); err != nil {
+		t.Fatalf("failed to create PipelineInstance: %v", err)
+	}
+
+	// Call ensureFilterServices
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices() failed: %v", err)
+	}
+
+	// Verify the Service was created with LoadBalancer type
+	service := &corev1.Service{}
+	serviceKey := types.NamespacedName{Name: "stream-instance-filter1-0", Namespace: "default"}
+	if err := r.Get(ctx, serviceKey, service); err != nil {
+		t.Fatalf("failed to get created Service: %v", err)
+	}
+
+	if service.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		t.Errorf("expected Service type LoadBalancer, got %v", service.Spec.Type)
+	}
+}
+
+// TestEnsureFilterServices_TypeNodePort verifies that Service type is NodePort when explicitly set
+func TestEnsureFilterServices_TypeNodePort(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+
+	pi := makeMinimalStreamingPipelineInstance()
+	nodePortType := corev1.ServiceTypeNodePort
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pipeline",
+			Namespace: "default",
+		},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name: "filter1",
+					Port: 8080,
+					Type: nodePortType,
+				},
+			},
+		},
+	}
+
+	// Create the PipelineInstance so it can be used as controller reference
+	if err := r.Create(ctx, pi); err != nil {
+		t.Fatalf("failed to create PipelineInstance: %v", err)
+	}
+
+	// Call ensureFilterServices
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices() failed: %v", err)
+	}
+
+	// Verify the Service was created with NodePort type
+	service := &corev1.Service{}
+	serviceKey := types.NamespacedName{Name: "stream-instance-filter1-0", Namespace: "default"}
+	if err := r.Get(ctx, serviceKey, service); err != nil {
+		t.Fatalf("failed to get created Service: %v", err)
+	}
+
+	if service.Spec.Type != corev1.ServiceTypeNodePort {
+		t.Errorf("expected Service type NodePort, got %v", service.Spec.Type)
+	}
+}
+
+// TestEnsureFilterServices_NoServices verifies that the function handles empty service list gracefully
+func TestEnsureFilterServices_NoServices(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pipeline",
+			Namespace: "default",
+		},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{},
+		},
+	}
+
+	// Create the PipelineInstance
+	if err := r.Create(ctx, pi); err != nil {
+		t.Fatalf("failed to create PipelineInstance: %v", err)
+	}
+
+	// Call ensureFilterServices with empty services - should return nil without creating anything
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices() failed: %v", err)
+	}
+
+	// Verify no services were created
+	serviceList := &corev1.ServiceList{}
+	if err := r.List(ctx, serviceList); err != nil {
+		t.Fatalf("failed to list services: %v", err)
+	}
+
+	if len(serviceList.Items) != 0 {
+		t.Errorf("expected no services to be created, got %d", len(serviceList.Items))
+	}
+}
+
+// TestEnsureFilterServices_UpdateExistingService verifies that existing services are updated with new type
+func TestEnsureFilterServices_UpdateExistingService(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+
+	pi := makeMinimalStreamingPipelineInstance()
+	loadBalancerType := corev1.ServiceTypeLoadBalancer
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pipeline",
+			Namespace: "default",
+		},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name: "filter1",
+					Port: 8080,
+					Type: loadBalancerType,
+				},
+			},
+		},
+	}
+
+	// Create the PipelineInstance
+	if err := r.Create(ctx, pi); err != nil {
+		t.Fatalf("failed to create PipelineInstance: %v", err)
+	}
+
+	// Create initial service with ClusterIP type
+	existingService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "stream-instance-filter1-0",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeClusterIP,
+			Selector: map[string]string{
+				"app":              "pipeline-stream",
+				"pipelineinstance": "stream-instance",
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name: "filter1",
+					Port: 8080,
+				},
+			},
+		},
+	}
+	if err := r.Create(ctx, existingService); err != nil {
+		t.Fatalf("failed to create initial Service: %v", err)
+	}
+
+	// Call ensureFilterServices - should update the service to LoadBalancer
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices() failed: %v", err)
+	}
+
+	// Verify the Service was updated to LoadBalancer type
+	service := &corev1.Service{}
+	serviceKey := types.NamespacedName{Name: "stream-instance-filter1-0", Namespace: "default"}
+	if err := r.Get(ctx, serviceKey, service); err != nil {
+		t.Fatalf("failed to get updated Service: %v", err)
+	}
+
+	if service.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		t.Errorf("expected Service type to be updated to LoadBalancer, got %v", service.Spec.Type)
+	}
+}
+
+// TestEnsureFilterServices_MultipleServicesPerFilter verifies multiple services can be created for a single filter
+func TestEnsureFilterServices_MultipleServicesPerFilter(t *testing.T) {
+	ctx := context.Background()
+	r, err := makeReconcilerWithFakeClient()
+	if err != nil {
+		t.Fatalf("failed to create reconciler with fake client: %v", err)
+	}
+
+	pi := makeMinimalStreamingPipelineInstance()
+	pipeline := &pipelinesv1alpha1.Pipeline{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pipeline",
+			Namespace: "default",
+		},
+		Spec: pipelinesv1alpha1.PipelineSpec{
+			Services: []pipelinesv1alpha1.ServicePort{
+				{
+					Name: "filter1",
+					Port: 8080,
+					Type: corev1.ServiceTypeClusterIP,
+				},
+				{
+					Name: "filter1",
+					Port: 9090,
+					Type: corev1.ServiceTypeLoadBalancer,
+				},
+			},
+		},
+	}
+
+	// Create the PipelineInstance
+	if err := r.Create(ctx, pi); err != nil {
+		t.Fatalf("failed to create PipelineInstance: %v", err)
+	}
+
+	// Call ensureFilterServices
+	if err := r.ensureFilterServices(ctx, pi, pipeline); err != nil {
+		t.Fatalf("ensureFilterServices() failed: %v", err)
+	}
+
+	// Verify first service (index 0) has ClusterIP type
+	service1 := &corev1.Service{}
+	serviceKey1 := types.NamespacedName{Name: "stream-instance-filter1-0", Namespace: "default"}
+	if err := r.Get(ctx, serviceKey1, service1); err != nil {
+		t.Fatalf("failed to get first Service: %v", err)
+	}
+	if service1.Spec.Type != corev1.ServiceTypeClusterIP {
+		t.Errorf("expected first Service type ClusterIP, got %v", service1.Spec.Type)
+	}
+
+	// Verify second service (index 1) has LoadBalancer type
+	service2 := &corev1.Service{}
+	serviceKey2 := types.NamespacedName{Name: "stream-instance-filter1-1", Namespace: "default"}
+	if err := r.Get(ctx, serviceKey2, service2); err != nil {
+		t.Fatalf("failed to get second Service: %v", err)
+	}
+	if service2.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		t.Errorf("expected second Service type LoadBalancer, got %v", service2.Spec.Type)
 	}
 }

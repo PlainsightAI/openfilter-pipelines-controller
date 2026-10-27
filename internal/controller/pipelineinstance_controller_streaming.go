@@ -357,28 +357,35 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 		}
 	}
 
-	// Filters that expose a Service get a TCP readiness probe on the port they
-	// serve, so the EndpointSlice only ever carries pods that are listening.
+	// Filters that expose a Service get a readiness probe on the port they
+	// serve, so the Service's EndpointSlice only ever carries pods that are
+	// actually listening.
 	//
 	// Without one a container counts as Ready the moment it is Running, which
-	// is before the filter has bound its port: the Service picks the pod up and
-	// the gateway sends it traffic that gets connection-refused. That window
-	// used to be hidden behind the minutes a per-pipeline GCLB route took to
-	// propagate. Routing streams through the in-cluster Envoy cut that to
-	// seconds, so the bind window is now the one a client actually hits.
+	// is before the filter has bound its port. The Service picks the pod up
+	// straight away and whatever is in front of it -- an Ingress, a Gateway,
+	// another filter -- gets connection-refused until the bind completes. The
+	// faster the routing layer attaches, the more likely a client lands inside
+	// that window.
 	//
-	// TCP rather than HTTP because filters are third-party -- we do not control
-	// whether any of them serves a readiness path, and webvis in particular
-	// answers its MJPEG stream on every path (`@app.get('/{topic:str}')`), so
-	// an HTTP probe would report ready without meaning it. The ports come from
-	// the catalog via spec.services, so this covers every service-exposing
-	// filter rather than being special-cased to webvis.
+	// TCP rather than HTTP: a filter is arbitrary user code and need not serve
+	// a readiness path at all. Some serve a stream on every path, so an HTTP
+	// probe against them answers 200 whatever it asks for and reports ready
+	// without meaning it. A completed TCP handshake is the most the controller
+	// can check without knowing what the filter speaks.
 	//
 	// Readiness only, no liveness: a filter that stops accepting connections
 	// should leave the endpoints, not be restarted out from under a running
 	// pipeline.
 	probePorts := make(map[string]int32, len(pipeline.Spec.Services))
 	for _, svc := range pipeline.Spec.Services {
+		// A TCP probe against a UDP port can never succeed, and the pod would
+		// stay NotReady for good. Kubernetes has no UDP equivalent, so a
+		// UDP-only service simply goes unprobed -- same behaviour as before
+		// this existed.
+		if svc.Protocol == corev1.ProtocolUDP {
+			continue
+		}
 		// targetPort is the CONTAINER port and port is the Service's. They are
 		// equal unless targetPort is set, and probing the Service port when
 		// they differ would dial a port nothing listens on.

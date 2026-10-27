@@ -357,6 +357,42 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 		}
 	}
 
+	// Filters that expose a Service get a TCP readiness probe on the port they
+	// serve, so the EndpointSlice only ever carries pods that are listening.
+	//
+	// Without one a container counts as Ready the moment it is Running, which
+	// is before the filter has bound its port: the Service picks the pod up and
+	// the gateway sends it traffic that gets connection-refused. That window
+	// used to be hidden behind the minutes a per-pipeline GCLB route took to
+	// propagate. Routing streams through the in-cluster Envoy cut that to
+	// seconds, so the bind window is now the one a client actually hits.
+	//
+	// TCP rather than HTTP because filters are third-party -- we do not control
+	// whether any of them serves a readiness path, and webvis in particular
+	// answers its MJPEG stream on every path (`@app.get('/{topic:str}')`), so
+	// an HTTP probe would report ready without meaning it. The ports come from
+	// the catalog via spec.services, so this covers every service-exposing
+	// filter rather than being special-cased to webvis.
+	//
+	// Readiness only, no liveness: a filter that stops accepting connections
+	// should leave the endpoints, not be restarted out from under a running
+	// pipeline.
+	probePorts := make(map[string]int32, len(pipeline.Spec.Services))
+	for _, svc := range pipeline.Spec.Services {
+		// targetPort is the CONTAINER port and port is the Service's. They are
+		// equal unless targetPort is set, and probing the Service port when
+		// they differ would dial a port nothing listens on.
+		port := svc.Port
+		if svc.TargetPort != nil {
+			port = *svc.TargetPort
+		}
+		// A filter may declare several services. A probe can only name one
+		// port, and any one of them being up answers the question.
+		if _, seen := probePorts[svc.Name]; !seen {
+			probePorts[svc.Name] = port
+		}
+	}
+
 	// Build filter containers
 	containers := make([]corev1.Container, 0, len(pipeline.Spec.Filters))
 	for _, filter := range pipeline.Spec.Filters {
@@ -479,6 +515,22 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 
 		if filter.Resources != nil {
 			container.Resources = *filter.Resources
+		}
+
+		if port, ok := probePorts[filter.Name]; ok {
+			container.ReadinessProbe = &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)},
+				},
+				// No initial delay: a filter that binds fast should be routable
+				// fast, which is the whole point. Polling every 2s keeps the
+				// pickup tight, and the cost is a TCP connect against a local
+				// port. A slow filter (model load) simply stays out of the
+				// endpoints until it binds, which is the intended behaviour.
+				PeriodSeconds:    2,
+				TimeoutSeconds:   1,
+				FailureThreshold: 3,
+			}
 		}
 
 		containers = append(containers, container)

@@ -128,6 +128,41 @@ func TestReadinessProbe_MultipleServicesOnOneFilterUseTheFirst(t *testing.T) {
 	}
 }
 
+func TestReadinessProbe_UDPServiceIsNotProbed(t *testing.T) {
+	pipeline := pipelineWithServices(
+		[]string{"udp-filter"},
+		[]pipelinesv1alpha1.ServicePort{
+			{Name: "udp-filter", Port: 5000, Protocol: corev1.ProtocolUDP},
+		},
+	)
+
+	// Kubernetes has no UDP probe, and a TCP probe against a UDP port can
+	// never succeed -- the pod would stay NotReady forever.
+	if c := builtFilterContainer(t, pipeline, "udp-filter"); c.ReadinessProbe != nil {
+		t.Errorf("expected no probe on a UDP-only service, got %+v", c.ReadinessProbe)
+	}
+}
+
+func TestReadinessProbe_SkipsUDPAndProbesTheTCPPort(t *testing.T) {
+	pipeline := pipelineWithServices(
+		[]string{"mixed"},
+		[]pipelinesv1alpha1.ServicePort{
+			{Name: "mixed", Port: 5000, Protocol: corev1.ProtocolUDP},
+			{Name: "mixed", Port: 8080, Protocol: corev1.ProtocolTCP},
+		},
+	)
+
+	c := builtFilterContainer(t, pipeline, "mixed")
+
+	if c.ReadinessProbe == nil {
+		t.Fatal("expected the TCP service to still earn a probe, got nil")
+	}
+	// "first service wins" must not mean "first even if it is UDP".
+	if got := c.ReadinessProbe.TCPSocket.Port.IntValue(); got != 8080 {
+		t.Errorf("expected the probe on the TCP port 8080, got %d", got)
+	}
+}
+
 func TestReadinessProbe_NoServicesLeavesEveryContainerAlone(t *testing.T) {
 	pipeline := pipelineWithServices([]string{"a", "b"}, nil)
 

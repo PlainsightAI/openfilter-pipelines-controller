@@ -1,5 +1,24 @@
 # Release notes
 
+## v0.11.0
+
+### Added
+
+- **Readiness probe on filters that expose a Service (#138)**: a filter container counted as Ready the moment it was Running, which is before the filter had bound its port. The Service picked the pod up straight away and whatever sits in front of it — an Ingress, a Gateway, another filter — got connection-refused until the bind completed. Every filter declaring a Service in `spec.services` now gets a readiness probe on the port it serves, so the Service's EndpointSlice only carries pods that are actually listening. The probe is **TCP, not HTTP**: a filter is arbitrary user code and need not serve a readiness path, and some serve a stream on every path, so an HTTP probe would answer 200 whatever it asked for and report ready without meaning it. It targets `targetPort` when set and `port` otherwise, since `targetPort` is the container port. A UDP service is left unprobed — Kubernetes has no UDP probe, and a TCP probe against a UDP port could never succeed. Readiness only, no liveness: a filter that stops accepting connections should leave the endpoints, not be restarted out from under a running pipeline.
+
+  **Upgrade note.** This applies to newly created or redeployed `PipelineInstance`s, not retroactively. If a `spec.services` entry names a port the filter does not actually listen on, that pipeline will now stay NotReady instead of publishing a Service that silently refuses connections — the probe tests exactly what the Service already assumed, so a failure means the Service was already broken. Deployment availability now gates on readiness, so `status.streaming.readyReplicas`, `availableReplicas` and `lastReadyTime` mean "serving" rather than "container started".
+
+### Security
+
+- **`golang.org/x/net`, `x/crypto` and `x/mod` bumped for the 2026-10 advisories (#139)**: nine findings, including **GO-2026-6612 (Critical)**, plus GO-2026-6603, 6611, 6617, 6610 on `x/net`, 6354/6355 on `x/crypto` and 6179/6180 on `x/mod`. All indirect dependencies.
+
+### Changed
+
+- **Go 1.25.1 → 1.27.3 (#139)**: required, not cosmetic. Every `x/net` release carrying the fixes above (0.59.0 through 0.61.0) declares `go 1.26.0`, as do `x/crypto@0.57.0` and `x/mod@0.41.0`, and the module graph refuses to split them. The `go` directive and both builder images move together. **Building this repo now needs Go 1.27.x**: CI sets `GOTOOLCHAIN: local`, so there is no automatic toolchain download.
+- **`golangci-lint` v2.4.0 → v2.15.0, and the backlog that exposed (#139)**: v2.4.0 is built with go1.25 and refuses a newer target outright (`can't load config: the Go language version (go1.25) used to build golangci-lint is lower than the targeted Go version`), so it was not analysing this repo at all — the job passed because the linter aborted before reading any code. v2.15.0 runs, and surfaced 179 pre-existing issues. All 13 in non-test code are fixed: eight deprecated `ctrl.Result{Requeue: true}` returns now share one `requeueAfterConflict` constant, and five repeated label keys and mount paths became constants so the write side and the selector side cannot drift. The remaining 164 were `goconst` on test fixtures; `goconst` now skips tests.
+- Bump OpenTelemetry (`otel`, `otel/sdk`, `otel/trace`, `otlptracegrpc`) to 1.45.0 and `google.golang.org/grpc` to 1.83.2 (#125).
+- Bump the `openfilter-video-in`, `openfilter-webvis` and `openfilter-image-out` image pins to 1.5.1 in `config/samples/` and `demo/`. Sample and demo manifests only — nothing the chart ships (#129–#137).
+
 ## v0.10.0
 
 ### Added

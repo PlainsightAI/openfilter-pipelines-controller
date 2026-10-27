@@ -108,7 +108,7 @@ func (r *PipelineInstanceReconciler) reconcileStreaming(ctx context.Context, pip
 			log.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: requeueAfterConflict}, nil
 	}
 
 	// Step 1: Ensure Deployment exists
@@ -506,8 +506,8 @@ func (r *PipelineInstanceReconciler) buildStreamingDeployment(ctx context.Contex
 
 	// Base labels used for deployment/pod selector (MUST stay stable — selector is immutable)
 	streamSelectorLabels := map[string]string{
-		"app":              "pipeline-stream",
-		"pipelineinstance": pipelineInstance.Name,
+		LabelKeyApp:              LabelValueAppStream,
+		LabelKeyPipelineInstance: pipelineInstance.Name,
 	}
 
 	deployment := &appsv1.Deployment{
@@ -581,7 +581,7 @@ func (r *PipelineInstanceReconciler) updateStreamingStatus(ctx context.Context, 
 
 	// Count container restarts from pods
 	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{"pipelineinstance": pipelineInstance.Name}); err != nil {
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{LabelKeyPipelineInstance: pipelineInstance.Name}); err != nil {
 		return fmt.Errorf("failed to list pods: %w", err)
 	}
 
@@ -606,7 +606,7 @@ func (r *PipelineInstanceReconciler) updateStreamingStatus(ctx context.Context, 
 // PLAT-1254.
 func (r *PipelineInstanceReconciler) streamingPodFailure(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (string, bool) {
 	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{"pipelineinstance": pipelineInstance.Name}); err != nil {
+	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{LabelKeyPipelineInstance: pipelineInstance.Name}); err != nil {
 		return "", false
 	}
 	for i := range podList.Items {
@@ -781,15 +781,15 @@ func (r *PipelineInstanceReconciler) ensureFilterServices(ctx context.Context, p
 					Name:      serviceName,
 					Namespace: pipelineInstance.Namespace,
 					Labels: map[string]string{
-						"app":              "pipeline-stream",
-						"pipelineinstance": pipelineInstance.Name,
-						"filter":           filterName,
+						LabelKeyApp:              LabelValueAppStream,
+						LabelKeyPipelineInstance: pipelineInstance.Name,
+						"filter":                 filterName,
 					},
 				},
 				Spec: corev1.ServiceSpec{
 					Selector: map[string]string{
-						"app":              "pipeline-stream",
-						"pipelineinstance": pipelineInstance.Name,
+						LabelKeyApp:              LabelValueAppStream,
+						LabelKeyPipelineInstance: pipelineInstance.Name,
 					},
 					Ports: []corev1.ServicePort{
 						{
@@ -838,7 +838,7 @@ func (r *PipelineInstanceReconciler) deleteFilterServices(ctx context.Context, p
 	serviceList := &corev1.ServiceList{}
 	if err := r.List(ctx, serviceList,
 		client.InNamespace(pipelineInstance.Namespace),
-		client.MatchingLabels{"pipelineinstance": pipelineInstance.Name}); err != nil {
+		client.MatchingLabels{LabelKeyPipelineInstance: pipelineInstance.Name}); err != nil {
 		return fmt.Errorf("failed to list services: %w", err)
 	}
 

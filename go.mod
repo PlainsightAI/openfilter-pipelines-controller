@@ -1,6 +1,6 @@
 module github.com/PlainsightAI/openfilter-pipelines-controller
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/minio/minio-go/v7 v7.0.95

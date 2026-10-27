@@ -59,6 +59,22 @@ const (
 	// Annotation values
 	AnnotationValueTrue = "true"
 
+	// Label keys and values written on the workloads this controller owns and
+	// used as selectors to read them back. They are constants because a typo
+	// in one of the two places fails silently -- the selector simply matches
+	// nothing, rather than erroring.
+	LabelKeyApp              = "app"
+	LabelValueAppStream      = "pipeline-stream"
+	LabelKeyPipelineInstance = "pipelineinstance"
+	LabelKeyFilterInstance   = "filter.plainsight.ai/instance"
+
+	// WorkspaceVolumeName is the shared scratch volume in batch mode, and
+	// WorkspaceMountPath is where every filter and claimer container mounts
+	// it. The name is written once per container and matched by name against
+	// the pod's volume list, so a typo detaches the mount silently.
+	WorkspaceVolumeName = "workspace"
+	WorkspaceMountPath  = "/ws"
+
 	// Condition types
 	ConditionTypeProgressing = "Progressing"
 	ConditionTypeSucceeded   = "Succeeded"
@@ -191,6 +207,17 @@ const (
 	// plainsight-deployment-agent, which writes the same key.
 	BaggageAnnotation = "traces.opentelemetry.io/baggage"
 )
+
+// requeueAfterConflict is how long to wait before reconciling again after a
+// write lost a resourceVersion race, or after we wrote the object ourselves
+// and need to read it back fresh.
+//
+// It replaces `ctrl.Result{Requeue: true}`, deprecated in controller-runtime
+// because that reuses the workqueue's error-retry ratelimiter for something
+// that is not an error. A fixed short interval is what the deprecation note
+// asks for, and it is belt-and-braces anyway: the controller watches
+// PipelineInstance, so our own write already enqueues a reconcile.
+const requeueAfterConflict = time.Second
 
 // ValkeyClientInterface defines the interface for Valkey operations
 type ValkeyClientInterface interface {
@@ -505,7 +532,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			}
 			// Requeue so the next reconcile processes mode-specific finalizers
 			// with a fresh resourceVersion (avoids "object has been modified" conflicts).
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: requeueAfterConflict}, nil
 		}
 		// Valkey finalizer already handled — delegate to mode-specific cleanup.
 		// reconcileStreaming handles the streaming-cleanup finalizer;
@@ -520,7 +547,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			log.Error(err, "Failed to add Valkey credentials finalizer")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: requeueAfterConflict}, nil
 	}
 
 	// Get the Pipeline resource
@@ -575,7 +602,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		if apierrors.IsConflict(err) {
 			log.V(1).Info("Status update conflict while clearing stale Degraded; requeueing",
 				"reason", ReasonPipelineNotFound)
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: requeueAfterConflict}, nil
 		}
 		log.Error(err, "Failed to clear stale Degraded condition")
 		return ctrl.Result{}, err
@@ -622,7 +649,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			// would leave the server-side status stale with no requeue
 			// (validation failures intentionally don't requeue).
 			if apierrors.IsConflict(statusErr) {
-				return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{RequeueAfter: requeueAfterConflict}, nil
 			}
 			log.Error(statusErr, "Failed to update status after unmatched source binding validation")
 			return ctrl.Result{}, statusErr
@@ -657,7 +684,7 @@ func (r *PipelineInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		if apierrors.IsConflict(err) {
 			log.V(1).Info("Status update conflict while clearing stale Degraded; requeueing",
 				"reason", ReasonSourceBindingUnmatched)
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: requeueAfterConflict}, nil
 		}
 		log.Error(err, "Failed to clear stale Degraded condition")
 		return ctrl.Result{}, err
@@ -919,10 +946,11 @@ func reconcileOutcome(result ctrl.Result, err error) tracing.ReconcileOutcome {
 	switch {
 	case err != nil:
 		return tracing.ReconcileOutcomeError
-	// SA1019: reading the deprecated field is intentional — the
-	// finalizer-bookkeeping call sites in this controller still set
-	// Requeue=true, and skipping the read would silently misreport
-	// those returns as `complete` in the trace facet.
+	// SA1019: reading the deprecated field is intentional. No call site in
+	// this controller sets Requeue=true any more, but controller-runtime
+	// still honours it, so a Result built elsewhere (a helper, a future
+	// caller, a library) that sets it would otherwise be misreported as
+	// `complete` in the trace facet.
 	case result.Requeue || result.RequeueAfter > 0: //nolint:staticcheck // see comment above
 		return tracing.ReconcileOutcomeRequeue
 	default:

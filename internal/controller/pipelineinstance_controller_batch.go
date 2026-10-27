@@ -733,7 +733,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 			// failed run is diagnosable from status, not just "backoff limit" (PLAT-1353).
 			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 			VolumeMounts: []corev1.VolumeMount{
-				{Name: "workspace", MountPath: "/ws"},
+				{Name: WorkspaceVolumeName, MountPath: WorkspaceMountPath},
 			},
 		}
 
@@ -792,7 +792,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 					ImagePullSecrets: pipeline.Spec.ImagePullSecrets,
 					Volumes: []corev1.Volume{
 						{
-							Name: "workspace",
+							Name: WorkspaceVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
@@ -809,7 +809,7 @@ func (r *PipelineInstanceReconciler) buildJob(ctx context.Context, pipelineInsta
 							// "backoff limit". PLAT-1353.
 							TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 							VolumeMounts: []corev1.VolumeMount{
-								{Name: "workspace", MountPath: "/ws"},
+								{Name: WorkspaceVolumeName, MountPath: WorkspaceMountPath},
 							},
 						},
 					},
@@ -885,7 +885,7 @@ func oneLine(s string, max int) string {
 func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) string {
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
-		"filter.plainsight.ai/instance": pipelineInstance.GetInstanceID(),
+		LabelKeyFilterInstance: pipelineInstance.GetInstanceID(),
 	}); err != nil {
 		return ""
 	}
@@ -971,7 +971,7 @@ func (r *PipelineInstanceReconciler) failedContainerMessages(ctx context.Context
 func (r *PipelineInstanceReconciler) anyPodStarted(ctx context.Context, pipelineInstance *pipelinesv1alpha1.PipelineInstance) (bool, error) {
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
-		"filter.plainsight.ai/instance": pipelineInstance.GetInstanceID(),
+		LabelKeyFilterInstance: pipelineInstance.GetInstanceID(),
 	}); err != nil {
 		return false, fmt.Errorf("failed to list pods: %w", err)
 	}
@@ -997,7 +997,7 @@ func (r *PipelineInstanceReconciler) handleCompletedPods(ctx context.Context, pi
 	podList := &corev1.PodList{}
 	instanceID := pipelineInstance.GetInstanceID()
 	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
-		"filter.plainsight.ai/instance": instanceID,
+		LabelKeyFilterInstance: instanceID,
 	}); err != nil {
 		return fmt.Errorf("failed to list pods: %w", err)
 	}
@@ -1300,7 +1300,7 @@ func (r *PipelineInstanceReconciler) runReclaimer(ctx context.Context, pipelineI
 	podList := &corev1.PodList{}
 	instanceID := pipelineInstance.GetInstanceID()
 	if err := r.List(ctx, podList, client.InNamespace(pipelineInstance.Namespace), client.MatchingLabels{
-		"filter.plainsight.ai/instance": instanceID,
+		LabelKeyFilterInstance: instanceID,
 	}); err != nil {
 		return fmt.Errorf("failed to list pods for reclaimer: %w", err)
 	}
@@ -1682,7 +1682,7 @@ func mergeLabelsFromCR(base map[string]string, pi *pipelinesv1alpha1.PipelineIns
 // buildPodLabels creates pod labels for the batch controller.
 func buildPodLabels(instanceID string, pi *pipelinesv1alpha1.PipelineInstance) map[string]string {
 	return mergeLabelsFromCR(map[string]string{
-		"filter.plainsight.ai/instance":         instanceID,
+		LabelKeyFilterInstance:                  instanceID,
 		"filter.plainsight.ai/pipelineinstance": pi.Name,
 	}, pi)
 }

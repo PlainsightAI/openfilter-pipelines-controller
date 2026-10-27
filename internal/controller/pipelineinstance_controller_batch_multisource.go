@@ -321,7 +321,7 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 			// failed run surfaces the actual cause, not just "backoff limit" (PLAT-1353).
 			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 			VolumeMounts: []corev1.VolumeMount{
-				{Name: "workspace", MountPath: "/ws"},
+				{Name: WorkspaceVolumeName, MountPath: WorkspaceMountPath},
 			},
 		})
 		log.V(1).Info("Added direct-mode claimer", "index", i, "filter", b.FilterName, "object", bindingObjectKey(b), "destination", downloadPath[b.FilterName])
@@ -366,7 +366,7 @@ func (r *PipelineInstanceReconciler) buildMultiSourceBatchJob(ctx context.Contex
 					ImagePullSecrets: pipeline.Spec.ImagePullSecrets,
 					Volumes: []corev1.Volume{
 						{
-							Name: "workspace",
+							Name: WorkspaceVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
@@ -485,7 +485,7 @@ func (r *PipelineInstanceReconciler) buildBatchFilterContainersForMultiSource(pi
 			TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 			ImagePullPolicy:          filter.ImagePullPolicy,
 			VolumeMounts: []corev1.VolumeMount{
-				{Name: "workspace", MountPath: "/ws"},
+				{Name: WorkspaceVolumeName, MountPath: WorkspaceMountPath},
 			},
 		}
 		if filter.Resources != nil {
@@ -573,7 +573,7 @@ func (r *PipelineInstanceReconciler) degradeBatchValidation(ctx context.Context,
 	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, reason, msg)
 	if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 		if apierrors.IsConflict(statusErr) {
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: requeueAfterConflict}, nil
 		}
 		log.Error(statusErr, "Failed to update status after multi-source batch validation")
 		return ctrl.Result{}, statusErr

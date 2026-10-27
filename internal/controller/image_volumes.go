@@ -94,7 +94,10 @@ func (r *PipelineInstanceReconciler) rejectUnsupportedImageVolumes(ctx context.C
 	r.setCondition(pipelineInstance, ConditionTypeProgressing, metav1.ConditionFalse, ReasonUnsupportedClusterVersion, msg)
 	if statusErr := r.Status().Update(ctx, pipelineInstance); statusErr != nil {
 		if apierrors.IsConflict(statusErr) {
-			return true, ctrl.Result{Requeue: true}, nil
+			// Someone else wrote the object between our read and this update.
+			// Come back with a fresh resourceVersion rather than surfacing a
+			// conflict as a reconcile error.
+			return true, ctrl.Result{RequeueAfter: requeueAfterConflict}, nil
 		}
 		log.Error(statusErr, "Failed to update status after image-volume cluster-support rejection")
 		return true, ctrl.Result{}, statusErr

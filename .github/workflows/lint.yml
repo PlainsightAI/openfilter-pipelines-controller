@@ -24,7 +24,7 @@ jobs:
       - name: Run linter
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.4.0
+          version: v2.15.0
 
   chart-version-parity:
     name: Chart.yaml version/appVersion parity

@@ -185,9 +185,12 @@ func TestReconcileOutcome_Categorisation(t *testing.T) {
 	}{
 		{"clean complete", ctrl.Result{}, nil, tracing.ReconcileOutcomeComplete},
 		{"requeue after", ctrl.Result{RequeueAfter: time.Second}, nil, tracing.ReconcileOutcomeRequeue},
-		{"bare requeue", ctrl.Result{Requeue: true}, nil, tracing.ReconcileOutcomeRequeue},
+		// SA1019: exercising the deprecated field on purpose -- reconcileOutcome
+		// must keep classifying it as a requeue for as long as
+		// controller-runtime honours it.
+		{"bare requeue", ctrl.Result{Requeue: true}, nil, tracing.ReconcileOutcomeRequeue}, //nolint:staticcheck // see comment above
 		{"error trumps requeue after", ctrl.Result{RequeueAfter: time.Second}, errFakeBoom, tracing.ReconcileOutcomeError},
-		{"error trumps bare requeue", ctrl.Result{Requeue: true}, errFakeBoom, tracing.ReconcileOutcomeError},
+		{"error trumps bare requeue", ctrl.Result{Requeue: true}, errFakeBoom, tracing.ReconcileOutcomeError}, //nolint:staticcheck // as above
 		{"bare error", ctrl.Result{}, errFakeBoom, tracing.ReconcileOutcomeError},
 	}
 	for _, c := range cases {
